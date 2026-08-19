@@ -225,7 +225,9 @@ updated hair block and leaves everything else alone.
   styles only. The interpreter reads the installed components' declarations
   and clamps its slot prompts to them, so "knee-high boots" degrades to the
   nearest supported request rather than silently conditioning a component
-  outside its competence.
+  outside its competence. The clamp is advisory: it constrains prompt
+  authoring, and nothing downstream can verify compliance — the diffusion
+  component has no notion of its own vocabulary.
 - **The model choice is config, not code.** The backend accepts a registry
   component id or a local weights path; nothing in the codebase names a
   model. Swapping candidates must take under a minute, and the step is

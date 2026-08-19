@@ -1,0 +1,220 @@
+"""Exporter unit tests on the synthetic rig, plus the real-rig integration
+test (skipped unless the body-rig component is present in the local cache)."""
+
+import numpy as np
+import pytest
+
+from character_factory.assembly import export_character_glb, validate_glb
+from character_factory.assembly.export import SCALE
+from character_factory.assembly.gltf import parse_glb, read_accessor
+from character_factory.assembly.restpose import (
+    KNEE_FLEXION_DEGREES,
+    Skeleton,
+    bake_knee_flexion,
+    quat_from_matrix,
+    quat_to_matrix,
+    reauthor_orientations,
+)
+
+IDENTITY = [0.0, 0.0]
+EXPRESSION = [0.0, 0.0]
+
+
+def export(rig, tmp_path, **kwargs):
+    return export_character_glb(
+        rig, IDENTITY, EXPRESSION, tmp_path / "out.glb",
+        generator="character-factory/test", **kwargs
+    )
+
+
+def test_export_passes_validation(rig, tmp_path):
+    result = export(rig, tmp_path)
+    report = validate_glb(result.glb_path.read_bytes(), expected_joints=7)
+    assert report["reparse_max_error_mm"] < 1e-3
+    assert report["mirror_pairs"] == 2  # l_upleg/r_upleg, l_lowleg/r_lowleg
+    assert report["idle_channels"] == 7
+    assert result.manifest_path.is_file()
+
+
+def test_export_is_byte_deterministic(rig, tmp_path):
+    first = export(rig, tmp_path).glb_path.read_bytes()
+    second = export_character_glb(
+        rig, IDENTITY, EXPRESSION, tmp_path / "second.glb",
+        generator="character-factory/test",
+    ).glb_path.read_bytes()
+    assert first == second
+
+
+def test_uv_seam_unwelds_with_weights(rig, tmp_path):
+    data = export(rig, tmp_path).glb_path.read_bytes()
+    gltf, binary = parse_glb(data)
+    attributes = gltf["meshes"][0]["primitives"][0]["attributes"]
+    positions = read_accessor(gltf, binary, attributes["POSITION"])
+    joints = read_accessor(gltf, binary, attributes["JOINTS_0"])
+    weights = read_accessor(gltf, binary, attributes["WEIGHTS_0"])
+    uvs = read_accessor(gltf, binary, attributes["TEXCOORD_0"])
+
+    # Vertex 8 has two texcoords → 11 output vertices from 10 positions.
+    assert positions.shape[0] == 11
+    # The two copies share position and skin weights but differ in UV.
+    chest = positions[np.linalg.norm(positions - positions.mean(0), axis=1) >= 0]
+    matches = np.where(
+        (np.abs(positions - positions[:, None]).sum(axis=2) < 1e-9)
+        & ~np.eye(len(positions), dtype=bool)
+    )
+    assert len(matches[0]) == 2  # exactly one duplicated pair
+    a, b = matches[0][0], matches[1][0]
+    assert (joints[a] == joints[b]).all() and (weights[a] == weights[b]).all()
+    assert not np.allclose(uvs[a], uvs[b])
+    assert chest is not None  # silence unused warning path
+
+
+def test_no_uv_flip(rig, tmp_path):
+    data = export(rig, tmp_path).glb_path.read_bytes()
+    gltf, binary = parse_glb(data)
+    uvs = read_accessor(
+        gltf, binary, gltf["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"]
+    )
+    # Source texcoords pass straight through — no 1-v anywhere.
+    assert np.isclose(uvs.min(), 0.1) and np.isclose(uvs.max(), 0.9)
+
+
+def test_scale_is_exactly_centimeters_to_meters(rig, tmp_path):
+    data = export(rig, tmp_path).glb_path.read_bytes()
+    gltf, binary = parse_glb(data)
+    positions = read_accessor(
+        gltf, binary, gltf["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+    )
+    # Head vertex at 162 cm → 1.62 m; X sign preserved (no axis flip).
+    assert np.isclose(positions[:, 1].max(), 1.62, atol=0.01)
+    assert positions[:, 0].max() > 0 and positions[:, 0].min() < 0
+    assert SCALE == 0.01
+
+
+def test_world_root_weights_are_rejected(rig, tmp_path):
+    bad_joints = rig.vertex_joints.copy()
+    bad_weights = rig.vertex_weights.copy()
+    bad_joints[9] = [0, 0, 0, 0]   # weight the world root
+    bad_weights[9] = [1, 0, 0, 0]
+    from tests.assembly.conftest import make_rig
+
+    with pytest.raises(ValueError):
+        export(make_rig(bad_joints, bad_weights), tmp_path)
+
+
+def test_knee_flexion_moves_feet_backward(rig):
+    evaluation = rig.evaluate(IDENTITY, EXPRESSION)
+    skeleton = Skeleton.from_rig_state(evaluation.skeleton, rig.parents)
+    knees = [rig.role_index("left_knee"), rig.role_index("right_knee")]
+    flexed = bake_knee_flexion(
+        skeleton, evaluation.vertices, rig.vertex_joints, rig.vertex_weights,
+        knees, [rig.subtree(k) for k in knees],
+    )
+    # Foot vertices (fully weighted to the knee subtrees) move backward in Z
+    # and stay left/right symmetric; head vertices do not move.
+    for foot in (0, 1, 2, 3):
+        assert flexed[foot][2] < evaluation.vertices[foot][2]
+    assert np.allclose(flexed[0][1:], flexed[2][1:])   # same y/z left vs right
+    assert np.allclose(flexed[0][0], -flexed[2][0])    # mirrored x
+    for head in (6, 7):
+        assert np.allclose(flexed[head], evaluation.vertices[head])
+    assert KNEE_FLEXION_DEGREES > 0
+
+
+def test_reauthored_frames_are_mirror_consistent(rig):
+    evaluation = rig.evaluate(IDENTITY, EXPRESSION)
+    skeleton = Skeleton.from_rig_state(evaluation.skeleton, rig.parents)
+    # Give the source frames a deliberately unmirrored roll: re-authoring
+    # must erase it.
+    skeleton.rotations[2] = quat_to_matrix(np.array([0.0, 0.3, 0.0, 0.954]))
+    reauthor_orientations(skeleton)
+    mirror, flip_z = np.diag([-1.0, 1, 1]), np.diag([1.0, 1, -1])
+    left, right = skeleton.rotations[2], skeleton.rotations[4]
+    assert np.allclose(left, mirror @ right @ flip_z, atol=1e-9)
+    for joint in range(7):
+        assert np.isclose(np.linalg.det(skeleton.rotations[joint]), 1.0)
+
+
+def test_quaternion_round_trip():
+    rng = np.random.default_rng(7)
+    for _ in range(50):
+        q = rng.normal(size=4)
+        q /= np.linalg.norm(q)
+        m = quat_to_matrix(q)
+        q2 = quat_from_matrix(m)
+        assert np.allclose(quat_to_matrix(q2), m, atol=1e-9)
+        assert q2[3] >= 0  # canonical hemisphere, for byte determinism
+
+
+def test_embedded_albedo_texture(rig, tmp_path):
+    # A 1×1 PNG (smallest valid) — enough to prove the embed path.
+    import struct
+    import zlib
+
+    def chunk(kind, payload):
+        data = kind + payload
+        return struct.pack(">I", len(payload)) + data + struct.pack(
+            ">I", zlib.crc32(data)
+        )
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    result = export(rig, tmp_path, albedo_png=png)
+    gltf, binary = parse_glb(result.glb_path.read_bytes())
+    assert gltf["images"][0]["mimeType"] == "image/png"
+    material = gltf["materials"][0]["pbrMetallicRoughness"]
+    assert material["baseColorTexture"]["index"] == 0
+    view = gltf["bufferViews"][gltf["images"][0]["bufferView"]]
+    start = view["byteOffset"]
+    assert binary[start : start + 8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_buffer_views_are_aligned(rig, tmp_path):
+    gltf, _ = parse_glb(export(rig, tmp_path).glb_path.read_bytes())
+    for view in gltf["bufferViews"]:
+        assert view["byteOffset"] % 4 == 0
+    position = gltf["meshes"][0]["primitives"][0]["attributes"]["POSITION"]
+    assert "min" in gltf["accessors"][position] and "max" in gltf["accessors"][position]
+
+
+# --- integration against the real rig component -------------------------------
+
+
+def _real_rig_dir():
+    from character_factory.registry import Registry
+    from character_factory.registry.store import component_dir
+
+    entry = Registry.default().get("body-rig")
+    directory = component_dir(entry)
+    if not (directory / "mhr_model.pt").is_file() or not (directory / "rig.json").is_file():
+        return None
+    return directory
+
+
+real_rig = pytest.mark.skipif(
+    _real_rig_dir() is None,
+    reason="body-rig component not present in the local cache",
+)
+
+
+@real_rig
+def test_real_rig_export_passes_acceptance(tmp_path):
+    from character_factory import Character
+    from character_factory.assembly import load_rig
+
+    rig = load_rig(_real_rig_dir())
+    examples = __import__("pathlib").Path(__file__).parents[2] / "examples/characters"
+    character = Character.load(examples / "marathon-runner.char.json")
+    result = export_character_glb(
+        rig, character.identity, character.resting_expression,
+        tmp_path / "runner.glb", name="marathon-runner",
+        generator="character-factory/test",
+    )
+    report = validate_glb(result.glb_path.read_bytes(), expected_joints=127)
+    assert report["reparse_max_error_mm"] < 1e-2
+    assert report["mirror_worst_deviation_degrees"] < 0.5
+    assert result.vertex_count == 19455  # the documented unweld count

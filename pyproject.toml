@@ -18,20 +18,22 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Multimedia :: Graphics :: 3D Modeling",
 ]
-# The schema module is deliberately dependency-free (stdlib only) so that
-# validating and editing character files works on any machine that can run
-# Python. Generation and assembly dependencies arrive with their modules.
-dependencies = []
+# Base = everything the assembly-only story needs (ARCHITECTURE.md §6.2):
+# torch runs the rig's TorchScript forward on CPU, numpy does the mesh math.
+# The schema and registry modules remain stdlib-only in what they import.
+# Generation-only dependencies live in the [generation] extra.
+dependencies = [
+  "torch>=2.4",
+  "numpy>=1.26",
+]
 
 [project.optional-dependencies]
 # Generation (identity, textures, interpreter) is GPU territory: Linux+CUDA
 # first-class, WSL2 supported. The base install stays dependency-free so the
 # schema tools, registry, and assembler-only flows work everywhere.
 generation = [
-  "torch>=2.4",
   "transformers>=4.44",
   "safetensors>=0.4",
-  "numpy>=1.26",
   "lm-format-enforcer>=0.10",
 ]
 dev = ["pytest>=8", "jsonschema>=4.21"]

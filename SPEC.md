@@ -1,0 +1,415 @@
+# The Character Format
+
+**Version 0.1 — draft**
+
+This document specifies the character format used by Character Factory: a
+compact, symbolic description of a rigged, textured 3D human. A character file
+is a small JSON document — typically 2–6 KB — that records *how to build* a
+character, not the built result. Meshes, textures, and rigged scene files are
+build artifacts derived from it.
+
+The format is designed to be implemented by third parties. Everything a
+conforming reader or writer needs is in this document. Familiarity with the
+[Momentum Human Rig (MHR)](https://github.com/facebookresearch/MHR) parametric
+body model is helpful but not required.
+
+## 1. Design goals
+
+1. **Symbolic, not binary.** A character is parameters, references, and
+   recipes. It can be diffed, versioned in git, sent in a chat message, edited
+   by hand, and read by a coding agent.
+2. **Reproducible.** A character file plus a pinned set of generation
+   components rebuilds the same character. Every generative step records the
+   inputs that produced it.
+3. **Forward-compatible.** New texture slots, new components, and a future
+   mouth-interior body variant are additive changes, not breaking ones.
+4. **Small surface.** Five blocks: `body`, `textures`, `hair`, `provenance`,
+   `assets`. No block requires another implementation's internals to
+   interpret.
+
+## 2. Conventions
+
+The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in RFC
+2119.
+
+- A character file is a single JSON document, UTF-8 encoded, with no byte
+  order mark. The recommended file extension is `.char.json`.
+- All numbers that represent model parameters are IEEE 754 binary32 (float32)
+  values serialized as JSON numbers. Writers MUST emit decimal
+  representations that round-trip to the same float32 value; the shortest
+  round-tripping representation is RECOMMENDED.
+- Field names are `snake_case`. Unknown top-level and block-level fields MUST
+  be rejected in strict validation and SHOULD produce a warning (not an
+  error) in default validation, to allow forward-compatible minor additions
+  (see §10).
+- Linear lengths are centimeters, colors are linear-light RGB in [0, 1], and
+  the coordinate system is the body model's native frame: Y up, character
+  facing +Z, feet at Y = 0.
+
+### 2.1 Canonical form and content identity
+
+The **canonical form** of a character document is its JSON Canonicalization
+Scheme serialization (RFC 8785). The **content ID** of a character is the
+lowercase hex SHA-256 of the canonical form. Two files with the same content
+ID describe the same character. Implementations that cache or deduplicate
+characters SHOULD key on the content ID. The content ID is never stored
+inside the document itself.
+
+## 3. Document structure
+
+A complete v0.1 character file:
+
+```json
+{
+  "format": "character-factory/character",
+  "schema_version": "0.1",
+  "name": "marathon-runner",
+  "body": {
+    "rig": "mhr-lod1@1.0",
+    "topology": "closed",
+    "identity": [0.1837423, -0.0921118, 1.2210972, "... 45 values total"],
+    "resting_expression": [0.0, 0.0, 0.0, "... 72 values total"]
+  },
+  "textures": {
+    "skin": {
+      "component": "skin",
+      "component_version": "0.1.0",
+      "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
+      "seed": 41002
+    },
+    "eyes": {
+      "component": "eyes",
+      "component_version": "0.1.0",
+      "prompt": "green iris with amber central ring, fine radial fibers",
+      "seed": 41003
+    },
+    "garments": {
+      "component": "garments",
+      "component_version": "0.1.0",
+      "prompt": "teal running vest and black shorts, white piping",
+      "seed": 41004
+    }
+  },
+  "hair": {
+    "schema_version": 1,
+    "seed": 7,
+    "family": "crop",
+    "part": { "kind": "none", "side": "wearer_left", "position": "moderate",
+              "extent": "to_crown", "width": "narrow" },
+    "hairline": { "height": "natural", "shape": "rounded",
+                  "temple_recession": "natural", "sideburns": "natural",
+                  "nape": "natural", "irregularity": "natural" },
+    "length": { "overall": "cropped", "cut_line": "soft" },
+    "shape": { "volume": "low", "density": "medium", "texture": "straight",
+               "wave_size": "medium", "wave_strength": "medium",
+               "root_lift": "medium" },
+    "drape": { "gravity": "natural", "stiffness": "natural",
+               "shoulder_routing": "split", "body_clearance": "natural" },
+    "color": { "family": "dark_brown" }
+  },
+  "provenance": {
+    "prompt": "a lean marathon runner with cropped dark hair and green eyes, teal running vest",
+    "generator": "character-factory/0.1.0",
+    "components": {
+      "identity": { "version": "0.1.0" },
+      "skin": { "version": "0.1.0" },
+      "eyes": { "version": "0.1.0" },
+      "garments": { "version": "0.1.0" },
+      "hair": { "version": "0.1.0" }
+    },
+    "created": "2026-08-18T12:00:00Z"
+  },
+  "assets": {
+    "skin": { "sha256": "9f2c…", "media_type": "image/png", "width": 1024, "height": 1024 },
+    "eyes": { "sha256": "1b77…", "media_type": "image/png", "width": 1024, "height": 1024 },
+    "garments": { "sha256": "c04a…", "media_type": "image/png", "width": 1024, "height": 1024 }
+  }
+}
+```
+
+### 3.1 Top-level fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes | MUST be `"character-factory/character"`. Identifies the document type independent of file name. |
+| `schema_version` | string | yes | The version of this specification the document conforms to. `"0.1"` for documents conforming to this text. |
+| `name` | string | no | Human-readable display name. Not an identifier; the content ID (§2.1) identifies the character. |
+| `body` | object | yes | Body model parameters. §4. |
+| `textures` | object | yes | Texture generation recipes, one per slot. §5. |
+| `hair` | object or null | yes | Semantic hair description, or `null` for no hair. §6. |
+| `provenance` | object | yes | How this document was produced. §7. |
+| `assets` | object | no | Content hashes pinning previously generated texture images. §8. |
+
+## 4. `body` — the parametric body
+
+The body is described entirely by parameters of a published parametric body
+model — no mesh data appears in the file.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `rig` | string | yes | The body model and version, as `<model>@<version>`. v0.1 defines exactly one value: `"mhr-lod1@1.0"`. |
+| `topology` | string | yes | Surface topology variant. v0.1 defines exactly one value: `"closed"`. Reserved for extension; see §4.2. |
+| `identity` | array of 45 numbers | yes | MHR identity coefficients, in MHR's native order. Together these determine the body and face shape. |
+| `resting_expression` | array of 72 numbers | yes | MHR expression coefficients describing the character's *resting* face (for example, natural eyelid posture). Most entries are typically `0.0`. This is part of identity — it is not an animation pose. |
+
+### 4.1 The `mhr-lod1@1.0` rig
+
+`"mhr-lod1@1.0"` refers to the Momentum Human Rig, release 1.0 line, at level
+of detail 1: 18,439 vertices, 36,874 triangles, 127 joints, with 45 identity
+coefficients, a 204-value body pose, and 72 expression coefficients. MHR is
+published by Meta under the Apache 2.0 license. The exact upstream release
+and topology checksum for each rig string are pinned in the Character Factory
+component registry; a conforming implementation MUST verify that the rig
+asset it evaluates matches the pinned topology (vertex and triangle counts at
+minimum, checksum when available) before trusting index-based data derived
+from it.
+
+Evaluating the rig with `identity`, a body pose, and an expression yields
+posed vertex positions and a posed skeleton. Identity, pose, and expression
+change vertex *positions* only — vertex and triangle indexing is invariant.
+The character format relies on this: everything index-based (UV layout,
+attachment regions, the topology variant below) is defined against the rig
+version, not against an individual character.
+
+Animation is out of scope for the format. Body pose and non-resting
+expression are runtime inputs to the rig, not properties of a character.
+
+### 4.2 The `topology` reservation
+
+`topology` exists so that a planned **mouth-interior variant** is an additive
+schema change. The v0.1 surface is `"closed"`: the full, unmodified MHR
+surface, with a closed mouth region. A future schema minor version will
+define a second value for a variant that removes a fixed patch of triangles
+from the mouth region of the rig's triangle buffer and adds interior
+components (teeth, gums, tongue, and an inner-mouth cavity) behind it. The
+removal set is defined purely at the topology level, so it is identical for
+every character on a given rig version.
+
+Readers encountering an unrecognized `topology` value MUST treat the document
+as requiring a newer schema version rather than silently assembling a closed
+surface. Writers targeting v0.1 MUST emit `"closed"`.
+
+## 5. `textures` — generation recipes
+
+`textures` maps **slot names** to **texture recipes**. A slot is a named
+surface that receives a generated image; the set of valid slots is defined by
+the schema version. v0.1 defines exactly three, all required:
+
+| Slot | Target surface | Content |
+| --- | --- | --- |
+| `skin` | The body's canonical UV atlas | Full-body skin albedo: body, face, hands, feet, scalp. |
+| `eyes` | The eyeball surface (its own concentric UV layout) | One eyeball albedo (iris, sclera), applied to both eyes. |
+| `garments` | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; garment coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
+
+Future schema minor versions may add optional slots (for example, footwear
+rendered onto the atlas's foot regions). Slots are additive: a new slot never
+changes the meaning of an existing one.
+
+### 5.1 Texture recipe fields
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `component` | string | yes | Name of the generation component in the component registry (for v0.1 slots: `"skin"`, `"eyes"`, `"garments"`). |
+| `component_version` | string | yes | Semantic version of that component used (or to be used) for generation. |
+| `prompt` | string | yes | The slot-level text description that conditions generation. This is the *decomposed*, per-slot prompt — not the original character description, which lives in `provenance.prompt`. |
+| `seed` | integer | yes | Non-negative seed, ≤ 2³¹ − 1, for the diffusion sampler. Each slot carries its own explicit resolved seed; the format does not define seed derivation. |
+| `overrides` | object | no | Sampler overrides (`steps`: integer, `guidance`: number, `resolution`: integer). Defaults live in component metadata in the registry; a recipe without `overrides` uses them. |
+
+A recipe is a *claim about how to (re)generate* the slot's image.
+Regeneration with the same component version and recipe is reproducible up to
+GPU kernel nondeterminism; exact byte-level reproduction is pinned through
+`assets` (§8).
+
+## 6. `hair` — semantic hair description
+
+Hair is described semantically — a small vocabulary of styling decisions —
+and synthesized to geometry at assembly time by a hair provider. The
+character file never contains hair geometry. `hair` may be `null`, meaning no
+hair (a bald character remains valid and complete).
+
+The hair block is versioned independently of the character schema via its own
+integer `schema_version`; this section defines hair schema version `1`. All
+fields are required unless marked optional; every enum is closed (unknown
+values are invalid). Strict validators MUST reject unknown fields anywhere in
+the hair block.
+
+| Field | Type / values |
+| --- | --- |
+| `schema_version` | The integer `1`. |
+| `seed` | Integer, `0` to `2147483647`. Seeds all stochastic detail (strand placement, texture grain). Same hair block + same head geometry + same provider version ⇒ identical geometry. |
+| `family` | `buzz`, `crop`, `pixie`, `side_part`, `bob`, `loose_long`, `coily`, `ponytail`, `bun`, `braids`, `locs` — the overall structural archetype. |
+
+**`part`** — where and how the hair parts:
+
+| Field | Values |
+| --- | --- |
+| `kind` | `none`, `center`, `side` |
+| `side` | `wearer_left`, `wearer_right` (meaningful when `kind` is `side`) |
+| `position` | `subtle`, `moderate`, `deep` |
+| `extent` | `short`, `to_crown`, `through_crown` |
+| `width` | `narrow`, `medium`, `wide` |
+
+**`hairline`** — the boundary between hair and skin:
+
+| Field | Values |
+| --- | --- |
+| `height` | `low`, `natural`, `high` |
+| `shape` | `rounded`, `straight`, `widows_peak` |
+| `temple_recession` | `none`, `natural`, `pronounced` |
+| `sideburns` | `short`, `natural`, `long` |
+| `nape` | `high`, `natural`, `low` |
+| `irregularity` | `clean`, `natural`, `textured` |
+
+**`length`** — how far the hair reaches. The length scale, common to all four
+fields: `cropped`, `ear`, `jaw`, `chin`, `shoulder`, `collarbone`,
+`below_shoulder`, `chest`, `mid_back`, `waist`.
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `overall` | length scale | yes |
+| `front`, `side`, `back` | length scale | optional — each falls back to `overall` when omitted |
+| `cut_line` | `blunt`, `soft`, `layered` | yes |
+
+**`shape`** — volume and strand character:
+
+| Field | Values |
+| --- | --- |
+| `volume` | `low`, `medium`, `high` |
+| `density` | `light`, `medium`, `full` |
+| `texture` | `straight`, `wavy`, `curly`, `coily` |
+| `wave_size` | `small`, `medium`, `large` |
+| `wave_strength` | `subtle`, `medium`, `strong` |
+| `root_lift` | `low`, `medium`, `high` |
+
+**`drape`** — how hair falls against the body:
+
+| Field | Values |
+| --- | --- |
+| `gravity` | `light`, `natural`, `heavy` |
+| `stiffness` | `soft`, `natural`, `firm` |
+| `shoulder_routing` | `natural`, `split`, `mostly_behind`, `all_front`, `all_behind` |
+| `body_clearance` | `close`, `natural`, `loose` |
+
+**`color`**:
+
+| Field | Type / values |
+| --- | --- |
+| `family` | `black`, `dark_brown`, `brown`, `auburn`, `copper`, `blonde`, `platinum`, `gray`, `white`, `custom` |
+| `rgb` | Array of 3 numbers in [0, 1], linear RGB. REQUIRED when `family` is `custom`; MUST be absent otherwise. |
+
+Writers SHOULD emit fully resolved hair blocks — every non-optional field
+explicit — so that a character file reads the same in any implementation.
+The only permitted omissions are `length.front`/`side`/`back` (fallback:
+`overall`) and `color.rgb` (forbidden unless `custom`).
+
+The hair provider consumes this block plus the character's assembled head and
+body geometry (for scalp fitting and long-hair drape) and returns a textured
+triangle mesh in the body's frame. §6 is the complete contract between the
+format and any provider; providers are interchangeable behind it.
+
+## 7. `provenance` — how the character came to be
+
+Provenance makes a character file self-describing: which text produced it,
+by which pipeline, using which component versions. It is required, because
+reproducibility is a core promise of the format — but its fields are
+descriptive, not instructions to a reader.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
+| `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
+| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot. A `hair` entry records the provider version once geometry has been synthesized. |
+| `created` | string | no | RFC 3339 timestamp. |
+| `notes` | string | no | Free text. |
+
+Identity generation is deterministic: the identity component maps prompt
+text to body parameters as a pure function, with no seed. `provenance.prompt`
+plus the pinned `identity` component version therefore reproduces
+`body.identity` exactly — and conversely, editing `body.identity` by hand
+makes `provenance.prompt` a historical note rather than a regeneration
+recipe. Implementations MUST treat the parameter arrays in `body`, not the
+prompt, as authoritative.
+
+## 8. `assets` — pinning generated images
+
+`assets` is optional. When present, it maps texture slot names to content
+descriptors of the generated images:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `sha256` | string | Lowercase hex SHA-256 of the image file. |
+| `media_type` | string | IANA media type; v0.1 generators emit `image/png`. |
+| `width`, `height` | integer | Pixel dimensions. |
+
+The format deliberately stores hashes, not paths or URLs — where assets live
+is an implementation concern (a sibling directory, a cache, an object
+store). An assembler given both a character file and a set of candidate
+asset files MUST verify hashes before use and MUST refuse to silently
+substitute a non-matching asset. A character file without `assets` (or with
+missing entries) is still complete: its textures are regenerable from the
+recipes in §5.
+
+## 9. Assembly semantics
+
+This section defines what a character file *means* in terms of the built
+artifact, without prescribing an implementation.
+
+1. **Body.** Evaluate the rig (§4.1) with `body.identity`,
+   `body.resting_expression`, and a rest body pose. The result is the body
+   mesh and the rest skeleton.
+2. **Surface.** Apply the `skin` image to the body's canonical UV atlas.
+   Recover garment coverage from the `garments` image (luminance-keyed
+   occupancy over the black background) and composite covered texels over
+   the skin image. The composited image is the body's albedo.
+3. **Eyes.** Apply the `eyes` image to both eyeball meshes, placed in the
+   rig's eye sockets.
+4. **Hair.** If `hair` is non-null, synthesize hair geometry from the hair
+   block and the assembled head/body geometry; attach it rigidly to the head.
+5. **Rig.** The exported artifact carries the rig's full joint hierarchy and
+   per-vertex skinning weights, so the result is animatable, not a statue.
+
+Assembly is deterministic: the same character file, the same pinned assets
+(or byte-identical regenerated ones), and the same assembler version MUST
+produce an identical scene, and SHOULD produce a byte-identical scene file.
+
+## 10. Versioning and compatibility
+
+`schema_version` is `"<major>.<minor>"`.
+
+- **Minor versions are additive.** A later minor version may add optional
+  top-level fields, optional recipe fields, new texture slots, new `rig`
+  strings, and new `topology` values. It MUST NOT change the meaning or
+  validity of any document that was valid under an earlier minor version of
+  the same major.
+- **Readers** encountering a document with a newer minor version than they
+  implement SHOULD process it, ignoring unrecognized optional fields, with
+  one exception: an unrecognized `topology` or `rig` value is a hard error
+  (§4.2) — those change what the document *builds*, not just what it
+  *records*.
+- **Major version 0 caveat.** While the major version is 0, breaking changes
+  may occur between minors; each will ship with a documented migration. From
+  1.0, breaking changes require a major bump.
+- The hair block versions independently (§6); a character schema version
+  pins the set of hair schema versions it accepts (v0.1 accepts hair schema
+  `1` only).
+
+## 11. Validation
+
+A conforming implementation validates, at minimum: presence and types of all
+required fields; array lengths (45, 72, 3); enum membership for every closed
+vocabulary (including `topology` and `rig`); seed ranges; the
+`color.rgb`/`custom` co-constraint; and finiteness of all numbers (NaN and
+infinities are invalid everywhere). The reference implementation publishes a
+machine-readable JSON Schema for each schema version and exposes validation
+as a library call, a CLI command, and an MCP tool; third parties are
+encouraged to validate against the JSON Schema directly.
+
+## 12. What the format is not
+
+- **Not a mesh interchange format.** The built artifact is standard glTF;
+  interchange happens there.
+- **Not an animation format.** Poses, expressions, and clips are runtime
+  data for the rig.
+- **Not a likeness record.** A character file stores parameters of a
+  synthetic identity described by text. It records no biometric data,
+  reference images, or real-person identifiers.

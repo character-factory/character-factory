@@ -1,0 +1,53 @@
+# ============================================================
+# character-factory-oss
+# NOTE: this file is public. Comments here must follow the same
+# provenance rules as code — no internal names, ever.
+# ============================================================
+
+# --- Agent context files: PERMANENTLY ignored, never remove these rules ---
+CLAUDE.md
+AGENTS.md
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+.venv/
+venv/
+.python-version
+
+# --- Model weights and caches: fetched at runtime, never committed ---
+weights/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+.cache/
+
+# --- Generated output ---
+out/
+outputs/
+*.glb
+*.gltf
+!examples/**/*.glb        # committed example assets are allowed, deliberately
+
+# --- Test/tooling artifacts ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Editor/OS noise ---
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# --- Local env ---
+.env
+.env.*

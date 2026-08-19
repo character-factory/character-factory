@@ -1,0 +1,222 @@
+{
+  "format": "character-factory/character",
+  "schema_version": "0.1",
+  "name": "freediver",
+  "body": {
+    "rig": "mhr-lod1@1.0",
+    "topology": "closed",
+    "identity": [
+      0.3569999933242798,
+      0.6079000234603882,
+      0.03739999979734421,
+      -0.22030000388622284,
+      -0.879800021648407,
+      -0.7950999736785889,
+      -0.13459999859333038,
+      0.28040000796318054,
+      0.7653999924659729,
+      0.3562000095844269,
+      0.5967000126838684,
+      0.022299999371170998,
+      -0.22499999403953552,
+      -0.8827999830245972,
+      -0.7878999710083008,
+      -0.1289999932050705,
+      0.2946999967098236,
+      0.7731999754905701,
+      0.35519999265670776,
+      0.5853000283241272,
+      0.007199999876320362,
+      -0.2296999990940094,
+      -0.885699987411499,
+      -0.7804999947547913,
+      -0.12330000102519989,
+      0.3089999854564667,
+      0.7809000015258789,
+      0.35420000553131104,
+      0.5737000107765198,
+      -0.00800000037997961,
+      -0.23430000245571136,
+      -0.8881999850273132,
+      -0.7728000283241272,
+      -0.11760000139474869,
+      0.323199987411499,
+      0.7882999777793884,
+      0.3531000018119812,
+      0.5619000196456909,
+      -0.023099999874830246,
+      -0.23890000581741333,
+      -0.890500009059906,
+      -0.7649999856948853,
+      -0.11190000176429749,
+      0.33719998598098755,
+      0.7954999804496765
+    ],
+    "resting_expression": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "textures": {
+    "skin": {
+      "component": "skin",
+      "component_version": "0.1.0",
+      "prompt": "deep brown skin tone, adult, smooth even complexion",
+      "seed": 52001
+    },
+    "eyes": {
+      "component": "eyes",
+      "component_version": "0.1.0",
+      "prompt": "dark brown iris, calm even sclera",
+      "seed": 52002
+    },
+    "garments": {
+      "component": "garments",
+      "component_version": "0.1.0",
+      "prompt": "matte black one-piece swimsuit with high neckline",
+      "seed": 52003
+    }
+  },
+  "hair": {
+    "schema_version": 1,
+    "seed": 19,
+    "family": "bun",
+    "part": {
+      "kind": "center",
+      "side": "wearer_left",
+      "position": "subtle",
+      "extent": "to_crown",
+      "width": "narrow"
+    },
+    "hairline": {
+      "height": "natural",
+      "shape": "rounded",
+      "temple_recession": "none",
+      "sideburns": "short",
+      "nape": "natural",
+      "irregularity": "clean"
+    },
+    "length": {
+      "overall": "shoulder",
+      "cut_line": "blunt"
+    },
+    "shape": {
+      "volume": "medium",
+      "density": "full",
+      "texture": "coily",
+      "wave_size": "small",
+      "wave_strength": "strong",
+      "root_lift": "medium"
+    },
+    "drape": {
+      "gravity": "natural",
+      "stiffness": "natural",
+      "shoulder_routing": "all_behind",
+      "body_clearance": "close"
+    },
+    "color": {
+      "family": "custom",
+      "rgb": [
+        0.05000000074505806,
+        0.029999999329447746,
+        0.019999999552965164
+      ]
+    }
+  },
+  "provenance": {
+    "prompt": "a freediver with deep brown skin, coily hair in a tight bun, black one-piece swimsuit, barefoot",
+    "generator": "character-factory/0.1.0.dev0",
+    "components": {
+      "interpreter": {
+        "version": "0.1.0"
+      },
+      "identity": {
+        "version": "0.1.0"
+      },
+      "skin": {
+        "version": "0.1.0"
+      },
+      "eyes": {
+        "version": "0.1.0"
+      },
+      "garments": {
+        "version": "0.1.0"
+      },
+      "hair": {
+        "version": "0.1.0"
+      }
+    },
+    "created": "2026-08-19T12:00:00Z",
+    "notes": "Hand-authored example document; parameters are illustrative. Barefoot: no footwear slot."
+  }
+}

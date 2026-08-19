@@ -1,0 +1,226 @@
+{
+  "format": "character-factory/character",
+  "schema_version": "0.1",
+  "name": "marathon-runner",
+  "body": {
+    "rig": "mhr-lod1@1.0",
+    "topology": "closed",
+    "identity": [
+      0.12999999523162842,
+      0.925599992275238,
+      1.0908000469207764,
+      0.2971999943256378,
+      0.04569999873638153,
+      -0.6729999780654907,
+      -0.4300999939441681,
+      -0.9718000292778015,
+      -0.41130000352859497,
+      0.1370999962091446,
+      0.9355000257492065,
+      1.0882999897003174,
+      0.29170000553131104,
+      0.027300000190734863,
+      -0.6876000165939331,
+      -0.43160000443458557,
+      -0.9629999995231628,
+      -0.39410001039505005,
+      0.14409999549388885,
+      0.9451000094413757,
+      1.0853999853134155,
+      0.28610000014305115,
+      0.008799999952316284,
+      -0.7019000053405762,
+      -0.43299999833106995,
+      -0.9538999795913696,
+      -0.3767000138759613,
+      0.15109999477863312,
+      0.9544000029563904,
+      1.0822999477386475,
+      0.28049999475479126,
+      -0.009700000286102295,
+      -0.7160999774932861,
+      -0.4341999888420105,
+      -0.944599986076355,
+      -0.35929998755455017,
+      0.15800000727176666,
+      0.9635000228881836,
+      1.0787999629974365,
+      0.27469998598098755,
+      -0.028200000524520874,
+      -0.7300000190734863,
+      -0.43540000915527344,
+      -0.9350000023841858,
+      -0.3418000042438507
+    ],
+    "resting_expression": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.07999999821186066,
+      0.05000000074505806
+    ]
+  },
+  "textures": {
+    "skin": {
+      "component": "skin",
+      "component_version": "0.1.0",
+      "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
+      "seed": 41002
+    },
+    "eyes": {
+      "component": "eyes",
+      "component_version": "0.1.0",
+      "prompt": "green iris with amber central ring, fine radial fibers",
+      "seed": 41003
+    },
+    "garments": {
+      "component": "garments",
+      "component_version": "0.1.0",
+      "prompt": "teal running vest and black shorts, white piping",
+      "seed": 41004
+    },
+    "footwear": {
+      "component": "footwear",
+      "component_version": "0.1.0",
+      "prompt": "low white running shoes with a teal stripe",
+      "seed": 41005
+    }
+  },
+  "hair": {
+    "schema_version": 1,
+    "seed": 7,
+    "family": "crop",
+    "part": {
+      "kind": "none",
+      "side": "wearer_left",
+      "position": "moderate",
+      "extent": "to_crown",
+      "width": "narrow"
+    },
+    "hairline": {
+      "height": "natural",
+      "shape": "rounded",
+      "temple_recession": "natural",
+      "sideburns": "natural",
+      "nape": "natural",
+      "irregularity": "natural"
+    },
+    "length": {
+      "overall": "cropped",
+      "cut_line": "soft"
+    },
+    "shape": {
+      "volume": "low",
+      "density": "medium",
+      "texture": "straight",
+      "wave_size": "medium",
+      "wave_strength": "medium",
+      "root_lift": "medium"
+    },
+    "drape": {
+      "gravity": "natural",
+      "stiffness": "natural",
+      "shoulder_routing": "split",
+      "body_clearance": "natural"
+    },
+    "color": {
+      "family": "dark_brown"
+    }
+  },
+  "provenance": {
+    "prompt": "a lean marathon runner with cropped dark hair and green eyes, teal running vest, white running shoes",
+    "generator": "character-factory/0.1.0.dev0",
+    "components": {
+      "interpreter": {
+        "version": "0.1.0"
+      },
+      "identity": {
+        "version": "0.1.0"
+      },
+      "skin": {
+        "version": "0.1.0"
+      },
+      "eyes": {
+        "version": "0.1.0"
+      },
+      "garments": {
+        "version": "0.1.0"
+      },
+      "footwear": {
+        "version": "0.1.0"
+      },
+      "hair": {
+        "version": "0.1.0"
+      }
+    },
+    "created": "2026-08-19T12:00:00Z",
+    "notes": "Hand-authored example document; parameters are illustrative."
+  }
+}

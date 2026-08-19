@@ -88,6 +88,12 @@ A complete v0.1 character file:
       "component_version": "0.1.0",
       "prompt": "teal running vest and black shorts, white piping",
       "seed": 41004
+    },
+    "footwear": {
+      "component": "footwear",
+      "component_version": "0.1.0",
+      "prompt": "low white running shoes with a teal stripe",
+      "seed": 41005
     }
   },
   "hair": {
@@ -116,6 +122,7 @@ A complete v0.1 character file:
       "skin": { "version": "0.1.0" },
       "eyes": { "version": "0.1.0" },
       "garments": { "version": "0.1.0" },
+      "footwear": { "version": "0.1.0" },
       "hair": { "version": "0.1.0" }
     },
     "created": "2026-08-18T12:00:00Z"
@@ -123,7 +130,8 @@ A complete v0.1 character file:
   "assets": {
     "skin": { "sha256": "9f2c…", "media_type": "image/png", "width": 1024, "height": 1024 },
     "eyes": { "sha256": "1b77…", "media_type": "image/png", "width": 1024, "height": 1024 },
-    "garments": { "sha256": "c04a…", "media_type": "image/png", "width": 1024, "height": 1024 }
+    "garments": { "sha256": "c04a…", "media_type": "image/png", "width": 1024, "height": 1024 },
+    "footwear": { "sha256": "5e19…", "media_type": "image/png", "width": 1024, "height": 1024 }
   }
 }
 ```
@@ -194,17 +202,22 @@ surface. Writers targeting v0.1 MUST emit `"closed"`.
 
 `textures` maps **slot names** to **texture recipes**. A slot is a named
 surface that receives a generated image; the set of valid slots is defined by
-the schema version. v0.1 defines exactly three, all required:
+the schema version. v0.1 defines exactly four — three required, one optional:
 
-| Slot | Target surface | Content |
-| --- | --- | --- |
-| `skin` | The body's canonical UV atlas | Full-body skin albedo: body, face, hands, feet, scalp. |
-| `eyes` | The eyeball surface (its own concentric UV layout) | One eyeball albedo (iris, sclera), applied to both eyes. |
-| `garments` | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; garment coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
+| Slot | Required | Target surface | Content |
+| --- | --- | --- | --- |
+| `skin` | yes | The body's canonical UV atlas | Full-body skin albedo: body, face, hands, feet, scalp. |
+| `eyes` | yes | The eyeball surface (its own concentric UV layout) | One eyeball albedo (iris, sclera), applied to both eyes. |
+| `garments` | yes | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; garment coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
+| `footwear` | no | The foot regions of the body's canonical UV atlas | Footwear painted over an unoccupied (black) background, keyed like `garments` and composited above them in the foot regions (§9). A barefoot character simply has no `footwear` slot. |
 
-Future schema minor versions may add optional slots (for example, footwear
-rendered onto the atlas's foot regions). Slots are additive: a new slot never
-changes the meaning of an existing one.
+An optional slot that is not used MUST be omitted entirely — an explicit
+`null` is invalid for texture slots (unlike `hair`, which is a required key
+with `null` as a meaningful value). This keeps the canonical form (§2.1)
+unambiguous: barefoot characters have no `footwear` key at all.
+
+Future schema minor versions may add further optional slots. Slots are
+additive: a new slot never changes the meaning of an existing one.
 
 ### 5.1 Texture recipe fields
 
@@ -319,7 +332,7 @@ descriptive, not instructions to a reader.
 | --- | --- | --- | --- |
 | `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
 | `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
-| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. A `hair` entry records the provider version once geometry has been synthesized. |
+| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. A `hair` entry records the provider version once geometry has been synthesized. |
 | `created` | string | no | RFC 3339 timestamp. |
 | `notes` | string | no | Free text. |
 
@@ -361,7 +374,12 @@ artifact, without prescribing an implementation.
 2. **Surface.** Apply the `skin` image to the body's canonical UV atlas.
    Recover garment coverage from the `garments` image (luminance-keyed
    occupancy over the black background) and composite covered texels over
-   the skin image. The composited image is the body's albedo.
+   the skin image. If a `footwear` slot is present, recover its coverage the
+   same way and composite it above the garment layer, restricted to the
+   atlas's foot regions. The compositing order is normative:
+   **skin, then garments, then footwear** — footwear occludes garments
+   (socks under shoes), garments occlude skin. The final composited image is
+   the body's albedo.
 3. **Eyes.** Apply the `eyes` image to both eyeball meshes, placed in the
    rig's eye sockets.
 4. **Hair.** If `hair` is non-null, synthesize hair geometry from the hair
@@ -399,8 +417,8 @@ produce an identical scene, and SHOULD produce a byte-identical scene file.
 A conforming implementation validates, at minimum: presence and types of all
 required fields; array lengths (45, 72, 3); enum membership for every closed
 vocabulary (including `topology` and `rig`); seed ranges; the
-`color.rgb`/`custom` co-constraint; and finiteness of all numbers (NaN and
-infinities are invalid everywhere). The reference implementation publishes a
+`color.rgb`/`custom` co-constraint; the optional-slot omission rule (§5);
+and finiteness of all numbers (NaN and infinities are invalid everywhere). The reference implementation publishes a
 machine-readable JSON Schema for each schema version and exposes validation
 as a library call, a CLI command, and an MCP tool; third parties are
 encouraged to validate against the JSON Schema directly.

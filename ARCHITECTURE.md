@@ -26,9 +26,9 @@ Character Factory turns a text description into a rigged, textured, realtime
         │                        expression values on the MHR parametric body — a
         │                        deterministic function of the text, no seed)
         ▼
-  texture generation            (skin, eyes, garments: three UV-space images from a
-        │                        FLUX.2 Klein 4B base model with per-slot adapters;
-        │                        seeded diffusion, ~1024×1024 albedo each)
+  texture generation            (skin, eyes, garments, optional footwear: UV-space
+        │                        images from a FLUX.2 Klein 4B base model with
+        │                        per-slot adapters; seeded diffusion, 1024² albedo)
         ▼
   hair synthesis                (semantic hair JSON → textured hair mesh, procedural,
         │                        deterministic, no diffusion)
@@ -77,11 +77,14 @@ the boundaries more than the features:
   (teeth, gums, tongue behind a fixed removed patch of the face surface —
   see SPEC.md §4.2), and the test surface for it is specified (§7.4), but
   v0 ships without it.
-- **No open-strap footwear.** Footwear in this pipeline is texture on the
-  foot regions of the body atlas — closed shoes can be painted; sandals and
-  straps would require garment geometry, which v0 does not build. A footwear
-  texture component is expected to be among the first post-launch registry
-  additions.
+- **Footwear is below-ankle styles only.** Footwear ships at launch as an
+  optional fourth texture slot on the foot regions of the body atlas —
+  closed, below-ankle shoes can be painted; boots above the ankle, sandals,
+  and open straps would require geometry the pipeline does not build. The
+  footwear component *declares* its supported style vocabulary in its
+  registry entry, and the interpreter clamps footwear prompts to what the
+  installed component declares (§4.2) — so a broader footwear component
+  later widens the vocabulary without a code change.
 - **No garment geometry at all, in fact.** Garments are generated in UV
   space and composited onto the body surface — visually "worn," structurally
   painted-on. Loose clothing, skirts, and anything that departs from the
@@ -197,7 +200,17 @@ updated hair block and leaves everything else alone.
   quantized weights, the system prompt, few-shot examples, and a decoding
   grammar derived from the hair block's JSON Schema. Inference is
   grammar-constrained decoding at temperature 0, with schema validation as a
-  repair loop. The all-in-one install stays intact: no external LLM server.
+  repair loop. The runtime is **in-process and Python-native**: installed by
+  pip as part of this package's dependencies, no external daemon to start,
+  no runtime with account linkage or telemetry. The all-in-one install stays
+  intact: no external LLM server.
+- **Component vocabularies bound the interpreter's output.** Registry
+  components may declare supported-vocabulary constraints (§4.2) — the first
+  customer is the launch footwear component, which supports below-ankle
+  styles only. The interpreter reads the installed components' declarations
+  and clamps its slot prompts to them, so "knee-high boots" degrades to the
+  nearest supported request rather than silently conditioning a component
+  outside its competence.
 - **The model choice is config, not code.** The backend accepts a registry
   component id or a local weights path; nothing in the codebase names a
   model. Swapping candidates must take under a minute, and the step is
@@ -289,8 +302,11 @@ system and deliberately boring:
    calibrated luminance key against its black background (dark garments are
    protected by a value floor in the generator), cleaned against a small
    library of coverage templates, feathered, and composited over the skin
-   image; the head region is masked from garment coverage. Result: one
-   albedo atlas on one body mesh.
+   image; the head region is masked from garment coverage. Footwear, when
+   present, is keyed the same way and composited above the garment layer,
+   restricted to the atlas's foot regions — the normative order is skin,
+   then garments, then footwear (SPEC.md §9). Result: one albedo atlas on
+   one body mesh.
 3. **Eyes.** A small patch of faces over each eye socket is removed; a
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
    is placed by a similarity fit of its lid margin to the socket rim, and
@@ -299,13 +315,72 @@ system and deliberately boring:
 4. **Hair.** The hair provider's mesh (§5) is attached rigidly to the head
    joint.
 5. **Skinned glTF export.** The exporter emits the full 127-joint node
-   hierarchy, inverse bind matrices, and per-vertex skinning weights read
-   from the rig (pruned to 4 influences per vertex and renormalized), with
-   the body mesh skinned and eyes/lashes/hair bound to their carrier
-   joints. Where UV seams force vertex duplication, skinning weights are
-   carried through the duplication. Materials are metallic-roughness PBR
-   with fixed v0 constants; hair additionally uses the glTF anisotropy
-   extension with a standard-PBR fallback.
+   hierarchy with human-readable joint names (from the rig component's
+   metadata, §4.1), inverse bind matrices, and per-vertex skinning weights
+   read from the rig. The rig's native skinning uses at most 4 influences
+   per vertex with weights summing to 1, so glTF's JOINTS_0/WEIGHTS_0
+   carries the **weights exactly — no pruning loss**. The body mesh is
+   skinned; rigid accessories are parented to their carrier joints (eyeballs
+   to the eye joints, hair to the head joint). Where UV seams force vertex
+   duplication, skinning weights are carried through the duplication.
+   Materials are metallic-roughness PBR with fixed v0 constants; hair
+   additionally uses the glTF anisotropy extension with a standard-PBR
+   fallback.
+
+### 3.1 Exporter conventions
+
+The exporter targets game engines, not just viewers, and follows a fixed set
+of conventions chosen so the artifact imports and retargets correctly:
+
+- **One frame, one constant.** The rig's native frame is centimeters, Y-up,
+  +Z-forward; glTF is meters, Y-up, +Z-forward. The exporter's entire
+  conversion is a uniform scale of 0.01 — no axis flip, no handedness
+  change, and mesh and skeleton are always expressed in the same frame.
+- **One binding truth.** Inverse bind matrices are the inverse of each
+  joint's world bind matrix, written column-major; whenever the rest pose is
+  post-processed (below), the IBMs are rebuilt *afterward*, so the bound
+  mesh is bit-identical before and after.
+- **Rest orientations are re-authored, deliberately.** The rig's native
+  per-joint rest rotations carry per-bone roll that is not mirrored between
+  left and right limbs — harmless to skinning (the IBM cancels it) but
+  hostile to humanoid retargeting systems, which derive hinge axes from rest
+  frames. The exporter discards the source rotations and re-authors every
+  joint's rest orientation from geometry under one mirror-invariant global
+  convention (bone-long axis toward the mean of children; a forward-axis
+  reference vector, invariant under the sagittal mirror, orthogonalized
+  against it). Joint *positions* are untouched.
+- **A small knee flexion is baked into the exported rest pose** (a
+  documented, versioned constant), because a near-straight knee is a
+  degenerate hinge that retargeters can resolve backwards. It is applied as
+  a plain skinning-space edit about a shared sagittal axis, so left and
+  right stay symmetric by construction, and IBMs are rebuilt after.
+- Consequence of the two points above, stated honestly: **the exported rest
+  pose is deliberately not the rig's verbatim rest** — same class of caveat
+  as the correctives note below.
+- **Skeleton root.** Joint index 0 is the rig's world-transform node
+  (`body_world` — a transform root, not a deformer). It is exported as the
+  skeleton's root node and included in the skin's joint list so that glTF
+  joint indices equal rig joint indices verbatim; the exporter asserts no
+  vertex is weighted to it.
+- **File hygiene.** A single self-contained `.glb`: textures embedded as
+  PNG, every bufferView 4-byte aligned, POSITION accessors carry min/max,
+  vertex attributes and indices use the proper buffer targets, joints as
+  unsigned-short VEC4 with float VEC4 weights, no UV V-flip (the bake and
+  glTF already agree on a top-left origin), counter-clockwise winding
+  verified against outward normals rather than assumed.
+- **Two sidecar outputs ship with every export.** A **bone-role manifest**
+  (JSON: engine humanoid role → joint name, the explicit leave-unmapped set
+  such as procedural twist joints and helpers, units, axes, joint count, and
+  the baked knee constant) so integrators never reverse-engineer the
+  mapping; and a **baked idle clip** inside the GLB (every joint held at its
+  bind-pose local rotation for one second) so "does this character stand
+  correctly in-engine?" is answerable without any external animation.
+
+One honest documentation line, twice over: the exported rig animates as
+clean linear-blend skinning — the generator's own renders additionally apply
+learned pose correctives that core glTF cannot express — and the exported
+rest pose re-authors joint orientations and knee flexion as described above.
+Rest-pose *geometry* is exact in both cases.
 
 This is the component that makes the output "a character, not a statue,"
 and it runs everywhere — including machines that cannot generate.
@@ -327,7 +402,8 @@ cached locally (`~/.cache/character-factory/`, override via
 | `skin` | Texture adapter for the body atlas (skin albedo) | ~90 MB |
 | `eyes` | Texture adapter for the eyeball layout | ~90 MB |
 | `garments` | Texture adapter for garment-over-black atlas images | ~90 MB |
-| `body-rig` | Pinned MHR TorchScript rig + topology metadata (Apache 2.0, mirrored with attribution) | ~700 MB |
+| `footwear` | Texture adapter for footwear on the atlas's foot regions (optional slot; declares a below-ankle style vocabulary at launch) | ~90 MB |
+| `body-rig` | Pinned MHR TorchScript rig + topology metadata + the authoritative 127-joint name table (Apache 2.0, mirrored with attribution) | ~700 MB |
 | `assembly-assets` | Eyeball/lash meshes and textures, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
 
@@ -335,11 +411,13 @@ First-run download for full generation ≈ 18–20 GB (the final figure depends
 on the interpreter model choice). Assembly-only use (no generation) needs
 only `body-rig` + `assembly-assets` ≈ 720 MB.
 
-The base model is fetched from its upstream repository (it is Apache 2.0),
-**pinned to an exact upstream revision hash in the registry entry**, so an
-upstream change can never silently alter output; mirroring it into the
-organization is the documented contingency if upstream availability ever
-becomes a problem, not the default.
+Everything upstream is **pinned by content hash, never by a floating
+"latest"**: the base model is fetched from its upstream repository (it is
+Apache 2.0) at an exact revision hash recorded in the registry entry, and
+the rig component pins the exact upstream release archive and each consumed
+artifact by SHA-256. An upstream change can never silently alter output;
+mirroring into the organization is the documented contingency if upstream
+availability ever becomes a problem, not the default.
 
 ### 4.2 The registry
 
@@ -356,9 +434,18 @@ offline fallback). Each entry records:
   "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
   "artifacts": [ { "path": "adapter.safetensors", "sha256": "…", "bytes": 92000000 } ],
   "inference": { "prompt_template": "…", "steps": 20, "guidance": 4.0, "resolution": 1024 },
+  "constraints": { "vocabulary": { "styles": ["…"] } },
   "source": { "hf_repo": "character-factory/skin", "revision": "…" }
 }
 ```
+
+`constraints` is a general mechanism: a component MAY declare the vocabulary
+it actually supports (named enums of styles, categories, or attributes), and
+the interpreter clamps its prompts to the declarations of the components
+that will run (§2.2). The launch footwear component is the first user
+(below-ankle styles only); any component whose competence is narrower than
+its slot's plain-language name should declare, so that capability growth is
+a registry edit, not a code release.
 
 Design consequences, in decreasing order of importance:
 
@@ -484,10 +571,29 @@ Four families, in decreasing order of how much of the product they protect:
 
 - Same character file + same pinned assets ⇒ byte-identical GLB across two
   runs, and across CPU/GPU rig evaluation.
-- Rig integrity: 127 joints exported; every vertex's weights sum to 1 within
-  tolerance and reference ≤ 4 joints; every UV-seam-duplicated vertex
-  carries its original's weights; topology counts and the rig checksum match
-  the registry pin.
+- **Re-parse acceptance test:** parse the exported `.glb` back from disk,
+  walk the node hierarchy to each joint's global matrix, apply the inverse
+  bind matrices, skin the rest mesh with the exported weights, and compare
+  to the exported positions — the target is exact (≈ 0 mm), plus upright
+  orientation and mesh/skeleton co-location. The validator trusts only the
+  artifact, never in-memory state.
+- Rig integrity: 127 joints exported with the golden name table; parent
+  indices are topologically ordered (`parents[i] < i`); joint order matches
+  the rig bundle's own buffers; index 0 is the world-transform root and
+  carries no skin weights; every vertex's weights sum to 1 and reference
+  ≤ 4 joints (exact — the rig's native maximum); every UV-seam-duplicated
+  vertex carries its original's weights; topology counts and the rig
+  checksum match the registry pin.
+- **Mirror-consistency test:** for every left/right joint pair, the left
+  rest frame equals the right one reflected across the sagittal plane
+  (reflect, then restore handedness); the worst angular deviation is
+  reported and bounded.
+- Rest-pose conventions: the baked knee-flexion constant matches its
+  documented version; IBMs were rebuilt after rest edits (implied and
+  verified by the re-parse test above).
+- Sidecars: the bone-role manifest is present, complete, and consistent
+  with the exported joint set; the baked idle clip exists and holds every
+  joint at its bind-pose local rotation.
 - Golden-file structural checks on the example characters: mesh/primitive
   inventory, material constants, texture bindings, extension usage — not
   pixel screenshots.

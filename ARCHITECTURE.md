@@ -202,8 +202,23 @@ updated hair block and leaves everything else alone.
   grammar-constrained decoding at temperature 0, with schema validation as a
   repair loop. The runtime is **in-process and Python-native**: installed by
   pip as part of this package's dependencies, no external daemon to start,
-  no runtime with account linkage or telemetry. The all-in-one install stays
-  intact: no external LLM server.
+  no runtime with account linkage or telemetry. It rides the same
+  torch/transformers stack the generation extra already requires (with a
+  pure-Python constrained-decoding layer), so it adds no build step and no
+  new platform to the matrix — interpretation runs where generation runs.
+  The all-in-one install stays intact: no external LLM server.
+- **Load order is a rule, not a habit:** the interpreter loads, runs, and
+  **releases its memory before the base image model loads** (or runs
+  CPU-only). Keeping both resident is easy to do by accident with an
+  in-process runtime and would break the VRAM floor (§6.1) — the pipeline
+  enforces the sequencing, and a test asserts the interpreter's weights are
+  released before the diffusion stack initializes.
+- **`character-factory interpret "<text>"` is also the benchmark harness**
+  for choosing the default model: it runs exactly the production path
+  (safetensors weights via the in-process runtime with grammar-constrained
+  decoding) and reports, alongside the decomposition JSON, per-invocation
+  wall time and peak memory — so candidate models are compared on the same
+  numbers users will experience.
 - **Component vocabularies bound the interpreter's output.** Registry
   components may declare supported-vocabulary constraints (§4.2) — the first
   customer is the launch footwear component, which supports below-ankle

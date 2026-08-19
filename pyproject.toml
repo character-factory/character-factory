@@ -24,6 +24,16 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Generation (identity, textures, interpreter) is GPU territory: Linux+CUDA
+# first-class, WSL2 supported. The base install stays dependency-free so the
+# schema tools, registry, and assembler-only flows work everywhere.
+generation = [
+  "torch>=2.4",
+  "transformers>=4.44",
+  "safetensors>=0.4",
+  "numpy>=1.26",
+  "lm-format-enforcer>=0.10",
+]
 dev = ["pytest>=8", "jsonschema>=4.21"]
 
 [project.urls]
@@ -34,6 +44,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "character_factory.schema" = ["data/*.json"]
+"character_factory.registry" = ["data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

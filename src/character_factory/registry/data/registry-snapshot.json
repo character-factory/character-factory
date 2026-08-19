@@ -1,0 +1,120 @@
+{
+  "format": "character-factory/registry",
+  "registry_version": "0.1",
+  "generated": "2026-08-19T00:00:00Z",
+  "note": "Pre-release snapshot. Entries whose source is null are declared but not yet published; fetching them fails with a clear error. Sources, artifact lists, and inference metadata are completed as components publish.",
+  "components": [
+    {
+      "name": "interpreter",
+      "version": "0.1.0",
+      "kind": "interpreter",
+      "requires": { "schema": ">=0.1 <1.0" },
+      "artifacts": [],
+      "source": null,
+      "description": "Small local language model + system prompt + few-shot examples + decoding grammar. Maps a free-text description to per-slot texture prompts and the semantic hair block. Model selection is in progress; the blessed default arrives as registry data."
+    },
+    {
+      "name": "identity",
+      "version": "0.1.0",
+      "kind": "identity",
+      "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
+      "artifacts": [],
+      "source": null,
+      "description": "Text to body: deterministic prompt-to-parameters heads plus normalization statistics and owned-position index maps. Consumes the base model's text encoder."
+    },
+    {
+      "name": "skin",
+      "version": "0.1.0",
+      "kind": "texture-adapter",
+      "slot": "skin",
+      "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
+      "inference": { "steps": 20, "guidance": 4.0, "resolution": 1024 },
+      "artifacts": [],
+      "source": null,
+      "description": "Full-body skin albedo on the body's canonical UV atlas."
+    },
+    {
+      "name": "eyes",
+      "version": "0.1.0",
+      "kind": "texture-adapter",
+      "slot": "eyes",
+      "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
+      "inference": { "steps": 20, "guidance": 4.0, "resolution": 1024 },
+      "artifacts": [],
+      "source": null,
+      "description": "Eyeball albedo (iris and sclera) on the eyeball's concentric UV layout."
+    },
+    {
+      "name": "garments",
+      "version": "0.1.0",
+      "kind": "texture-adapter",
+      "slot": "garments",
+      "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
+      "inference": { "steps": 20, "guidance": 4.0, "resolution": 1024 },
+      "artifacts": [],
+      "source": null,
+      "description": "Clothing over an unoccupied background on the body's canonical UV atlas; coverage recovered by luminance key at assembly."
+    },
+    {
+      "name": "footwear",
+      "version": "0.1.0",
+      "kind": "texture-adapter",
+      "slot": "footwear",
+      "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
+      "inference": { "steps": 20, "guidance": 4.0, "resolution": 1024 },
+      "constraints": { "vocabulary": { "styles": ["below_ankle"] } },
+      "artifacts": [],
+      "source": null,
+      "description": "Footwear on the foot regions of the body's canonical UV atlas, composited above garments. The launch component supports below-ankle styles only, declared here so the interpreter clamps footwear prompts accordingly."
+    },
+    {
+      "name": "body-rig",
+      "version": "1.0.1",
+      "kind": "body-rig",
+      "requires": { "schema": ">=0.1 <1.0" },
+      "artifacts": [
+        {
+          "path": "mhr_model.pt",
+          "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc",
+          "bytes": 696110248
+        },
+        {
+          "path": "lod1.fbx",
+          "sha256": "d66fbca815bcde6532f728f1f63071003c5d43ff44f56e263a0807baec1ae055",
+          "bytes": 7884560
+        }
+      ],
+      "source": null,
+      "upstream": {
+        "project": "Momentum Human Rig (MHR), Meta Platforms",
+        "url": "https://github.com/facebookresearch/MHR",
+        "license": "Apache-2.0",
+        "release": "v1.0.1",
+        "release_archive": {
+          "path": "assets.zip",
+          "sha256": "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94",
+          "bytes": 198943157
+        }
+      },
+      "description": "The pinned MHR rig (TorchScript forward + LOD1 topology/UVs), mirrored with attribution, plus rig metadata: topology checksum and the authoritative 127-joint name table (added at publish)."
+    },
+    {
+      "name": "flux2-klein-4b",
+      "version": "1.0.0",
+      "kind": "base-model",
+      "requires": { "schema": ">=0.1 <1.0" },
+      "artifacts": [],
+      "source": null,
+      "description": "FLUX.2 Klein 4B (Black Forest Labs, Apache-2.0): transformer + text encoder + VAE. Fetched from its upstream repository, pinned to an exact revision at publish; the identity component shares its text encoder."
+    },
+    {
+      "name": "assembly-assets",
+      "version": "0.1.0",
+      "kind": "assets",
+      "requires": { "schema": ">=0.1 <1.0" },
+      "artifacts": [],
+      "source": null,
+      "description": "Static assembly assets: eyeball and lash meshes/textures (MIT, attributed in NOTICE), UV coverage templates, atlas metadata."
+    }
+  ]
+}

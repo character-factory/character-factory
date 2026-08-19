@@ -25,7 +25,11 @@ classifiers = [
 dependencies = [
   "torch>=2.4",
   "numpy>=1.26",
+  "pillow>=10",
 ]
+
+[project.scripts]
+character-factory = "character_factory.cli:main"
 
 [project.optional-dependencies]
 # Generation (identity, textures, interpreter) is GPU territory: Linux+CUDA
@@ -33,6 +37,7 @@ dependencies = [
 # schema tools, registry, and assembler-only flows work everywhere.
 generation = [
   "transformers>=4.44",
+  "diffusers>=0.35",
   "safetensors>=0.4",
   "lm-format-enforcer>=0.10",
 ]

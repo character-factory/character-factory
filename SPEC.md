@@ -111,6 +111,7 @@ A complete v0.1 character file:
     "prompt": "a lean marathon runner with cropped dark hair and green eyes, teal running vest",
     "generator": "character-factory/0.1.0",
     "components": {
+      "interpreter": { "version": "0.1.0" },
       "identity": { "version": "0.1.0" },
       "skin": { "version": "0.1.0" },
       "eyes": { "version": "0.1.0" },
@@ -318,7 +319,7 @@ descriptive, not instructions to a reader.
 | --- | --- | --- | --- |
 | `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
 | `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
-| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot. A `hair` entry records the provider version once geometry has been synthesized. |
+| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. A `hair` entry records the provider version once geometry has been synthesized. |
 | `created` | string | no | RFC 3339 timestamp. |
 | `notes` | string | no | Free text. |
 

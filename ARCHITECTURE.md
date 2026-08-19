@@ -5,10 +5,9 @@ how the pieces fit together, and what is deliberately not in v0. The
 companion document [SPEC.md](SPEC.md) defines the character format; this
 document covers everything else.
 
-> **LICENSE-PENDING** — the license for this repository has not been chosen
-> yet. Until a LICENSE file lands, treat the code and documents here as
-> all-rights-reserved. The licensing decision includes a sub-decision about
-> the hair synthesis engine (§5).
+Character Factory is licensed under the Apache License 2.0 — code, documents,
+and published model weights alike. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE) for third-party attributions.
 
 ## 1. What v0 is
 
@@ -19,10 +18,11 @@ Character Factory turns a text description into a rigged, textured, realtime
 "a lean marathon runner with cropped dark hair and green eyes, teal running vest"
         │
         ▼
-  prompt decomposition          (per-slot prompts + hair semantics; deterministic rules)
-        │
+  interpretation                (a small local language model maps the description to
+        │                        per-slot texture prompts + the semantic hair block;
+        │                        the raw description also passes through untouched)
         ▼
-  identity generation           (text → 45 body/face shape coefficients + 72 resting-
+  identity generation           (raw text → 45 body/face shape coefficients + 72 resting-
         │                        expression values on the MHR parametric body — a
         │                        deterministic function of the text, no seed)
         ▼
@@ -46,13 +46,20 @@ provenance. The GLB is a build artifact; the character file is the source.
 
 Two properties are load-bearing:
 
-- **Identity is deterministic.** The same description always produces the
-  same body. Variation between characters comes from the description (and
-  from texture seeds), not from identity sampling. This makes character
-  files honest recipes rather than lottery tickets.
+- **Identity is deterministic.** The identity model consumes the raw user
+  description — never an interpreter rewrite of it — so the same description
+  always produces the same body. Variation between characters comes from the
+  description (and from texture seeds), not from identity sampling. This
+  makes character files honest recipes rather than lottery tickets.
 - **Everything downstream of generation is symbolic.** Textures are recipes
   (prompt + seed + component version), hair is a semantic vocabulary, the
   body is 117 floats. Regeneration and hand-editing are both first-class.
+
+The determinism boundary is worth stating precisely: **prompt → character
+file is not promised deterministic** (interpretation is a language-model
+step); **character file → GLB is byte-identical** given pinned assets. The
+character file is the reproducible artifact, which is why it — not the
+prompt — is the thing you commit, share, and edit.
 
 ### 1.1 What v0 is not
 
@@ -109,6 +116,13 @@ agent can create and inspect characters as part of a workflow. Nothing in
 the server layers has logic of its own — if a behavior can't be reached from
 the library API, it doesn't exist.
 
+One principle governs both server layers: **local and hosted are one product
+with two addresses.** The HTTP contract and the MCP tool surface defined here
+are the same contract a hosted service exposes; a user or agent who outgrows
+local switches by changing an endpoint (and adding a token), never by
+learning a new product. Design decisions in §2.3 and §2.4 that look like
+over-engineering for a localhost tool exist to keep that true.
+
 ### 2.1 The library API
 
 The public surface a user touches is intentionally small — one class, four
@@ -118,7 +132,7 @@ functions:
 from character_factory import Character, create, bake, assemble, make
 
 character = create("a lean marathon runner …", seed=41000)
-    # → Character. Runs prompt decomposition and identity generation and
+    # → Character. Runs interpretation and identity generation and
     #   fills in texture recipes + hair semantics. Needs the identity
     #   component (GPU strongly recommended, small model); does NOT run
     #   texture diffusion.
@@ -153,18 +167,65 @@ Design rules for the internal modules:
   `import character_factory` works everywhere.
 - `registry` is the only module that touches the network, and only when a
   component is missing from the local cache.
-- Prompt decomposition is deterministic and rules-based in v0. A pluggable
-  hook exists for LLM-assisted decomposition, off by default — the default
-  pipeline must run offline.
 
-### 2.2 The HTTP server
+### 2.2 The interpreter
+
+The step that maps a free-text description onto the character file's
+structured fields is a language-model task by construction — the hair block
+alone is ~30 closed-vocabulary fields that no rule set can fill from prose —
+so it is designed as permanent infrastructure, not a convenience:
+
+```python
+class Interpreter(Protocol):
+    def interpret(
+        self,
+        text: str,                     # the user's description or edit request
+        existing: Character | None,    # the edit path: text amends this character
+    ) -> Interpretation:               # per-slot texture prompts + hair block
+        ...
+```
+
+The raw text is *not* consumed by the interpreter alone — it passes through
+to identity generation untouched (§1), and the interpreter's output covers
+only the fields that are prose in the character file anyway (texture prompts)
+plus the semantic hair block. The edit path is the same protocol: given an
+existing character and "give her a ponytail," the interpreter returns an
+updated hair block and leaves everything else alone.
+
+- **Default backend: a small local model, shipped as a registry component**
+  like every other model — a versioned, hash-pinned artifact containing
+  quantized weights, the system prompt, few-shot examples, and a decoding
+  grammar derived from the hair block's JSON Schema. Inference is
+  grammar-constrained decoding at temperature 0, with schema validation as a
+  repair loop. The all-in-one install stays intact: no external LLM server.
+- **The model choice is config, not code.** The backend accepts a registry
+  component id or a local weights path; nothing in the codebase names a
+  model. Swapping candidates must take under a minute, and the step is
+  invokable standalone — `character-factory interpret "<text>"` emits the
+  decomposition JSON without running any generation — so candidate models
+  can be compared side by side on real prompts.
+- **Optional backend: any OpenAI-compatible endpoint**, selected by one
+  config field, for people running a local inference server or wanting a
+  larger model. It must never complicate the default path.
+- **Degraded mode: a rules-based fallback** (slot-prompt splitting plus a
+  conservative default hair block), used in offline CI and when no
+  interpreter backend is available. It is documented as degraded, not
+  offered as a quality tier.
+- **VRAM discipline:** the interpreter never coexists in VRAM with the base
+  model — it runs and releases before the diffusion stack loads, or runs
+  CPU-only. The VRAM floor in §6.1 is unchanged by this component.
+
+### 2.3 The HTTP server
 
 `character-factory serve` starts a local FastAPI app: a library front-end
 with a job queue, not a platform. Design constraints: single GPU, so a
 single-flight generation queue; all state on disk in per-character
 directories (the character file is the database); progressive results —
 the scene GLB is rebuilt and atomically replaced as each texture lands, so a
-polling viewer watches the character get dressed.
+polling viewer watches the character get dressed. The bundled browser view is
+built as a plain API client of this contract — no server-side rendering, no
+local-only endpoints — so the same interface can front a hosted deployment
+rather than being a dead end.
 
 Endpoint sketch (v0):
 
@@ -185,7 +246,16 @@ Uploads of edited character files are just `POST /v0/characters` with a
 `character` body instead of a `prompt` — the server builds whatever valid
 character it is given.
 
-### 2.3 The MCP server
+Per the parity principle (§2), the entire `/v0` surface above is the common
+local/hosted contract — no endpoint is a local-only convenience — and it is
+designed as if a conformance suite will one day run against both. The auth
+story is reserved at the contract level now: clients send
+`Authorization: Bearer <token>`, which the v0 local server accepts and
+ignores, so no client changes shape when auth becomes real. The one expected
+divergence is capacity semantics (`202` queue depth and `/v0/health`
+contents), which are declared server-specific, not contractual.
+
+### 2.4 The MCP server
 
 `character-factory mcp` (stdio transport; HTTP optional) exposes:
 
@@ -201,6 +271,11 @@ The intended consumer is a coding agent building something *with* characters
 this description" as a callable primitive. Tool inputs and outputs are
 character documents, never opaque handles, so agent workflows compose with
 hand editing and version control.
+
+MCP parity mirrors HTTP parity: same tool names, same input/output shapes,
+local and hosted; the only difference is transport and endpoint
+configuration. An agent workflow built against the local MCP server must
+work against a hosted one by editing its MCP config, nothing else.
 
 ## 3. Assembly and the rigged export
 
@@ -247,6 +322,7 @@ cached locally (`~/.cache/character-factory/`, override via
 
 | Component | Contents | Approx. size |
 | --- | --- | --- |
+| `interpreter` | Quantized small language model + system prompt + few-shot examples + decoding grammar (§2.2; the specific model is being selected through this pipeline and arrives as registry data) | ~1–3 GB |
 | `identity` | Text → body/face parameter heads + normalization stats | ~10 MB |
 | `skin` | Texture adapter for the body atlas (skin albedo) | ~90 MB |
 | `eyes` | Texture adapter for the eyeball layout | ~90 MB |
@@ -255,8 +331,15 @@ cached locally (`~/.cache/character-factory/`, override via
 | `assembly-assets` | Eyeball/lash meshes and textures, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
 
-First-run download for full generation ≈ 17 GB. Assembly-only use (no
-generation) needs only `body-rig` + `assembly-assets` ≈ 720 MB.
+First-run download for full generation ≈ 18–20 GB (the final figure depends
+on the interpreter model choice). Assembly-only use (no generation) needs
+only `body-rig` + `assembly-assets` ≈ 720 MB.
+
+The base model is fetched from its upstream repository (it is Apache 2.0),
+**pinned to an exact upstream revision hash in the registry entry**, so an
+upstream change can never silently alter output; mirroring it into the
+organization is the documented contingency if upstream availability ever
+becomes a problem, not the default.
 
 ### 4.2 The registry
 
@@ -297,10 +380,11 @@ Design consequences, in decreasing order of importance:
 
 ## 5. The hair boundary
 
-Hair is synthesized by a procedural engine that is developed as a separate
-package, currently private, **whose license is deliberately undecided** — a
-blocking human decision tracked in the LICENSE-PENDING note above. The
-architecture is therefore built against an interface, not the engine:
+Hair is synthesized by a procedural engine that ships **vendored inside this
+package**, under the repository's Apache 2.0 license. Even so, the
+architecture is built against an interface, not the engine — extraction to a
+standalone dependency remains a post-launch option, and alternative providers
+remain possible:
 
 ```python
 class HairProvider(Protocol):
@@ -318,13 +402,11 @@ internals — it fits any roughly-human head mesh — which is what makes the
 boundary this narrow. Its output is deterministic for a fixed (intent, head,
 engine version) triple, which assembly's determinism guarantee inherits.
 
-The provider can therefore ship any of three ways without changing anything
-above this line: as a pip dependency (if its license permits), vendored into
-this package (if licensing favors a single distribution), or as an optional
-plugin discovered via entry point (if it remains separate), with `hair:
-null` characters and a clear "hair provider not installed" error as the
-degraded mode. Choosing among these is the pending license decision, not an
-architectural one.
+Because the boundary is this narrow, the vendoring decision is packaging,
+not architecture: the engine could equally ship as a pip dependency or an
+entry-point plugin without changing anything above this line. Third-party
+providers plug in behind the same protocol; a missing provider degrades to
+`hair: null` characters and a clear "hair provider not installed" error.
 
 ## 6. Install story
 
@@ -351,7 +433,9 @@ quantized (the default), texture generation at 1024×1024 fits in
 for quantization or careful load ordering. The pipeline loads the base
 model once and swaps ~90 MB adapters between slots, and identity generation
 reuses the same text encoder, so the floor is set by the base model, not by
-the number of components. Indicative timing on an RTX 3090-class card:
+the number of components. The interpreter does not raise the floor: it runs
+first and releases its VRAM before the diffusion stack loads (or runs
+CPU-only) — the two are never resident together. Indicative timing on an RTX 3090-class card:
 well under a second for text → body parameters, tens of seconds per texture
 slot, a few minutes end-to-end for a first character (plus one-time
 download and model load).
@@ -451,19 +535,23 @@ character-factory/
 │                              # tour of the character file; links to SPEC.md
 ├── SPEC.md                    # the character format (this repo's second product)
 ├── ARCHITECTURE.md            # this document
-├── LICENSE                    # pending — see note at top
+├── LICENSE                    # Apache 2.0
+├── NOTICE                     # third-party attributions
 ├── pyproject.toml             # one package: character-factory
 ├── src/character_factory/
 │   ├── __init__.py            # Character, create, bake, assemble, make
 │   ├── schema/                # format model, validation, canonical form, JSON Schema
 │   ├── registry/              # component index, fetch, cache, integrity
-│   ├── identity/              # text → body parameters          (GPU, lazy import)
+│   ├── interpreter/           # Interpreter protocol, local-model + HTTP backends,
+│   │                          # rules fallback (local model: lazy import)
+│   ├── identity/              # raw text → body parameters       (GPU, lazy import)
 │   ├── textures/              # diffusion runner, adapter loading (GPU, lazy import)
-│   ├── hair/                  # HairProvider protocol + provider discovery
+│   ├── hair/                  # HairProvider protocol + the vendored procedural engine
 │   ├── assembly/              # rig eval, UV compositing, eyes, skinned glTF export
 │   ├── server/                # FastAPI app, job queue, per-character state dirs
 │   ├── mcp/                   # MCP tools + resources
-│   └── cli.py                 # make / create / bake / assemble / validate / serve / mcp / components
+│   └── cli.py                 # make / create / bake / assemble / interpret /
+│                              # validate / serve / mcp / components
 ├── examples/
 │   ├── characters/            # committed .char.json files
 │   └── assets/                # committed baked textures for the no-GPU path

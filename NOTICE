@@ -1,0 +1,29 @@
+Character Factory
+Copyright 2026 the Character Factory authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This project builds on, fetches at runtime, or redistributes assets derived
+from the following third-party works:
+
+Momentum Human Rig (MHR)
+  https://github.com/facebookresearch/MHR
+  Copyright Meta Platforms, Inc. and affiliates.
+  Licensed under the Apache License, Version 2.0.
+  The parametric body model evaluated at assembly time (fetched as the
+  `body-rig` component, pinned to an exact upstream release).
+
+FLUX.2 Klein 4B
+  Copyright Black Forest Labs.
+  Licensed under the Apache License, Version 2.0.
+  The base image-generation model used by the texture components (fetched
+  from its upstream repository, pinned to an exact revision).
+
+UnityEyes2
+  https://github.com/alexanderdsmith/UnityEyes2
+  Copyright (c) 2018 Erroll Wood; updates copyright (c) 2026 A. Smith,
+  W. Ding, B. Muthumanickam (UIUC).
+  Licensed under the MIT License.
+  Source of the stock eyeball and lash assets redistributed in the
+  `assembly-assets` component, which carries this attribution and the
+  pinned upstream revision in its metadata.

@@ -78,20 +78,26 @@ class Registry:
         name, ref_version = parse_ref(ref_or_name)
         return self.index.get(name, version or ref_version, vocab.SCHEMA_VERSION)
 
-    def resolve_slots(self, slots: list[str]) -> dict[str, ComponentEntry]:
-        """The component that serves each requested texture slot, newest
+    def resolve_slots(
+        self, slots: list[str], map_name: str = "albedo"
+    ) -> dict[str, ComponentEntry]:
+        """The component that serves each requested slot's named map, newest
         compatible version of each — the same resolution `create` pins into
-        a character's provenance."""
+        a character's provenance. Multiple components may register against
+        one slot (SPEC.md §5); the (slot, map) pair is what resolves."""
         resolved: dict[str, ComponentEntry] = {}
         for slot in slots:
             candidates = [
                 entry
                 for entry in self.index.entries
                 if entry.kind == "texture-adapter" and entry.slot == slot
+                and entry.map == map_name
                 and entry.compatible_with_schema(vocab.SCHEMA_VERSION)
             ]
             if not candidates:
-                raise RegistryError(f"no component serves texture slot {slot!r}")
+                raise RegistryError(
+                    f"no component serves texture slot {slot!r} (map {map_name!r})"
+                )
             resolved[slot] = max(candidates, key=lambda e: e.version)
         return resolved
 

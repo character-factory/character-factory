@@ -86,9 +86,14 @@ def bake(
     registry = registry or Registry.default()
     baker = TextureBaker(registry, device=device, pipeline_factory=pipeline_factory)
 
+    # v0.1 bakes each slot's albedo map; the flat asset descriptor is the
+    # albedo shorthand (SPEC.md §5.2, §8). Albedo files are named <slot>.png;
+    # future secondary maps will be <slot>.<map>.png.
     descriptors: dict[str, dict] = {}
-    for slot, recipe in sorted(character.textures.items()):
-        descriptors[slot] = baker.bake_slot(slot, recipe, out_dir / f"{slot}.png")
+    for slot, maps in sorted(character.texture_maps().items()):
+        descriptors[slot] = baker.bake_slot(
+            slot, maps["albedo"], out_dir / f"{slot}.png"
+        )
 
     document = character.to_document()
     document["assets"] = descriptors

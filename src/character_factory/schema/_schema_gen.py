@@ -107,10 +107,26 @@ def _hair() -> dict:
     }
 
 
+def _slot_value() -> dict:
+    """A slot: the flat albedo-recipe shorthand, or named maps (v0.1: albedo
+    only). See SPEC.md §5.2."""
+    return {
+        "anyOf": [
+            _recipe(),
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["albedo"],
+                "properties": {name: _recipe() for name in vocab.MAPS},
+            },
+        ]
+    }
+
+
 def build_json_schema() -> dict:
     """The strict-flavor JSON Schema for character format v0.1."""
-    slots = {slot: _recipe() for slot in vocab.ALL_SLOTS}
-    asset_entry = {
+    slots = {slot: _slot_value() for slot in vocab.ALL_SLOTS}
+    descriptor = {
         "type": "object",
         "additionalProperties": False,
         "required": ["sha256", "media_type", "width", "height"],
@@ -120,6 +136,17 @@ def build_json_schema() -> dict:
             "width": {"type": "integer", "exclusiveMinimum": 0},
             "height": {"type": "integer", "exclusiveMinimum": 0},
         },
+    }
+    asset_entry = {
+        "anyOf": [
+            descriptor,
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["albedo"],
+                "properties": {name: descriptor for name in vocab.MAPS},
+            },
+        ]
     }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

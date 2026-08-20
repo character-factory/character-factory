@@ -79,14 +79,16 @@ def test_bad_schema_range_rejected():
 def test_packaged_snapshot_is_valid_and_complete():
     registry = Registry.default()
     names = {entry.name for entry in registry.index.entries}
-    assert {"interpreter", "identity", "skin", "eyes", "garments", "footwear",
+    assert {"interpreter", "make-figure", "make-skin", "make-eye",
+            "make-garment", "make-shoe", "make-wig",
             "body-rig", "flux2-klein-4b", "assembly-assets"} <= names
 
 
-def test_snapshot_footwear_declares_vocabulary():
+def test_snapshot_shoe_maker_declares_vocabulary():
     registry = Registry.default()
-    assert registry.vocabulary_for("footwear") == {"styles": ["below_ankle"]}
-    assert registry.vocabulary_for("skin") == {}
+    assert registry.vocabulary_for("make-shoe") == {"styles": ["below_ankle"]}
+    assert registry.vocabulary_for("make-skin") == {}
+    assert registry.get("make-shoe").map == "albedo"
 
 
 def test_snapshot_body_rig_is_hash_pinned():
@@ -133,24 +135,24 @@ def test_resolve_slots_and_vocabulary_by_slot():
     index = RegistryIndex(
         make_index(
             [
-                adapter("skin", "0.1.0", "skin"),
-                adapter("garments", "0.1.0", "garments"),
+                adapter("make-skin", "0.1.0", "skin"),
+                adapter("make-garment", "0.1.0", "garment"),
                 adapter(
-                    "footwear", "0.1.0", "footwear",
+                    "make-shoe", "0.1.0", "shoe",
                     constraints={"vocabulary": {"styles": ["below_ankle"]}},
                 ),
             ]
         )
     )
     registry = Registry(index)
-    by_slot = registry.vocabulary_by_slot(["skin", "garments", "footwear"])
+    by_slot = registry.vocabulary_by_slot(["skin", "garment", "shoe"])
     assert by_slot == {
         "skin": {},
-        "garments": {},
-        "footwear": {"styles": ["below_ankle"]},
+        "garment": {},
+        "shoe": {"styles": ["below_ankle"]},
     }
     with pytest.raises(RegistryError):
-        registry.resolve_slots(["eyes"])  # no component serves it in this index
+        registry.resolve_slots(["eye"])  # no component serves it in this index
 
 
 def test_parse_ref():

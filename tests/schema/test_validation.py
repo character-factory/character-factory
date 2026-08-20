@@ -95,20 +95,20 @@ def test_bad_parameter_values(doc, bad):
 # --- textures ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("slot", ["skin", "eyes", "garments"])
+@pytest.mark.parametrize("slot", ["skin", "eye", "garment"])
 def test_missing_required_slot(doc, slot):
     del doc["textures"][slot]
     assert errors_at(validate_document(doc), f"textures.{slot}")
 
 
-def test_footwear_null_is_invalid(doc):
-    doc["textures"]["footwear"] = None
-    assert errors_at(validate_document(doc), "textures.footwear")
+def test_shoe_null_is_invalid(doc):
+    doc["textures"]["shoe"] = None
+    assert errors_at(validate_document(doc), "textures.shoe")
 
 
-def test_footwear_recipe_is_valid(doc):
-    doc["textures"]["footwear"] = {
-        "component": "footwear",
+def test_shoe_recipe_is_valid(doc):
+    doc["textures"]["shoe"] = {
+        "component": "make-shoe",
         "component_version": "0.1.0",
         "prompt": "low canvas sneakers",
         "seed": 4,
@@ -116,8 +116,53 @@ def test_footwear_recipe_is_valid(doc):
     assert validate_document(doc, strict=True).ok
 
 
+@pytest.mark.parametrize("wrong", ["eyes", "garments", "footwear", "shoes", "skins"])
+def test_plural_slot_keys_are_hard_errors_in_both_modes(doc, wrong):
+    doc["textures"][wrong] = dict(doc["textures"]["skin"])
+    for strict in (False, True):
+        report = validate_document(doc, strict=strict)
+        issues = errors_at(report, f"textures.{wrong}")
+        assert issues, f"{wrong} must be a hard error (strict={strict})"
+        assert "singular" in issues[0].message and "did you mean" in issues[0].message
+
+
+def test_plural_asset_slot_keys_are_hard_errors(doc):
+    doc["assets"] = {
+        "eyes": {"sha256": "ab" * 32, "media_type": "image/png",
+                 "width": 4, "height": 4}
+    }
+    assert errors_at(validate_document(doc), "assets.eyes")
+
+
+def test_nested_albedo_map_is_valid(doc):
+    doc["textures"]["skin"] = {"albedo": doc["textures"]["skin"]}
+    assert validate_document(doc, strict=True).ok
+
+
+def test_map_dict_without_albedo_is_invalid(doc):
+    recipe = doc["textures"]["skin"]
+    doc["textures"]["skin"] = {"gloss": recipe}
+    report = validate_document(doc)
+    assert errors_at(report, "textures.skin.albedo")
+
+
+def test_unknown_map_warns_default_errors_strict(doc):
+    recipe = doc["textures"]["skin"]
+    doc["textures"]["skin"] = {"albedo": recipe, "normal": dict(recipe)}
+    default = validate_document(doc)
+    assert default.ok and warnings_at(default, "textures.skin.normal")
+    assert errors_at(validate_document(doc, strict=True), "textures.skin.normal")
+
+
+def test_reserved_inputs_field_is_hard_error(doc):
+    doc["textures"]["skin"]["inputs"] = {"reference": {"slot": "skin"}}
+    for strict in (False, True):
+        issues = errors_at(validate_document(doc, strict=strict), "textures.skin.inputs")
+        assert issues and "reserved" in issues[0].message
+
+
 def test_unknown_slot_warns_default_errors_strict(doc):
-    doc["textures"]["cape"] = dict(doc["textures"]["garments"])
+    doc["textures"]["cape"] = dict(doc["textures"]["garment"])
     default = validate_document(doc)
     assert default.ok and warnings_at(default, "textures.cape")
     assert errors_at(validate_document(doc, strict=True), "textures.cape")
@@ -130,8 +175,8 @@ def test_bad_seeds(doc, seed):
 
 
 def test_missing_recipe_fields(doc):
-    del doc["textures"]["eyes"]["prompt"]
-    assert errors_at(validate_document(doc), "textures.eyes.prompt")
+    del doc["textures"]["eye"]["prompt"]
+    assert errors_at(validate_document(doc), "textures.eye.prompt")
 
 
 def test_bad_overrides(doc):
@@ -219,8 +264,8 @@ def test_provenance_missing_components(doc):
 
 
 def test_bad_component_sha(doc):
-    doc["provenance"]["components"]["skin"]["sha256"] = "XYZ"
-    assert errors_at(validate_document(doc), "provenance.components.skin.sha256")
+    doc["provenance"]["components"]["make-skin"]["sha256"] = "XYZ"
+    assert errors_at(validate_document(doc), "provenance.components.make-skin.sha256")
 
 
 def test_bad_created_timestamp(doc):

@@ -22,7 +22,10 @@ REGISTRY_FORMAT = "character-factory/registry"
 REGISTRY_VERSION = "0.1"
 
 KINDS = frozenset(
-    {"identity", "interpreter", "texture-adapter", "base-model", "body-rig", "assets"}
+    {
+        "identity", "interpreter", "texture-adapter", "hair-provider",
+        "base-model", "body-rig", "assets",
+    }
 )
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -59,6 +62,12 @@ class ComponentEntry:
         slot = doc.get("slot")
         if slot is not None:
             _require(slot in vocab.ALL_SLOTS, f"{self.ref}: unknown slot {slot!r}")
+        map_name = doc.get("map")
+        if map_name is not None:
+            _require(
+                isinstance(map_name, str) and map_name,
+                f"{self.ref}: map must be a non-empty string",
+            )
         requires = doc.get("requires", {})
         _require(isinstance(requires, dict), f"{self.ref}: requires must be an object")
         if "schema" in requires:
@@ -125,6 +134,12 @@ class ComponentEntry:
     @property
     def slot(self) -> str | None:
         return self.document.get("slot")
+
+    @property
+    def map(self) -> str:
+        """Which named map of its slot a texture component produces.
+        Defaults to `albedo`; a future normal-map entry is pure data."""
+        return self.document.get("map", "albedo")
 
     @property
     def artifacts(self) -> list[dict]:

@@ -143,8 +143,21 @@ class _Checker:
         if not isinstance(recipe, dict):
             self.error(path, "must be an object")
             return
+        for reserved in vocab.RESERVED_RECIPE_FIELDS:
+            if reserved in recipe:
+                # Reserved for a future minor version, and — like an unknown
+                # rig or topology — it changes what gets built: a recipe with
+                # conditioning inputs cannot be honored by ignoring them.
+                self.error(
+                    f"{path}.{reserved}",
+                    f"{reserved!r} is reserved for a future schema version; this "
+                    f"implementation cannot honor conditioning inputs (SPEC.md §5.3)",
+                )
         self.check_keys(
-            recipe, {"component", "component_version", "prompt", "seed", "overrides"}, path
+            recipe,
+            {"component", "component_version", "prompt", "seed", "overrides"}
+            | set(vocab.RESERVED_RECIPE_FIELDS),
+            path,
         )
         self.expect_str(recipe, "component", path)
         self.expect_str(recipe, "component_version", path)
@@ -166,6 +179,49 @@ class _Checker:
                     if overrides["guidance"] <= 0:
                         self.error(f"{path}.overrides.guidance", "must be positive")
 
+    def check_slot_key(self, slot: str, path: str) -> bool:
+        """True if the key is a valid slot; emits the right issue otherwise.
+
+        A wrong pluralization is the most likely authoring mistake and is a
+        hard error in every mode, with the correction spelled out.
+        """
+        if slot in vocab.ALL_SLOTS:
+            return True
+        if slot in vocab.SLOT_MISTAKES:
+            self.error(
+                path,
+                f"texture slot keys are singular — did you mean "
+                f"{vocab.SLOT_MISTAKES[slot]!r}?",
+            )
+        else:
+            self.unknown(path, "unknown texture slot")
+        return False
+
+    def check_slot_value(self, value: object, path: str) -> None:
+        """A slot holds named maps. v0.1 defines one map, `albedo`; a flat
+        recipe (recognized by its `component` key) is shorthand for it."""
+        if value is None:
+            self.error(path, "an unused optional slot must be omitted, not null")
+            return
+        if not isinstance(value, dict):
+            self.error(path, "must be an object")
+            return
+        if "component" in value:            # flat shorthand: the albedo recipe
+            self.check_recipe(value, path)
+            return
+        if "albedo" not in value:
+            self.error(
+                f"{path}.albedo",
+                "every texture slot must define its albedo map (either a flat "
+                "recipe or an explicit \"albedo\" entry)",
+            )
+        for map_name, recipe in value.items():
+            map_path = f"{path}.{map_name}"
+            if map_name not in vocab.MAPS:
+                self.unknown(map_path, "unknown texture map")
+                continue
+            self.check_recipe(recipe, map_path)
+
     def check_textures(self, textures: object) -> None:
         if not isinstance(textures, dict):
             self.error("textures", "must be an object")
@@ -173,15 +229,10 @@ class _Checker:
         for slot in vocab.REQUIRED_SLOTS:
             if slot not in textures:
                 self.error(f"textures.{slot}", "required slot is missing")
-        for slot, recipe in textures.items():
+        for slot, value in textures.items():
             path = f"textures.{slot}"
-            if slot not in vocab.ALL_SLOTS:
-                self.unknown(path, "unknown texture slot")
-                continue
-            if recipe is None:
-                self.error(path, "an unused optional slot must be omitted, not null")
-                continue
-            self.check_recipe(recipe, path)
+            if self.check_slot_key(slot, path):
+                self.check_slot_value(value, path)
 
     def check_hair(self, hair: object) -> None:
         if hair is None:
@@ -275,26 +326,40 @@ class _Checker:
         if notes is not None and not isinstance(notes, str):
             self.error("provenance.notes", "must be a string")
 
+    def check_asset_descriptor(self, entry: object, path: str) -> None:
+        if not isinstance(entry, dict):
+            self.error(path, "must be an object")
+            return
+        self.check_keys(entry, {"sha256", "media_type", "width", "height"}, path)
+        sha = entry.get("sha256")
+        if not isinstance(sha, str) or not _SHA256_RE.match(sha):
+            self.error(f"{path}.sha256", "must be 64 lowercase hex characters")
+        self.expect_str(entry, "media_type", path)
+        for key in ("width", "height"):
+            value = entry.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                self.error(f"{path}.{key}", "must be a positive integer")
+
     def check_assets(self, assets: object) -> None:
         if not isinstance(assets, dict):
             self.error("assets", "must be an object")
             return
         for slot, entry in assets.items():
             path = f"assets.{slot}"
-            if slot not in vocab.ALL_SLOTS:
-                self.unknown(path, "unknown asset slot")
+            if not self.check_slot_key(slot, path):
+                continue
             if not isinstance(entry, dict):
                 self.error(path, "must be an object")
                 continue
-            self.check_keys(entry, {"sha256", "media_type", "width", "height"}, path)
-            sha = entry.get("sha256")
-            if not isinstance(sha, str) or not _SHA256_RE.match(sha):
-                self.error(f"{path}.sha256", "must be 64 lowercase hex characters")
-            self.expect_str(entry, "media_type", path)
-            for key in ("width", "height"):
-                value = entry.get(key)
-                if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                    self.error(f"{path}.{key}", "must be a positive integer")
+            if "sha256" in entry:          # flat shorthand: the albedo descriptor
+                self.check_asset_descriptor(entry, path)
+                continue
+            for map_name, descriptor in entry.items():
+                map_path = f"{path}.{map_name}"
+                if map_name not in vocab.MAPS:
+                    self.unknown(map_path, "unknown texture map")
+                    continue
+                self.check_asset_descriptor(descriptor, map_path)
 
 
 def validate_document(document: object, strict: bool = False) -> ValidationReport:

@@ -67,185 +67,413 @@
       "additionalProperties": false,
       "required": [
         "skin",
-        "eyes",
-        "garments"
+        "eye",
+        "garment"
       ],
       "properties": {
         "skin": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "component",
-            "component_version",
-            "prompt",
-            "seed"
-          ],
-          "properties": {
-            "component": {
-              "type": "string"
-            },
-            "component_version": {
-              "type": "string"
-            },
-            "prompt": {
-              "type": "string"
-            },
-            "seed": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2147483647
-            },
-            "overrides": {
+          "anyOf": [
+            {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "component",
+                "component_version",
+                "prompt",
+                "seed"
+              ],
               "properties": {
-                "steps": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
+                "component": {
+                  "type": "string"
                 },
-                "guidance": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
+                "component_version": {
+                  "type": "string"
                 },
-                "resolution": {
+                "prompt": {
+                  "type": "string"
+                },
+                "seed": {
                   "type": "integer",
-                  "exclusiveMinimum": 0
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "overrides": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "steps": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "guidance": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "resolution": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "component",
+                    "component_version",
+                    "prompt",
+                    "seed"
+                  ],
+                  "properties": {
+                    "component": {
+                      "type": "string"
+                    },
+                    "component_version": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "overrides": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "steps": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "guidance": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "resolution": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
-          }
+          ]
         },
-        "eyes": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "component",
-            "component_version",
-            "prompt",
-            "seed"
-          ],
-          "properties": {
-            "component": {
-              "type": "string"
-            },
-            "component_version": {
-              "type": "string"
-            },
-            "prompt": {
-              "type": "string"
-            },
-            "seed": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2147483647
-            },
-            "overrides": {
+        "eye": {
+          "anyOf": [
+            {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "component",
+                "component_version",
+                "prompt",
+                "seed"
+              ],
               "properties": {
-                "steps": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
+                "component": {
+                  "type": "string"
                 },
-                "guidance": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
+                "component_version": {
+                  "type": "string"
                 },
-                "resolution": {
+                "prompt": {
+                  "type": "string"
+                },
+                "seed": {
                   "type": "integer",
-                  "exclusiveMinimum": 0
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "overrides": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "steps": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "guidance": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "resolution": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "component",
+                    "component_version",
+                    "prompt",
+                    "seed"
+                  ],
+                  "properties": {
+                    "component": {
+                      "type": "string"
+                    },
+                    "component_version": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "overrides": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "steps": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "guidance": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "resolution": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
-          }
+          ]
         },
-        "garments": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "component",
-            "component_version",
-            "prompt",
-            "seed"
-          ],
-          "properties": {
-            "component": {
-              "type": "string"
-            },
-            "component_version": {
-              "type": "string"
-            },
-            "prompt": {
-              "type": "string"
-            },
-            "seed": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2147483647
-            },
-            "overrides": {
+        "garment": {
+          "anyOf": [
+            {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "component",
+                "component_version",
+                "prompt",
+                "seed"
+              ],
               "properties": {
-                "steps": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
+                "component": {
+                  "type": "string"
                 },
-                "guidance": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
+                "component_version": {
+                  "type": "string"
                 },
-                "resolution": {
+                "prompt": {
+                  "type": "string"
+                },
+                "seed": {
                   "type": "integer",
-                  "exclusiveMinimum": 0
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "overrides": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "steps": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "guidance": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "resolution": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "component",
+                    "component_version",
+                    "prompt",
+                    "seed"
+                  ],
+                  "properties": {
+                    "component": {
+                      "type": "string"
+                    },
+                    "component_version": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "overrides": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "steps": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "guidance": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "resolution": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
-          }
+          ]
         },
-        "footwear": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "component",
-            "component_version",
-            "prompt",
-            "seed"
-          ],
-          "properties": {
-            "component": {
-              "type": "string"
-            },
-            "component_version": {
-              "type": "string"
-            },
-            "prompt": {
-              "type": "string"
-            },
-            "seed": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2147483647
-            },
-            "overrides": {
+        "shoe": {
+          "anyOf": [
+            {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "component",
+                "component_version",
+                "prompt",
+                "seed"
+              ],
               "properties": {
-                "steps": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
+                "component": {
+                  "type": "string"
                 },
-                "guidance": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
+                "component_version": {
+                  "type": "string"
                 },
-                "resolution": {
+                "prompt": {
+                  "type": "string"
+                },
+                "seed": {
                   "type": "integer",
-                  "exclusiveMinimum": 0
+                  "minimum": 0,
+                  "maximum": 2147483647
+                },
+                "overrides": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "steps": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "guidance": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "resolution": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "component",
+                    "component_version",
+                    "prompt",
+                    "seed"
+                  ],
+                  "properties": {
+                    "component": {
+                      "type": "string"
+                    },
+                    "component_version": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "seed": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 2147483647
+                    },
+                    "overrides": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "steps": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        },
+                        "guidance": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "resolution": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
-          }
+          ]
         }
       }
     },
@@ -715,112 +943,272 @@
       "additionalProperties": false,
       "properties": {
         "skin": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sha256",
-            "media_type",
-            "width",
-            "height"
-          ],
-          "properties": {
-            "sha256": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sha256",
+                "media_type",
+                "width",
+                "height"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "height": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              }
             },
-            "media_type": {
-              "type": "string"
-            },
-            "width": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "height": {
-              "type": "integer",
-              "exclusiveMinimum": 0
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "sha256",
+                    "media_type",
+                    "width",
+                    "height"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
             }
-          }
+          ]
         },
-        "eyes": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sha256",
-            "media_type",
-            "width",
-            "height"
-          ],
-          "properties": {
-            "sha256": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+        "eye": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sha256",
+                "media_type",
+                "width",
+                "height"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "height": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              }
             },
-            "media_type": {
-              "type": "string"
-            },
-            "width": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "height": {
-              "type": "integer",
-              "exclusiveMinimum": 0
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "sha256",
+                    "media_type",
+                    "width",
+                    "height"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
             }
-          }
+          ]
         },
-        "garments": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sha256",
-            "media_type",
-            "width",
-            "height"
-          ],
-          "properties": {
-            "sha256": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+        "garment": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sha256",
+                "media_type",
+                "width",
+                "height"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "height": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              }
             },
-            "media_type": {
-              "type": "string"
-            },
-            "width": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "height": {
-              "type": "integer",
-              "exclusiveMinimum": 0
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "sha256",
+                    "media_type",
+                    "width",
+                    "height"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
             }
-          }
+          ]
         },
-        "footwear": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "sha256",
-            "media_type",
-            "width",
-            "height"
-          ],
-          "properties": {
-            "sha256": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
+        "shoe": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sha256",
+                "media_type",
+                "width",
+                "height"
+              ],
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "media_type": {
+                  "type": "string"
+                },
+                "width": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "height": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                }
+              }
             },
-            "media_type": {
-              "type": "string"
-            },
-            "width": {
-              "type": "integer",
-              "exclusiveMinimum": 0
-            },
-            "height": {
-              "type": "integer",
-              "exclusiveMinimum": 0
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "albedo"
+              ],
+              "properties": {
+                "albedo": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "sha256",
+                    "media_type",
+                    "width",
+                    "height"
+                  ],
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "media_type": {
+                      "type": "string"
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
+                  }
+                }
+              }
             }
-          }
+          ]
         }
       }
     }

@@ -23,10 +23,10 @@ class AssetError(ValueError):
 
 
 def _load_asset(assets_dir: Path, slot: str, character: Character) -> Path:
-    path = assets_dir / f"{slot}.png"
+    path = assets_dir / f"{slot}.png"   # the slot's albedo map (SPEC.md §8)
     if not path.is_file():
         raise AssetError(f"missing asset for slot {slot!r}: {path}")
-    pinned = character.assets.get(slot)
+    pinned = character.asset_maps().get(slot, {}).get("albedo")
     if pinned is not None:
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != pinned["sha256"]:
@@ -47,10 +47,10 @@ def assemble(
 ) -> Path:
     """Build the rigged .glb for a character from its baked assets.
 
-    Asset files are looked up in `assets_dir` by slot name (`skin.png`,
-    `garments.png`, optional `footwear.png`). When the character carries an
-    `assets` block, every file is verified against its pinned hash before
-    use; a mismatch is a hard error.
+    Albedo asset files are looked up in `assets_dir` by slot name
+    (`skin.png`, `eye.png`, `garment.png`, optional `shoe.png`). When the
+    character carries an `assets` block, every file is verified against its
+    pinned hash before use; a mismatch is a hard error.
     """
     import numpy as np
     from PIL import Image
@@ -69,8 +69,8 @@ def assemble(
         return np.asarray(Image.open(path).convert("RGB"))
 
     skin = layer("skin")
-    garments = layer("garments")
-    footwear = layer("footwear") if "footwear" in character.textures else None
+    garment = layer("garment")
+    shoe = layer("shoe") if "shoe" in character.textures else None
 
     try:
         atlas = AtlasDefinition.load(registry.ensure("assembly-assets"))
@@ -80,7 +80,7 @@ def assemble(
         # the assembly-assets component.
         atlas = AtlasDefinition(resolution=skin.shape[0])
 
-    albedo = composite_albedo(skin, garments, footwear, atlas)
+    albedo = composite_albedo(skin, garment, shoe, atlas)
 
     import io
 

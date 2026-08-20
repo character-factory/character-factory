@@ -32,8 +32,8 @@ def test_assemble_end_to_end(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (180, 140, 110))
-    solid_png(assets / "garments.png", (0, 0, 0))       # nothing keyed
-    solid_png(assets / "footwear.png", (0, 0, 0))
+    solid_png(assets / "garment.png", (0, 0, 0))       # nothing keyed
+    solid_png(assets / "shoe.png", (0, 0, 0))
     out = assemble(
         EXAMPLES / "marathon-runner.char.json", assets, tmp_path / "runner.glb"
     )
@@ -53,7 +53,7 @@ def test_assemble_is_deterministic(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
-    solid_png(assets / "garments.png", (0, 0, 0))
+    solid_png(assets / "garment.png", (0, 0, 0))
     character = Character.load(EXAMPLES / "freediver.char.json")
     first = assemble(character, assets, tmp_path / "a.glb").read_bytes()
     second = assemble(character, assets, tmp_path / "b.glb").read_bytes()
@@ -66,7 +66,7 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
-    solid_png(assets / "garments.png", (0, 0, 0))
+    solid_png(assets / "garment.png", (0, 0, 0))
     out = assemble(
         EXAMPLES / "freediver.char.json", assets, tmp_path / "diver.glb"
     )

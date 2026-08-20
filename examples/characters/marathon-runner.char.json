@@ -129,25 +129,25 @@
   },
   "textures": {
     "skin": {
-      "component": "skin",
+      "component": "make-skin",
       "component_version": "0.1.0",
       "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
       "seed": 41002
     },
-    "eyes": {
-      "component": "eyes",
+    "eye": {
+      "component": "make-eye",
       "component_version": "0.1.0",
       "prompt": "green iris with amber central ring, fine radial fibers",
       "seed": 41003
     },
-    "garments": {
-      "component": "garments",
+    "garment": {
+      "component": "make-garment",
       "component_version": "0.1.0",
       "prompt": "teal running vest and black shorts, white piping",
       "seed": 41004
     },
-    "footwear": {
-      "component": "footwear",
+    "shoe": {
+      "component": "make-shoe",
       "component_version": "0.1.0",
       "prompt": "low white running shoes with a teal stripe",
       "seed": 41005
@@ -201,22 +201,22 @@
       "interpreter": {
         "version": "0.1.0"
       },
-      "identity": {
+      "make-figure": {
         "version": "0.1.0"
       },
-      "skin": {
+      "make-skin": {
         "version": "0.1.0"
       },
-      "eyes": {
+      "make-eye": {
         "version": "0.1.0"
       },
-      "garments": {
+      "make-garment": {
         "version": "0.1.0"
       },
-      "footwear": {
+      "make-shoe": {
         "version": "0.1.0"
       },
-      "hair": {
+      "make-wig": {
         "version": "0.1.0"
       }
     },

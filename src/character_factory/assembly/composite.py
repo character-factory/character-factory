@@ -1,14 +1,14 @@
 """UV compositing: one albedo atlas from the generated texture layers.
 
-The normative order (SPEC.md §9): skin, then garments, then footwear.
-Garment and footwear layers are painted over an unoccupied (black)
+The normative order (SPEC.md §9): skin, then garment, then shoe.
+Garment and shoe layers are painted over an unoccupied (black)
 background; coverage is recovered from the image itself by a calibrated
 luminance key — the generators keep real garment pixels above a value floor,
 so a keying cutoff well below that floor separates cloth from background,
 including deliberately dark cloth.
 
-Region masks (where garments may not paint, where footwear may) are atlas
-data from the `assembly-assets` component, never code.
+Region masks (where the garment layer may not paint, where the shoe layer
+may) are atlas data from the `assembly-assets` component, never code.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ class AtlasDefinition:
     """
 
     resolution: int
-    head_mask: np.ndarray | None = None   # bool (H, W): garments never paint here
-    feet_mask: np.ndarray | None = None   # bool (H, W): footwear only paints here
+    head_mask: np.ndarray | None = None   # bool (H, W): garment never paints here
+    feet_mask: np.ndarray | None = None   # bool (H, W): shoe only paints here
     key_cutoff: int = DEFAULT_KEY_CUTOFF
     feather_radius: float = DEFAULT_FEATHER_RADIUS
     extras: dict = field(default_factory=dict)
@@ -111,32 +111,32 @@ def coverage_mask(
 
 def composite_albedo(
     skin: np.ndarray,
-    garments: np.ndarray,
-    footwear: np.ndarray | None,
+    garment: np.ndarray,
+    shoe: np.ndarray | None,
     atlas: AtlasDefinition,
 ) -> np.ndarray:
-    """The body's final albedo: skin, then garments, then footwear (SPEC.md §9).
+    """The body's final albedo: skin, then garment, then shoe (SPEC.md §9).
 
     All layers are (H, W, 3) uint8 at the atlas resolution.
     """
     expected = (atlas.resolution, atlas.resolution, 3)
-    for name, layer in (("skin", skin), ("garments", garments)):
+    for name, layer in (("skin", skin), ("garment", garment)):
         if layer.shape != expected:
             raise ValueError(f"{name} layer is {layer.shape}, atlas wants {expected}")
-    if footwear is not None and footwear.shape != expected:
-        raise ValueError(f"footwear layer is {footwear.shape}, atlas wants {expected}")
+    if shoe is not None and shoe.shape != expected:
+        raise ValueError(f"shoe layer is {shoe.shape}, atlas wants {expected}")
 
     result = skin.astype(np.float64)
 
-    garment_alpha = coverage_mask(garments, atlas.key_cutoff, atlas.feather_radius)
+    garment_alpha = coverage_mask(garment, atlas.key_cutoff, atlas.feather_radius)
     if atlas.head_mask is not None:
         garment_alpha = garment_alpha * ~atlas.head_mask
-    result = result * (1 - garment_alpha[..., None]) + garments * garment_alpha[..., None]
+    result = result * (1 - garment_alpha[..., None]) + garment * garment_alpha[..., None]
 
-    if footwear is not None:
-        foot_alpha = coverage_mask(footwear, atlas.key_cutoff, atlas.feather_radius)
+    if shoe is not None:
+        shoe_alpha = coverage_mask(shoe, atlas.key_cutoff, atlas.feather_radius)
         if atlas.feet_mask is not None:
-            foot_alpha = foot_alpha * atlas.feet_mask
-        result = result * (1 - foot_alpha[..., None]) + footwear * foot_alpha[..., None]
+            shoe_alpha = shoe_alpha * atlas.feet_mask
+        result = result * (1 - shoe_alpha[..., None]) + shoe * shoe_alpha[..., None]
 
     return np.clip(np.rint(result), 0, 255).astype(np.uint8)

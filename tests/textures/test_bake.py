@@ -41,9 +41,9 @@ def make_registry(tmp_path):
         "format": "character-factory/registry",
         "registry_version": "0.1",
         "components": [
-            adapter("skin", "skin", "skin sheet: {prompt}"),
-            adapter("eyes", "eyes", "eye sheet: {prompt}"),
-            adapter("garments", "garments", "garment sheet: {prompt}"),
+            adapter("make-skin", "skin", "skin sheet: {prompt}"),
+            adapter("make-eye", "eye", "eye sheet: {prompt}"),
+            adapter("make-garment", "garment", "garment sheet: {prompt}"),
             {
                 "name": "test-base", "version": "1.0.0", "kind": "base-model",
                 "requires": {"schema": ">=0.1 <1.0"}, "artifacts": [], "source": None,
@@ -77,7 +77,7 @@ def test_bake_writes_assets_and_pins_hashes(environment, tmp_path):
         character, tmp_path / "out", registry=registry, device="cpu",
         pipeline_factory=lambda base_dir, device: fake,
     )
-    assert result.baked_slots == ["eyes", "garments", "skin"]
+    assert result.baked_slots == ["eye", "garment", "skin"]
     for slot in result.baked_slots:
         path = result.assets_dir / f"{slot}.png"
         assert path.is_file()
@@ -142,5 +142,5 @@ def test_bake_result_json_is_loadable(environment, tmp_path):
     result = bake(character, tmp_path / "out", registry=registry,
                   pipeline_factory=lambda *a: fake)
     saved = result.character.save(tmp_path / "baked.char.json")
-    assert Character.load(saved).assets.keys() == {"skin", "eyes", "garments"}
+    assert Character.load(saved).assets.keys() == {"skin", "eye", "garment"}
     json.loads(saved.read_text())

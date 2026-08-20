@@ -72,25 +72,25 @@ A complete v0.1 character file:
   },
   "textures": {
     "skin": {
-      "component": "skin",
+      "component": "make-skin",
       "component_version": "0.1.0",
       "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
       "seed": 41002
     },
-    "eyes": {
-      "component": "eyes",
+    "eye": {
+      "component": "make-eye",
       "component_version": "0.1.0",
       "prompt": "green iris with amber central ring, fine radial fibers",
       "seed": 41003
     },
-    "garments": {
-      "component": "garments",
+    "garment": {
+      "component": "make-garment",
       "component_version": "0.1.0",
       "prompt": "teal running vest and black shorts, white piping",
       "seed": 41004
     },
-    "footwear": {
-      "component": "footwear",
+    "shoe": {
+      "component": "make-shoe",
       "component_version": "0.1.0",
       "prompt": "low white running shoes with a teal stripe",
       "seed": 41005
@@ -118,20 +118,20 @@ A complete v0.1 character file:
     "generator": "character-factory/0.1.0",
     "components": {
       "interpreter": { "version": "0.1.0" },
-      "identity": { "version": "0.1.0" },
-      "skin": { "version": "0.1.0" },
-      "eyes": { "version": "0.1.0" },
-      "garments": { "version": "0.1.0" },
-      "footwear": { "version": "0.1.0" },
-      "hair": { "version": "0.1.0" }
+      "make-figure": { "version": "0.1.0" },
+      "make-skin": { "version": "0.1.0" },
+      "make-eye": { "version": "0.1.0" },
+      "make-garment": { "version": "0.1.0" },
+      "make-shoe": { "version": "0.1.0" },
+      "make-wig": { "version": "0.1.0" }
     },
     "created": "2026-08-18T12:00:00Z"
   },
   "assets": {
     "skin": { "sha256": "9f2c…", "media_type": "image/png", "width": 1024, "height": 1024 },
-    "eyes": { "sha256": "1b77…", "media_type": "image/png", "width": 1024, "height": 1024 },
-    "garments": { "sha256": "c04a…", "media_type": "image/png", "width": 1024, "height": 1024 },
-    "footwear": { "sha256": "5e19…", "media_type": "image/png", "width": 1024, "height": 1024 }
+    "eye": { "sha256": "1b77…", "media_type": "image/png", "width": 1024, "height": 1024 },
+    "garment": { "sha256": "c04a…", "media_type": "image/png", "width": 1024, "height": 1024 },
+    "shoe": { "sha256": "5e19…", "media_type": "image/png", "width": 1024, "height": 1024 }
   }
 }
 ```
@@ -196,43 +196,109 @@ every character on a given rig version.
 
 Readers encountering an unrecognized `topology` value MUST treat the document
 as requiring a newer schema version rather than silently assembling a closed
-surface. Writers targeting v0.1 MUST emit `"closed"`.
+surface. Writers targeting v0.1 MUST emit `"closed"`. Mechanically, the
+variant ships as a new `body-rig` component version plus grown
+`assembly-assets` (the interior meshes are placed by assembly, like the
+eyeballs) — no new texture slot and no new component kind.
 
 ## 5. `textures` — generation recipes
 
-`textures` maps **slot names** to **texture recipes**. A slot is a named
-surface that receives a generated image; the set of valid slots is defined by
-the schema version. v0.1 defines exactly four — three required, one optional:
+`textures` maps **slot keys** to slot contents. A slot is a named surface
+region that receives generated images; **slot keys are singular nouns,
+always** (`skin`, `eye`, `garment`, `shoe`). Validators MUST reject a plural
+spelling — the most likely authoring mistake — as a hard error naming the
+correction, in every validation mode. v0.1 defines exactly four slots —
+three required, one optional:
 
 | Slot | Required | Target surface | Content |
 | --- | --- | --- | --- |
 | `skin` | yes | The body's canonical UV atlas | Full-body skin albedo: body, face, hands, feet, scalp. |
-| `eyes` | yes | The eyeball surface (its own concentric UV layout) | One eyeball albedo (iris, sclera), applied to both eyes. |
-| `garments` | yes | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; garment coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
-| `footwear` | no | The foot regions of the body's canonical UV atlas | Footwear painted over an unoccupied (black) background, keyed like `garments` and composited above them in the foot regions (§9). A barefoot character simply has no `footwear` slot. |
+| `eye` | yes | The eyeball surface (its own concentric UV layout) | One eye albedo (iris, sclera). The single `eye` recipe applies to **both** eyes. |
+| `garment` | yes | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
+| `shoe` | no | The foot (`shoe`) regions of the body's canonical UV atlas | Footwear painted over an unoccupied (black) background, keyed like `garment` and composited above it in the shoe regions (§9). **All footwear composites into the `shoe` region**; capability growth (say, boots) arrives as a new version of the slot's component widening its declared vocabulary, never as a sibling slot or component. A barefoot character simply has no `shoe` key. |
 
 An optional slot that is not used MUST be omitted entirely — an explicit
 `null` is invalid for texture slots (unlike `hair`, which is a required key
 with `null` as a meaningful value). This keeps the canonical form (§2.1)
-unambiguous: barefoot characters have no `footwear` key at all.
+unambiguous: barefoot characters have no `shoe` key at all.
 
-Future schema minor versions may add further optional slots. Slots are
-additive: a new slot never changes the meaning of an existing one.
+**Every texture slot has a first-party default maker component named
+`make-<slot>`** (`make-skin`, `make-eye`, `make-garment`, `make-shoe`); other
+components MAY register against the same slot in the component registry. The
+pairing is a naming convention, not a monopoly — which component actually
+generates a map is resolution machinery recorded in the recipe and pinned in
+provenance, never part of the authoring surface.
+
+Future schema minor versions may add further optional slots; slots are
+additive and a new slot never changes the meaning of an existing one. The
+*anticipated* growth path, however, is within slots — named secondary maps
+and conditioned recipes (§5.2, §5.3) — not new slots.
 
 ### 5.1 Texture recipe fields
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `component` | string | yes | Name of the generation component in the component registry (for v0.1 slots: `"skin"`, `"eyes"`, `"garments"`). |
+| `component` | string | yes | Name of the generation component in the component registry (the first-party defaults are `make-skin`, `make-eye`, `make-garment`, `make-shoe`). |
 | `component_version` | string | yes | Semantic version of that component used (or to be used) for generation. |
 | `prompt` | string | yes | The slot-level text description that conditions generation. This is the *decomposed*, per-slot prompt — not the original character description, which lives in `provenance.prompt`. |
-| `seed` | integer | yes | Non-negative seed, ≤ 2³¹ − 1, for the diffusion sampler. Each slot carries its own explicit resolved seed; the format does not define seed derivation. |
+| `seed` | integer | yes | Non-negative seed, ≤ 2³¹ − 1, for the diffusion sampler. Each recipe carries its own explicit resolved seed; the format does not define seed derivation. |
 | `overrides` | object | no | Sampler overrides (`steps`: integer, `guidance`: number, `resolution`: integer). Defaults live in component metadata in the registry; a recipe without `overrides` uses them. |
+| `inputs` | — | reserved | Reserved for a future minor version; MUST NOT appear in v0.1 documents. See §5.3. |
 
-A recipe is a *claim about how to (re)generate* the slot's image.
-Regeneration with the same component version and recipe is reproducible up to
-GPU kernel nondeterminism; exact byte-level reproduction is pinned through
-`assets` (§8).
+A recipe is a *claim about how to (re)generate* one image. Regeneration with
+the same component version and recipe is reproducible up to GPU kernel
+nondeterminism; exact byte-level reproduction is pinned through `assets`
+(§8).
+
+### 5.2 Named maps and the flat shorthand
+
+A slot holds **named maps**. v0.1 defines exactly one map name, `albedo`;
+each map carries a full recipe (§5.1) and pins its own asset (§8). Because
+the overwhelmingly common case is one albedo per slot, a slot's value may
+take either of two shapes:
+
+```json
+"skin": { "component": "make-skin", "component_version": "0.1.0",
+          "prompt": "…", "seed": 41002 }
+```
+
+```json
+"skin": { "albedo": { "component": "make-skin", "component_version": "0.1.0",
+                      "prompt": "…", "seed": 41002 } }
+```
+
+The first — a **flat recipe**, recognized by its `component` key — is
+shorthand for the second and is the RECOMMENDED authoring form. The two
+spellings are one character: implementations MUST canonicalize a slot whose
+only map is `albedo` to the flat shorthand before computing the canonical
+form (§2.1), so both share one content ID. A slot written as named maps MUST
+include `albedo`. Readers encountering an unrecognized map name from a newer
+minor version follow the standard unknown-optional rule (§10): warn and
+ignore by default, reject in strict mode.
+
+### 5.3 Reserved: conditioning inputs
+
+A future schema minor version will allow a recipe to declare **conditioning
+inputs** — references to other maps' generated output consumed as generation
+input (the motivating case: a secondary map generated from the same slot's
+albedo). v0.1 *reserves* the recipe field `inputs` and pins its semantics
+now, so the addition is purely additive later:
+
+- An input reference names a (slot, map) pair and the SHA-256 of the exact
+  image consumed: references resolve **through asset hashes,
+  content-addressed** — never through file paths or "whatever is currently
+  there". A conditioned recipe reproduces its output if and only if its
+  declared input hash matches the input actually supplied, which extends the
+  determinism story (§9) unchanged to conditioned generation.
+- Baking is **dependency-ordered** where inputs exist: a recipe's inputs are
+  generated (or supplied and verified) before the recipe runs.
+- A reference to a missing or unpinned input is a **defined error**, not a
+  fallback to unconditioned generation.
+
+In v0.1 documents `inputs` MUST NOT appear; because a conditioned recipe
+cannot be honored by ignoring its inputs, v0.1 validators treat its presence
+as a hard error in every mode (the same class as an unrecognized `topology`),
+not as an ignorable unknown field.
 
 ## 6. `hair` — semantic hair description
 
@@ -332,7 +398,7 @@ descriptive, not instructions to a reader.
 | --- | --- | --- | --- |
 | `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
 | `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
-| `components` | object | yes | Map from component name to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `identity` (which produced `body.identity` and `body.resting_expression`) and one entry per texture slot in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. A `hair` entry records the provider version once geometry has been synthesized. |
+| `components` | object | yes | Map from **component name** to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `make-figure` (which produced `body.identity` and `body.resting_expression`) and one entry per texture component in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. The hair provider's entry (the first-party default is `make-wig`) records its version once geometry has been synthesized — the `hair` block itself carries no component field, because it is semantic vocabulary, not a texture slot. |
 | `created` | string | no | RFC 3339 timestamp. |
 | `notes` | string | no | Free text. |
 
@@ -346,8 +412,11 @@ prompt, as authoritative.
 
 ## 8. `assets` — pinning generated images
 
-`assets` is optional. When present, it maps texture slot names to content
-descriptors of the generated images:
+`assets` is optional. When present, it maps texture slot keys to content
+descriptors of the generated images, **per map**: a slot's entry is either a
+flat descriptor — shorthand for its `albedo` map, mirroring §5.2 exactly,
+including the canonicalization rule — or an object of map-name →
+descriptor. A descriptor:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -371,16 +440,16 @@ artifact, without prescribing an implementation.
 1. **Body.** Evaluate the rig (§4.1) with `body.identity`,
    `body.resting_expression`, and a rest body pose. The result is the body
    mesh and the rest skeleton.
-2. **Surface.** Apply the `skin` image to the body's canonical UV atlas.
-   Recover garment coverage from the `garments` image (luminance-keyed
+2. **Surface.** Apply the `skin` albedo to the body's canonical UV atlas.
+   Recover garment coverage from the `garment` albedo (luminance-keyed
    occupancy over the black background) and composite covered texels over
-   the skin image. If a `footwear` slot is present, recover its coverage the
+   the skin image. If a `shoe` slot is present, recover its coverage the
    same way and composite it above the garment layer, restricted to the
-   atlas's foot regions. The compositing order is normative:
-   **skin, then garments, then footwear** — footwear occludes garments
-   (socks under shoes), garments occlude skin. The final composited image is
-   the body's albedo.
-3. **Eyes.** Apply the `eyes` image to both eyeball meshes, placed in the
+   atlas's shoe regions. The compositing order is normative:
+   **skin, then garment, then shoe** — shoe occludes garment (socks under
+   shoes), garment occludes skin. The final composited image is the body's
+   albedo.
+3. **Eyes.** Apply the `eye` albedo to both eyeball meshes, placed in the
    rig's eye sockets.
 4. **Hair.** If `hair` is non-null, synthesize hair geometry from the hair
    block and the assembled head/body geometry; attach it rigidly to the head.
@@ -396,15 +465,18 @@ produce an identical scene, and SHOULD produce a byte-identical scene file.
 `schema_version` is `"<major>.<minor>"`.
 
 - **Minor versions are additive.** A later minor version may add optional
-  top-level fields, optional recipe fields, new texture slots, new `rig`
-  strings, and new `topology` values. It MUST NOT change the meaning or
-  validity of any document that was valid under an earlier minor version of
-  the same major.
+  top-level fields, optional recipe fields, new named maps, new texture
+  slots, new `rig` strings, and new `topology` values. It MUST NOT change
+  the meaning or validity of any document that was valid under an earlier
+  minor version of the same major. The anticipated additive path is **named
+  secondary maps within existing slots plus conditioning inputs (§5.2,
+  §5.3)** — not new slots.
 - **Readers** encountering a document with a newer minor version than they
   implement SHOULD process it, ignoring unrecognized optional fields, with
-  one exception: an unrecognized `topology` or `rig` value is a hard error
-  (§4.2) — those change what the document *builds*, not just what it
-  *records*.
+  two exceptions that are hard errors: an unrecognized `topology` or `rig`
+  value (§4.2), and a recipe carrying `inputs` (§5.3) — a conditioning
+  input ignored is a different image silently built. All three change what
+  the document *builds*, not just what it *records*.
 - **Major version 0 caveat.** While the major version is 0, breaking changes
   may occur between minors; each will ship with a documented migration. From
   1.0, breaking changes require a major bump.
@@ -418,7 +490,10 @@ A conforming implementation validates, at minimum: presence and types of all
 required fields; array lengths (45, 72, 3); enum membership for every closed
 vocabulary (including `topology` and `rig`); seed ranges; the
 `color.rgb`/`custom` co-constraint; the optional-slot omission rule (§5);
-and finiteness of all numbers (NaN and infinities are invalid everywhere). The reference implementation publishes a
+singular slot keys, with plural spellings rejected as hard errors naming the
+correction (§5); the albedo requirement and shorthand shapes (§5.2); the
+reserved `inputs` field (§5.3, hard error); and finiteness of all numbers
+(NaN and infinities are invalid everywhere). The reference implementation publishes a
 machine-readable JSON Schema for each schema version and exposes validation
 as a library call, a CLI command, and an MCP tool; third parties are
 encouraged to validate against the JSON Schema directly.

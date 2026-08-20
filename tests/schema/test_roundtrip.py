@@ -61,7 +61,7 @@ def test_typed_accessors(example_doc):
     assert character.topology == "closed"
     assert len(character.identity) == 45
     assert len(character.resting_expression) == 72
-    assert set(character.textures) >= {"skin", "eyes", "garments"}
+    assert set(character.textures) >= {"skin", "eye", "garment"}
     assert character.prompt
     # Accessors return copies: mutating them cannot corrupt the document.
     character.textures["skin"]["seed"] = 999
@@ -69,9 +69,23 @@ def test_typed_accessors(example_doc):
     assert character.to_document()["textures"]["skin"]["seed"] != 999
 
 
-def test_shod_and_barefoot_examples_differ_in_footwear(example_path):
+def test_shod_and_barefoot_examples_differ_in_shoe_slot(example_path):
     character = Character.load(example_path)
     if character.name == "marathon-runner":
-        assert "footwear" in character.textures
+        assert "shoe" in character.textures
     if character.name == "freediver":
-        assert "footwear" not in character.textures
+        assert "shoe" not in character.textures
+
+
+def test_nested_single_albedo_normalizes_to_flat(doc):
+    from character_factory import content_id
+
+    flat = Character.from_document(doc)
+    nested = {**doc, "textures": {**doc["textures"]}}
+    nested["textures"]["skin"] = {"albedo": doc["textures"]["skin"]}
+    normalized = Character.from_document(nested)
+    # One character, one content ID, regardless of authoring spelling.
+    assert normalized.content_id == flat.content_id
+    assert "component" in normalized.to_document()["textures"]["skin"]
+    # And the nested view expands the shorthand back out.
+    assert normalized.texture_maps()["skin"]["albedo"]["seed"] == 1

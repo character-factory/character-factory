@@ -26,7 +26,7 @@ Character Factory turns a text description into a rigged, textured, realtime
         │                        expression values on the MHR parametric body — a
         │                        deterministic function of the text, no seed)
         ▼
-  texture generation            (skin, eyes, garments, optional footwear: UV-space
+  texture generation            (skin, eye, garment, optional shoe: UV-space
         │                        images from a FLUX.2 Klein 4B base model with
         │                        per-slot adapters; seeded diffusion, 1024² albedo)
         ▼
@@ -66,7 +66,7 @@ prompt — is the thing you commit, share, and edit.
 Stated plainly, because a reader deciding whether to depend on this needs
 the boundaries more than the features:
 
-- **No normal maps or other non-albedo maps** for skin and garments. v0
+- **No normal maps or other non-albedo maps** for skin and garments in v0. v0
   surfaces are albedo plus fixed material constants. Generated normal/detail
   maps are planned for v0.2; model components ship on a roughly monthly
   cadence after launch (§4), so this does not wait on a code release. (Hair
@@ -77,14 +77,15 @@ the boundaries more than the features:
   (teeth, gums, tongue behind a fixed removed patch of the face surface —
   see SPEC.md §4.2), and the test surface for it is specified (§7.4), but
   v0 ships without it.
-- **Footwear is below-ankle styles only.** Footwear ships at launch as an
-  optional fourth texture slot on the foot regions of the body atlas —
+- **Footwear is below-ankle styles only.** Footwear ships at launch as the
+  optional `shoe` texture slot on the foot regions of the body atlas —
   closed, below-ankle shoes can be painted; boots above the ankle, sandals,
-  and open straps would require geometry the pipeline does not build. The
-  footwear component *declares* its supported style vocabulary in its
-  registry entry, and the interpreter clamps footwear prompts to what the
-  installed component declares (§4.2) — so a broader footwear component
-  later widens the vocabulary without a code change.
+  and open straps would require geometry the pipeline does not build.
+  `make-shoe` *declares* its supported style vocabulary in its registry
+  entry, and the interpreter clamps shoe prompts to what the installed
+  component declares (§4.2) — so capability growth (boots, say) arrives as a
+  `make-shoe` version bump widening its vocabulary, never as a sibling
+  component or a code change.
 - **No garment geometry at all, in fact.** Garments are generated in UV
   space and composited onto the body surface — visually "worn," structurally
   painted-on. Loose clothing, skirts, and anything that departs from the
@@ -221,7 +222,7 @@ updated hair block and leaves everything else alone.
   numbers users will experience.
 - **Component vocabularies bound the interpreter's output.** Registry
   components may declare supported-vocabulary constraints (§4.2) — the first
-  customer is the launch footwear component, which supports below-ankle
+  customer is the launch `make-shoe` component, which supports below-ankle
   styles only. The interpreter reads the installed components' declarations
   and clamps its slot prompts to them, so "knee-high boots" degrades to the
   nearest supported request rather than silently conditioning a component
@@ -234,6 +235,12 @@ updated hair block and leaves everything else alone.
   invokable standalone — `character-factory interpret "<text>"` emits the
   decomposition JSON without running any generation — so candidate models
   can be compared side by side on real prompts.
+- **Grammar-derivation note for the implementer:** the constraint layer's
+  JSON-Schema support has a known limitation — non-string `const` values
+  crash its enum path — so the grammar derivation expresses the hair
+  block's `schema_version: 1` as a closed integer range (and should prefer
+  ranges over non-string consts generally). The exercised derivation lives
+  in the grammar test module.
 - **Optional backend: any OpenAI-compatible endpoint**, selected by one
   config field, for people running a local inference server or wanting a
   larger model. It must never complicate the default path.
@@ -319,10 +326,10 @@ system and deliberately boring:
    calibrated luminance key against its black background (dark garments are
    protected by a value floor in the generator), cleaned against a small
    library of coverage templates, feathered, and composited over the skin
-   image; the head region is masked from garment coverage. Footwear, when
-   present, is keyed the same way and composited above the garment layer,
-   restricted to the atlas's foot regions — the normative order is skin,
-   then garments, then footwear (SPEC.md §9). Result: one albedo atlas on
+   image; the head region is masked from garment coverage. The `shoe` layer,
+   when present, is keyed the same way and composited above the garment
+   layer, restricted to the atlas's shoe regions — the normative order is
+   skin, then garment, then shoe (SPEC.md §9). Result: one albedo atlas on
    one body mesh.
 3. **Eyes.** A small patch of faces over each eye socket is removed; a
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
@@ -410,16 +417,25 @@ from the `character-factory` Hugging Face organization on first use and
 cached locally (`~/.cache/character-factory/`, override via
 `CHARACTER_FACTORY_HOME`).
 
+**Naming.** Generator components carry `make-<artifact>` names, where the
+noun is the discrete artifact the component produces: `make-figure` makes a
+figure (the body parameters), `make-skin` a skin, `make-eye` one eye
+texture, `make-garment` a garment layer, `make-shoe` a shoe texture,
+`make-wig` a wig mesh. Static data and infrastructure keep plain functional
+names (`body-rig`, `assembly-assets`, `interpreter`). Nouns are singular
+throughout, matching the texture slot keys they serve.
+
 ### 4.1 v0 components
 
 | Component | Contents | Approx. size |
 | --- | --- | --- |
 | `interpreter` | Quantized small language model + system prompt + few-shot examples + decoding grammar (§2.2; the specific model is being selected through this pipeline and arrives as registry data) | ~1–3 GB |
-| `identity` | Text → body/face parameter heads + normalization stats | ~10 MB |
-| `skin` | Texture adapter for the body atlas (skin albedo) | ~90 MB |
-| `eyes` | Texture adapter for the eyeball layout | ~90 MB |
-| `garments` | Texture adapter for garment-over-black atlas images | ~90 MB |
-| `footwear` | Texture adapter for footwear on the atlas's foot regions (optional slot; declares a below-ankle style vocabulary at launch) | ~90 MB |
+| `make-figure` | Text → body/face parameter heads + normalization stats | ~10 MB |
+| `make-skin` | Texture adapter for the `skin` slot's albedo (body atlas) | ~90 MB |
+| `make-eye` | Texture adapter for the `eye` slot's albedo (eyeball layout) | ~90 MB |
+| `make-garment` | Texture adapter for the `garment` slot's albedo (garment-over-black atlas images) | ~90 MB |
+| `make-shoe` | Texture adapter for the `shoe` slot's albedo (optional slot; declares a below-ankle style vocabulary at launch) | ~90 MB |
+| `make-wig` | The default hair provider (vendored procedural engine; registry entry records versions for provenance) | in package |
 | `body-rig` | Pinned MHR TorchScript rig + topology metadata + the authoritative 127-joint name table (Apache 2.0, mirrored with attribution) | ~700 MB |
 | `assembly-assets` | Eyeball/lash meshes and textures, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
@@ -444,10 +460,11 @@ offline fallback). Each entry records:
 
 ```json
 {
-  "name": "skin",
+  "name": "make-skin",
   "version": "0.1.0",
   "kind": "texture-adapter",
   "slot": "skin",
+  "map": "albedo",
   "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
   "artifacts": [ { "path": "adapter.safetensors", "sha256": "…", "bytes": 92000000 } ],
   "inference": { "prompt_template": "…", "steps": 20, "guidance": 4.0, "resolution": 1024 },
@@ -459,16 +476,18 @@ offline fallback). Each entry records:
 `constraints` is a general mechanism: a component MAY declare the vocabulary
 it actually supports (named enums of styles, categories, or attributes), and
 the interpreter clamps its prompts to the declarations of the components
-that will run (§2.2). The launch footwear component is the first user
+that will run (§2.2). The launch `make-shoe` component is the first user
 (below-ankle styles only); any component whose competence is narrower than
 its slot's plain-language name should declare, so that capability growth is
-a registry edit, not a code release.
+a registry edit, not a code release. Texture entries also carry `map`: which
+named map of their slot they produce (every current entry: `albedo`), so a
+future secondary-map component for an existing slot is pure data.
 
 Design consequences, in decreasing order of importance:
 
-- **New capability is data, not code.** A footwear adapter, an updated skin
-  component, or the mouth-interior geometry pack arrive as new registry
-  entries (a new slot name, a version bump, a new component kind). The
+- **New capability is data, not code.** An updated skin component, a
+  secondary-map component, or the mouth-interior geometry pack arrive as new
+  registry entries (a version bump, a new `map` value, grown assets). The
   planned monthly model cadence never requires users to upgrade the package
   unless the schema itself grows.
 - **Prompt conditioning is component metadata.** Each adapter's trigger
@@ -634,7 +653,9 @@ bake tests assert structure, not bytes:
 ### 7.4 Mouth-variant contract cases (reserved)
 
 Written now, gated behind the future topology variant, so the variant ships
-against a pre-agreed contract:
+against a pre-agreed contract. Mechanically the variant is a `body-rig`
+version bump plus grown `assembly-assets` — interior meshes placed by
+assembly like the eyeballs, no new texture slot or component kind:
 
 - the removal patch is validated against the pinned rig topology: exact
   expected face count, closed boundary of the expected edge count, identical

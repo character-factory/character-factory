@@ -53,6 +53,27 @@ def _normalize_float32(document: dict) -> None:
             hair["color"]["rgb"] = [float32_value(v) for v in rgb]
 
 
+def _normalize_slot_shorthand(document: dict) -> None:
+    """Canonicalize slots holding only an albedo map to the flat shorthand
+    (SPEC.md §5.2), in place, so the two spellings share one content ID.
+
+    A recipe is recognized by its `component` key; an asset descriptor by
+    its `sha256` key.
+    """
+    for block, marker in (("textures", "component"), ("assets", "sha256")):
+        mapping = document.get(block)
+        if not isinstance(mapping, dict):
+            continue
+        for slot, value in mapping.items():
+            if (
+                isinstance(value, dict)
+                and marker not in value
+                and set(value) == {"albedo"}
+                and isinstance(value["albedo"], dict)
+            ):
+                mapping[slot] = value["albedo"]
+
+
 class Character:
     """An immutable-by-convention, validated character document.
 
@@ -67,6 +88,7 @@ class Character:
         if not report.ok:
             raise CharacterError(report)
         _normalize_float32(document)
+        _normalize_slot_shorthand(document)
         self._document = document
         self.load_report = report
 
@@ -142,8 +164,29 @@ class Character:
 
     @property
     def textures(self) -> dict[str, dict]:
-        """Texture recipes by slot name, present slots only."""
+        """The textures block as stored (flat shorthand preserved)."""
         return copy.deepcopy(self._document["textures"])
+
+    def texture_maps(self) -> dict[str, dict[str, dict]]:
+        """Normalized nested view: slot → map name → recipe. The flat
+        shorthand expands to `{"albedo": recipe}` (SPEC.md §5.2)."""
+        result: dict[str, dict[str, dict]] = {}
+        for slot, value in self._document["textures"].items():
+            if isinstance(value, dict) and "component" in value:
+                result[slot] = {"albedo": copy.deepcopy(value)}
+            else:
+                result[slot] = copy.deepcopy(value)
+        return result
+
+    def asset_maps(self) -> dict[str, dict[str, dict]]:
+        """Normalized nested view of `assets`: slot → map name → descriptor."""
+        result: dict[str, dict[str, dict]] = {}
+        for slot, value in self._document.get("assets", {}).items():
+            if isinstance(value, dict) and "sha256" in value:
+                result[slot] = {"albedo": copy.deepcopy(value)}
+            else:
+                result[slot] = copy.deepcopy(value)
+        return result
 
     @property
     def hair(self) -> dict | None:

@@ -18,19 +18,19 @@ _BASE: dict = {
     },
     "textures": {
         "skin": {
-            "component": "skin",
+            "component": "make-skin",
             "component_version": "0.1.0",
             "prompt": "medium skin tone, adult",
             "seed": 1,
         },
-        "eyes": {
-            "component": "eyes",
+        "eye": {
+            "component": "make-eye",
             "component_version": "0.1.0",
             "prompt": "brown iris",
             "seed": 2,
         },
-        "garments": {
-            "component": "garments",
+        "garment": {
+            "component": "make-garment",
             "component_version": "0.1.0",
             "prompt": "plain grey t-shirt and jeans",
             "seed": 3,
@@ -77,11 +77,11 @@ _BASE: dict = {
         "generator": "character-factory/0.1.0.dev0",
         "components": {
             "interpreter": {"version": "0.1.0"},
-            "identity": {"version": "0.1.0"},
-            "skin": {"version": "0.1.0"},
-            "eyes": {"version": "0.1.0"},
-            "garments": {"version": "0.1.0"},
-            "hair": {"version": "0.1.0"},
+            "make-figure": {"version": "0.1.0"},
+            "make-skin": {"version": "0.1.0"},
+            "make-eye": {"version": "0.1.0"},
+            "make-garment": {"version": "0.1.0"},
+            "make-wig": {"version": "0.1.0"},
         },
     },
 }

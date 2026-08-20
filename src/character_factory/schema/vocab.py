@@ -17,9 +17,29 @@ TOPOLOGIES = frozenset({"closed"})
 IDENTITY_LENGTH = 45
 RESTING_EXPRESSION_LENGTH = 72
 
-REQUIRED_SLOTS = ("skin", "eyes", "garments")
-OPTIONAL_SLOTS = ("footwear",)
+REQUIRED_SLOTS = ("skin", "eye", "garment")
+OPTIONAL_SLOTS = ("shoe",)
 ALL_SLOTS = REQUIRED_SLOTS + OPTIONAL_SLOTS
+
+# Texture slot keys are singular, always. These are the plural (or otherwise
+# near-miss) spellings an author is most likely to write instead; they fail
+# validation with a pointed message in every mode — never a silent warning.
+SLOT_MISTAKES = {
+    "skins": "skin",
+    "eyes": "eye",
+    "garments": "garment",
+    "footwear": "shoe",
+    "shoes": "shoe",
+}
+
+# Named maps a texture slot can hold. v0.1 defines exactly one; secondary
+# maps (and recipes conditioned on other maps' outputs) are the anticipated
+# additive path — see SPEC.md §5 and §10.
+MAPS = ("albedo",)
+
+# Recipe field reserved for a future schema minor version (conditioning
+# inputs, SPEC.md §5.3). v0.1 writers must not emit it.
+RESERVED_RECIPE_FIELDS = ("inputs",)
 
 SEED_MIN = 0
 SEED_MAX = 2**31 - 1

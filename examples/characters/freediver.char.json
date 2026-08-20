@@ -129,19 +129,19 @@
   },
   "textures": {
     "skin": {
-      "component": "skin",
+      "component": "make-skin",
       "component_version": "0.1.0",
       "prompt": "deep brown skin tone, adult, smooth even complexion",
       "seed": 52001
     },
-    "eyes": {
-      "component": "eyes",
+    "eye": {
+      "component": "make-eye",
       "component_version": "0.1.0",
       "prompt": "dark brown iris, calm even sclera",
       "seed": 52002
     },
-    "garments": {
-      "component": "garments",
+    "garment": {
+      "component": "make-garment",
       "component_version": "0.1.0",
       "prompt": "matte black one-piece swimsuit with high neckline",
       "seed": 52003
@@ -200,23 +200,23 @@
       "interpreter": {
         "version": "0.1.0"
       },
-      "identity": {
+      "make-figure": {
         "version": "0.1.0"
       },
-      "skin": {
+      "make-skin": {
         "version": "0.1.0"
       },
-      "eyes": {
+      "make-eye": {
         "version": "0.1.0"
       },
-      "garments": {
+      "make-garment": {
         "version": "0.1.0"
       },
-      "hair": {
+      "make-wig": {
         "version": "0.1.0"
       }
     },
     "created": "2026-08-19T12:00:00Z",
-    "notes": "Hand-authored example document; parameters are illustrative. Barefoot: no footwear slot."
+    "notes": "Hand-authored example document; parameters are illustrative. Barefoot: no shoe slot."
   }
 }

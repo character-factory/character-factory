@@ -97,9 +97,7 @@ def create_app(service: CharacterService):
             )
             return record_json(record)
         if stage == "bake":
-            raise NotAvailable(
-                "bake is not available yet: texture components are unpublished"
-            )
+            return record_json(service.regenerate(character_id))
         raise ServiceError(f'unknown rebuild stage {stage!r}')
 
     @app.delete("/v0/characters/{character_id}", status_code=204)

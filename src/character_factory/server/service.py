@@ -125,6 +125,18 @@ class CharacterService:
         ).start()
         return self.get(record.id)
 
+    def regenerate(self, character_id: str) -> CharacterRecord:
+        """Re-run bake + assemble for a stored character (its recipes are
+        unchanged; component updates and template changes take effect)."""
+        directory = self._dir(character_id)
+        state = self._state(directory)
+        state.update(status="queued", detail="waiting for the generation worker")
+        self._write_state(directory, state)
+        threading.Thread(
+            target=self._run_generation, args=(character_id,), daemon=True
+        ).start()
+        return self.get(character_id)
+
     def _run_generation(self, character_id: str) -> None:
         from character_factory.textures import bake
 

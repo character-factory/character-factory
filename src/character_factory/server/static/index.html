@@ -117,15 +117,19 @@ async function refresh() {
     div.innerHTML = `<div>${row.name || row.id}</div>
       <div class="status ${row.status === 'error' ? 'error' : ''}">
         ${row.status}${row.detail ? ' — ' + row.detail : ''}</div>`;
-    const btn = document.createElement('button');
-    btn.className = 'small'; btn.textContent = 'regenerate';
-    btn.onclick = async (e) => {
-      e.stopPropagation();
-      await fetch(`/v0/characters/${row.id}/rebuild`, { method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ from: 'assemble' }) });
-    };
-    div.appendChild(btn);
+    for (const stage of ['bake', 'assemble']) {
+      const btn = document.createElement('button');
+      btn.className = 'small';
+      btn.textContent = stage === 'bake' ? 'regenerate' : 'reassemble';
+      btn.style.marginRight = '6px';
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        await fetch(`/v0/characters/${row.id}/rebuild`, { method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ from: stage }) });
+      };
+      div.appendChild(btn);
+    }
     div.onclick = () => { current = row.id; currentRevision = -1; };
     list.appendChild(div);
     if (row.id === current && row.has_scene && row.revision !== currentRevision) {

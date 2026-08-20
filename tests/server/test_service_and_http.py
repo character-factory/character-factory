@@ -163,7 +163,7 @@ def test_http_bad_input_is_400(client):
     assert client.get("/v0/characters/unknown0000/scene.glb").status_code == 400
 
 
-def test_http_rebuild_bake_is_501(client):
+def test_http_rebuild_bake_queues_regeneration(client):
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     character_id = client.post(
         "/v0/characters", json={"character": document}
@@ -171,7 +171,8 @@ def test_http_rebuild_bake_is_501(client):
     response = client.post(
         f"/v0/characters/{character_id}/rebuild", json={"from": "bake"}
     )
-    assert response.status_code == 501
+    assert response.status_code == 200
+    assert response.json()["status"] in ("queued", "baking", "error")
 
 
 # --- MCP parity (tools delegate to the same service) --------------------------

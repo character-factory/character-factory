@@ -42,12 +42,34 @@ class ExportResult:
     joint_count: int
 
 
-def _unweld(rig: RigDefinition, vertices: np.ndarray):
+@dataclass
+class Attachment:
+    """A rigid accessory: parented to one joint, not skinned.
+
+    Vertices arrive in rig-native world coordinates (cm); the exporter
+    re-expresses them in the carrier joint's local frame so they follow the
+    joint under animation.
+    """
+
+    name: str
+    vertices: "np.ndarray"          # (V, 3) world, cm
+    faces: "np.ndarray"             # (F, 3)
+    uv: "np.ndarray | None"         # (V, 2) or None
+    parent_joint: int               # rig joint index
+    albedo_png: bytes | None = None
+    normal_png: bytes | None = None
+    base_color: tuple | None = None  # rgba, used when no albedo texture
+    double_sided: bool = False
+    roughness: float = 0.5
+
+
+def _unweld(rig: RigDefinition, vertices: np.ndarray,
+            faces: np.ndarray, texcoord_faces: np.ndarray):
     """Split UV-seam vertices: one output vertex per distinct
     (position-index, texcoord-index) corner pair, skin weights copied through.
     """
     pairs = np.stack(
-        [rig.faces.reshape(-1), rig.texcoord_faces.reshape(-1)], axis=1
+        [faces.reshape(-1), texcoord_faces.reshape(-1)], axis=1
     )
     unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
     position_index = unique_pairs[:, 0]
@@ -92,11 +114,15 @@ def export_character_glb(
     albedo_png: bytes | None = None,
     name: str = "character",
     generator: str = "character-factory",
+    remove_faces: "np.ndarray | None" = None,
+    attachments: list[Attachment] = (),
+    evaluation=None,
 ) -> ExportResult:
     out_path = Path(out_path)
 
     # 1. Rest evaluation and rest-pose authoring (ARCHITECTURE.md §3.1).
-    evaluation = rig.evaluate(identity, resting_expression)
+    if evaluation is None:
+        evaluation = rig.evaluate(identity, resting_expression)
     skeleton = restpose.Skeleton.from_rig_state(evaluation.skeleton, rig.parents)
     knees = [rig.role_index("left_knee"), rig.role_index("right_knee")]
     vertices_cm = restpose.bake_knee_flexion(
@@ -107,8 +133,16 @@ def export_character_glb(
     ibms = restpose.inverse_binds(skeleton, SCALE)          # after ALL rest edits
     local = restpose.local_transforms(skeleton, SCALE)
 
-    # 2. Mesh: unweld seams, scale to meters, normals, winding.
-    positions_cm, uvs, joints4, weights4, indices, _ = _unweld(rig, vertices_cm)
+    # 2. Mesh: optional face removal (eye sockets), unweld seams, scale to
+    # meters, normals, winding.
+    faces, texcoord_faces = rig.faces, rig.texcoord_faces
+    if remove_faces is not None and len(remove_faces):
+        keep = np.ones(len(faces), dtype=bool)
+        keep[np.asarray(remove_faces, dtype=np.int64)] = False
+        faces, texcoord_faces = faces[keep], texcoord_faces[keep]
+    positions_cm, uvs, joints4, weights4, indices, _ = _unweld(
+        rig, vertices_cm, faces, texcoord_faces
+    )
     positions = (positions_cm * SCALE).astype(np.float32)
     normals64 = _vertex_normals(positions.astype(np.float64), indices)
     indices, normals64 = _ensure_ccw(positions, indices, normals64)
@@ -160,20 +194,32 @@ def export_character_glb(
             node["children"] = children[joint]
         nodes.append(node)
 
-    # 5. Material: albedo texture when provided, a plain grey otherwise.
-    material: dict = {
+    # 5. Materials and textures. Attachments each get their own material;
+    # everything shares one sampler.
+    images: list[dict] = []
+    texture_defs: list[dict] = []
+    materials: list[dict] = []
+    meshes: list[dict] = []
+
+    def add_texture(png: bytes) -> int:
+        images.append(writer.add_image(png))
+        texture_defs.append({"sampler": 0, "source": len(images) - 1})
+        return len(texture_defs) - 1
+
+    body_material: dict = {
         "name": "body",
         "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.55},
         "doubleSided": False,
     }
-    gltf_extra: dict = {}
     if albedo_png is not None:
-        gltf_extra["samplers"] = [_SAMPLER]
-        gltf_extra["images"] = [writer.add_image(albedo_png)]
-        gltf_extra["textures"] = [{"sampler": 0, "source": 0}]
-        material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0}
+        body_material["pbrMetallicRoughness"]["baseColorTexture"] = {
+            "index": add_texture(albedo_png)
+        }
     else:
-        material["pbrMetallicRoughness"]["baseColorFactor"] = [0.75, 0.72, 0.68, 1.0]
+        body_material["pbrMetallicRoughness"]["baseColorFactor"] = [
+            0.75, 0.72, 0.68, 1.0,
+        ]
+    materials.append(body_material)
 
     # 6. The baked idle clip: one second of every joint held at its bind-pose
     # local rotation — the integrator's retarget sanity check.
@@ -189,6 +235,88 @@ def export_character_glb(
             {"sampler": joint, "target": {"node": joint + 1, "path": "rotation"}}
         )
 
+    meshes.append(
+        {
+            "name": "body",
+            "primitives": [
+                {
+                    "attributes": {
+                        "POSITION": a_position,
+                        "NORMAL": a_normal,
+                        "TEXCOORD_0": a_uv,
+                        "JOINTS_0": a_joints,
+                        "WEIGHTS_0": a_weights,
+                    },
+                    "indices": a_indices,
+                    "material": 0,
+                }
+            ],
+        }
+    )
+
+    # 7. Rigid attachments: each becomes a child node of its carrier joint,
+    # re-expressed in that joint's local frame (the IBMs are exactly the
+    # world-to-joint transforms in export units).
+    for attachment in attachments:
+        world_m = np.concatenate(
+            [np.asarray(attachment.vertices, dtype=np.float64) * SCALE,
+             np.ones((len(attachment.vertices), 1))],
+            axis=1,
+        )
+        local_pos = (ibms[attachment.parent_joint] @ world_m.T).T[:, :3]
+        local_pos = local_pos.astype(np.float32)
+        att_faces = np.asarray(attachment.faces, dtype=np.uint32)
+        att_normals = _vertex_normals(
+            local_pos.astype(np.float64), att_faces.astype(np.int64)
+        ).astype(np.float32)
+
+        attributes = {
+            "POSITION": writer.add_accessor(
+                local_pos, "VEC3", target=ARRAY_BUFFER, minmax=True
+            ),
+            "NORMAL": writer.add_accessor(att_normals, "VEC3", target=ARRAY_BUFFER),
+        }
+        if attachment.uv is not None:
+            attributes["TEXCOORD_0"] = writer.add_accessor(
+                np.asarray(attachment.uv, dtype=np.float32), "VEC2",
+                target=ARRAY_BUFFER,
+            )
+        a_att_idx = writer.add_accessor(
+            att_faces.reshape(-1), "SCALAR", target=ELEMENT_ARRAY_BUFFER
+        )
+
+        pbr: dict = {"metallicFactor": 0.0,
+                     "roughnessFactor": float(attachment.roughness)}
+        if attachment.albedo_png is not None:
+            pbr["baseColorTexture"] = {"index": add_texture(attachment.albedo_png)}
+        elif attachment.base_color is not None:
+            pbr["baseColorFactor"] = [float(c) for c in attachment.base_color]
+        material_def: dict = {
+            "name": attachment.name,
+            "pbrMetallicRoughness": pbr,
+            "doubleSided": bool(attachment.double_sided),
+        }
+        if attachment.normal_png is not None:
+            material_def["normalTexture"] = {"index": add_texture(attachment.normal_png)}
+        materials.append(material_def)
+
+        meshes.append(
+            {
+                "name": attachment.name,
+                "primitives": [
+                    {
+                        "attributes": attributes,
+                        "indices": a_att_idx,
+                        "material": len(materials) - 1,
+                    }
+                ],
+            }
+        )
+        node_index = len(nodes)
+        nodes.append({"name": attachment.name, "mesh": len(meshes) - 1})
+        parent_node = nodes[attachment.parent_joint + 1]
+        parent_node.setdefault("children", []).append(node_index)
+
     gltf = {
         "asset": {"version": "2.0", "generator": generator},
         "scene": 0,
@@ -201,28 +329,14 @@ def export_character_glb(
                 "skeleton": 1,
             }
         ],
-        "meshes": [
-            {
-                "name": "body",
-                "primitives": [
-                    {
-                        "attributes": {
-                            "POSITION": a_position,
-                            "NORMAL": a_normal,
-                            "TEXCOORD_0": a_uv,
-                            "JOINTS_0": a_joints,
-                            "WEIGHTS_0": a_weights,
-                        },
-                        "indices": a_indices,
-                        "material": 0,
-                    }
-                ],
-            }
-        ],
-        "materials": [material],
+        "meshes": meshes,
+        "materials": materials,
         "animations": [{"name": "idle", "samplers": samplers, "channels": channels}],
-        **gltf_extra,
     }
+    if images:
+        gltf["samplers"] = [_SAMPLER]
+        gltf["images"] = images
+        gltf["textures"] = texture_defs
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(writer.finish(gltf))
 

@@ -32,6 +32,7 @@ def test_assemble_end_to_end(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (180, 140, 110))
+    solid_png(assets / "eye.png", (90, 60, 40))
     solid_png(assets / "garment.png", (0, 0, 0))       # nothing keyed
     solid_png(assets / "shoe.png", (0, 0, 0))
     out = assemble(
@@ -46,6 +47,20 @@ def test_assemble_end_to_end(tmp_path):
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
 
+    # The full assembly: eyes attached to the eye joints, hair to the head.
+    mesh_names = {m["name"] for m in gltf["meshes"]}
+    assert {"eye_left", "eye_right", "hair"} <= mesh_names
+    names = {node.get("name"): i for i, node in enumerate(gltf["nodes"])}
+    for joint, child in (("l_eye", "eye_left"), ("r_eye", "eye_right"),
+                         ("c_head", "hair")):
+        assert names[child] in gltf["nodes"][names[joint]]["children"]
+    # Socket faces were removed from the body: fewer than the full triangle
+    # count, and the body still skins exactly (validated above).
+    body = next(m for m in gltf["meshes"] if m["name"] == "body")
+    from character_factory.assembly.gltf import read_accessor as _ra
+    indices = _ra(gltf, binary, body["primitives"][0]["indices"])
+    assert len(indices) // 3 == 36874 - 64
+
 
 def test_assemble_is_deterministic(tmp_path):
     from character_factory.api import assemble
@@ -53,6 +68,7 @@ def test_assemble_is_deterministic(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
+    solid_png(assets / "eye.png", (90, 60, 40))
     solid_png(assets / "garment.png", (0, 0, 0))
     character = Character.load(EXAMPLES / "freediver.char.json")
     first = assemble(character, assets, tmp_path / "a.glb").read_bytes()
@@ -66,6 +82,7 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
     assets = tmp_path / "assets"
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
+    solid_png(assets / "eye.png", (90, 60, 40))
     solid_png(assets / "garment.png", (0, 0, 0))
     out = assemble(
         EXAMPLES / "freediver.char.json", assets, tmp_path / "diver.glb"

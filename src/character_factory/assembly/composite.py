@@ -73,6 +73,30 @@ class AtlasDefinition:
             extras=config,
         )
 
+    def at_resolution(self, resolution: int) -> "AtlasDefinition":
+        """This atlas with masks rescaled to another working resolution —
+        recipes may override the bake resolution (SPEC.md §5.1)."""
+        if resolution == self.resolution:
+            return self
+
+        def scale(mask: np.ndarray | None) -> np.ndarray | None:
+            if mask is None:
+                return None
+            from PIL import Image
+
+            image = Image.fromarray((mask * 255).astype(np.uint8), mode="L")
+            resized = image.resize((resolution, resolution), Image.NEAREST)
+            return np.asarray(resized) > 127
+
+        return AtlasDefinition(
+            resolution=resolution,
+            head_mask=scale(self.head_mask),
+            feet_mask=scale(self.feet_mask),
+            key_cutoff=self.key_cutoff,
+            feather_radius=self.feather_radius,
+            extras=self.extras,
+        )
+
 
 def _box_blur(values: np.ndarray, radius: int) -> np.ndarray:
     """Separable box blur. Deliberately dependency-free (numpy only)."""

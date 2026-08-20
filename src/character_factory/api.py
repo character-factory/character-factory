@@ -55,7 +55,6 @@ def assemble(
     import numpy as np
     from PIL import Image
 
-    from character_factory.assembly import export_character_glb, load_rig
     from character_factory.assembly.composite import AtlasDefinition, composite_albedo
     from character_factory.registry import ComponentNotPublished, Registry
 
@@ -72,22 +71,96 @@ def assemble(
     garment = layer("garment")
     shoe = layer("shoe") if "shoe" in character.textures else None
 
+    assets_component: Path | None
     try:
-        atlas = AtlasDefinition.load(registry.ensure("assembly-assets"))
+        assets_component = registry.ensure("assembly-assets")
+        atlas = AtlasDefinition.load(assets_component)
     except (ComponentNotPublished, FileNotFoundError):
-        # Pre-publish fallback: composite without region masks. Correct
-        # compositing order and keying still apply; the masks arrive with
-        # the assembly-assets component.
+        # Pre-publish fallback: composite without region masks or eyes.
+        # Correct compositing order and keying still apply; masks, the
+        # eyeball asset, and placement data arrive with assembly-assets.
+        assets_component = None
         atlas = AtlasDefinition(resolution=skin.shape[0])
 
-    albedo = composite_albedo(skin, garment, shoe, atlas)
+    albedo = composite_albedo(skin, garment, shoe, atlas.at_resolution(skin.shape[0]))
 
     import io
 
     png = io.BytesIO()
     Image.fromarray(albedo).save(png, format="PNG")
 
+    from character_factory.assembly import (
+        Attachment,
+        EyeAssets,
+        export_character_glb,
+        load_rig,
+        place_eyes,
+    )
+
     rig = load_rig(registry.ensure("body-rig"), device=device)
+    evaluation = rig.evaluate(character.identity, character.resting_expression)
+
+    attachments: list[Attachment] = []
+    remove_faces = None
+
+    # Eyes: socket faces removed, eyeballs fitted to the rims, each parented
+    # to its eye joint, textured with the slot's albedo.
+    if assets_component is not None and (assets_component / "eye_placement.json").is_file():
+        eye_assets = EyeAssets.load(assets_component)
+        eye_png = _load_asset(assets_dir, "eye", character).read_bytes()
+        remove_faces = eye_assets.socket_faces
+        for placed in place_eyes(evaluation.vertices, rig.faces, eye_assets):
+            attachments.append(
+                Attachment(
+                    name=f"eye_{placed.side}",
+                    vertices=placed.vertices,
+                    faces=placed.faces,
+                    uv=placed.uv,
+                    parent_joint=rig.role_index(f"{placed.side}_eye"),
+                    albedo_png=eye_png,
+                    roughness=0.15,   # cornea is glossy
+                )
+            )
+
+    # Hair: synthesized by the provider from the character's semantic block
+    # and the evaluated body, parented to the head joint.
+    if character.hair is not None:
+        from character_factory.hair import HeadGeometry, WigProvider
+
+        eye_joints = [rig.role_index("left_eye"), rig.role_index("right_eye")]
+        eye_level = float(evaluation.skeleton[eye_joints, 1].mean())
+        result = WigProvider().synthesize(
+            character.hair,
+            HeadGeometry(
+                vertices=evaluation.vertices,
+                faces=rig.faces,
+                eye_level=eye_level,
+            ),
+        )
+        hair_mesh = result.mesh
+
+        def image_png(image) -> bytes | None:
+            if image is None:
+                return None
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        material = hair_mesh.visual.material
+        attachments.append(
+            Attachment(
+                name="hair",
+                vertices=hair_mesh.vertices,
+                faces=hair_mesh.faces,
+                uv=hair_mesh.visual.uv,
+                parent_joint=rig.role_index("head"),
+                albedo_png=image_png(getattr(material, "baseColorTexture", None)),
+                normal_png=image_png(getattr(material, "normalTexture", None)),
+                double_sided=True,
+                roughness=0.62,
+            )
+        )
+
     result = export_character_glb(
         rig,
         character.identity,
@@ -96,5 +169,8 @@ def assemble(
         albedo_png=png.getvalue(),
         name=character.name or character.content_id[:12],
         generator=f"character-factory/{__import__('character_factory').__version__}",
+        remove_faces=remove_faces,
+        attachments=attachments,
+        evaluation=evaluation,
     )
     return result.glb_path

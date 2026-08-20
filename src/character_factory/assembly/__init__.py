@@ -9,15 +9,24 @@ dependencies precisely so the assembly-only install story holds
 (ARCHITECTURE.md §6.2).
 """
 
-from character_factory.assembly.export import SCALE, ExportResult, export_character_glb
+from character_factory.assembly.export import (
+    SCALE,
+    Attachment,
+    ExportResult,
+    export_character_glb,
+)
+from character_factory.assembly.eyes import EyeAssets, place_eyes
 from character_factory.assembly.rig import RigDefinition, load_rig
 from character_factory.assembly.validate import validate_glb
 
 __all__ = [
+    "Attachment",
     "ExportResult",
+    "EyeAssets",
     "RigDefinition",
     "SCALE",
     "export_character_glb",
     "load_rig",
+    "place_eyes",
     "validate_glb",
 ]

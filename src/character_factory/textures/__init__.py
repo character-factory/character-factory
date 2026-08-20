@@ -129,9 +129,10 @@ class _DiffusersPipeline:
 
         if self._adapter != adapter_dir:
             self.pipeline.unload_lora_weights()
-            # Component convention: the adapter artifact is adapter.safetensors.
+            # Component convention: every component's weight artifact is
+            # weights.safetensors.
             self.pipeline.load_lora_weights(
-                str(adapter_dir), weight_name="adapter.safetensors"
+                str(adapter_dir), weight_name="weights.safetensors"
             )
             self._adapter = adapter_dir
         generator = torch.Generator(self.device).manual_seed(seed)

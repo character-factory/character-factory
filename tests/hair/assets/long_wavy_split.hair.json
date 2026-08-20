@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "seed": 1842,
+  "family": "loose_long",
+  "part": {
+    "kind": "side",
+    "side": "wearer_left",
+    "position": "moderate",
+    "extent": "to_crown",
+    "width": "narrow"
+  },
+  "hairline": {
+    "height": "natural",
+    "shape": "rounded",
+    "temple_recession": "natural",
+    "sideburns": "natural",
+    "nape": "natural",
+    "irregularity": "natural"
+  },
+  "length": {
+    "overall": "mid_back",
+    "front": "collarbone",
+    "side": "below_shoulder",
+    "back": "mid_back",
+    "cut_line": "layered"
+  },
+  "shape": {
+    "volume": "medium",
+    "density": "full",
+    "texture": "wavy",
+    "wave_size": "large",
+    "wave_strength": "medium",
+    "root_lift": "low"
+  },
+  "drape": {
+    "gravity": "natural",
+    "stiffness": "soft",
+    "shoulder_routing": "split",
+    "body_clearance": "natural"
+  },
+  "color": {
+    "family": "auburn"
+  }
+}

@@ -22,10 +22,16 @@ classifiers = [
 # torch runs the rig's TorchScript forward on CPU, numpy does the mesh math.
 # The schema and registry modules remain stdlib-only in what they import.
 # Generation-only dependencies live in the [generation] extra.
+# scipy/trimesh/pygltflib serve the vendored hair engine — pure-Python or
+# wheels-everywhere, so hair synthesis stays CPU-capable on every platform.
 dependencies = [
   "torch>=2.4",
   "numpy>=1.26",
   "pillow>=10",
+  "scipy>=1.10",
+  "trimesh>=4.0",
+  "rtree>=1.0",
+  "pygltflib>=1.16",
 ]
 
 [project.scripts]

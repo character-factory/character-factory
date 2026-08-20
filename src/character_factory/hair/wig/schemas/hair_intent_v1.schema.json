@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:character-factory:schemas:hair-intent-v1",
+  "title": "make-wig HairIntent v1",
+  "description": "Semantic, deterministic controls compiled to opaque swept-mesh hair.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1, "default": 1},
+    "seed": {"type": "integer", "minimum": 0, "maximum": 2147483647, "default": 0},
+    "family": {
+      "enum": ["buzz", "crop", "pixie", "side_part", "bob", "loose_long", "coily", "ponytail", "bun", "braids", "locs"],
+      "default": "loose_long"
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["none", "center", "side"]},
+        "side": {"enum": ["wearer_left", "wearer_right"]},
+        "position": {"enum": ["subtle", "moderate", "deep"]},
+        "extent": {"enum": ["short", "to_crown", "through_crown"]},
+        "width": {"enum": ["narrow", "medium", "wide"]}
+      }
+    },
+    "hairline": {
+      "type": "object",
+      "description": "Anatomical boundary controls; height and left/right are wearer-relative.",
+      "additionalProperties": false,
+      "properties": {
+        "height": {"enum": ["low", "natural", "high"]},
+        "shape": {"enum": ["rounded", "straight", "widows_peak"]},
+        "temple_recession": {"enum": ["none", "natural", "pronounced"]},
+        "sideburns": {"enum": ["short", "natural", "long"]},
+        "nape": {"enum": ["high", "natural", "low"]},
+        "irregularity": {"enum": ["clean", "natural", "textured"]}
+      }
+    },
+    "length": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "overall": {"$ref": "#/$defs/length"},
+        "front": {"$ref": "#/$defs/length"},
+        "side": {"$ref": "#/$defs/length"},
+        "back": {"$ref": "#/$defs/length"},
+        "cut_line": {"enum": ["blunt", "soft", "layered"]}
+      }
+    },
+    "shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "volume": {"enum": ["low", "medium", "high"]},
+        "density": {"enum": ["light", "medium", "full"]},
+        "texture": {"enum": ["straight", "wavy", "curly", "coily"]},
+        "wave_size": {"enum": ["small", "medium", "large"]},
+        "wave_strength": {"enum": ["subtle", "medium", "strong"]},
+        "root_lift": {"enum": ["low", "medium", "high"]}
+      }
+    },
+    "drape": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gravity": {"enum": ["light", "natural", "heavy"]},
+        "stiffness": {"enum": ["soft", "natural", "firm"]},
+        "shoulder_routing": {"enum": ["natural", "split", "mostly_behind", "all_front", "all_behind"]},
+        "body_clearance": {"enum": ["close", "natural", "loose"]}
+      }
+    },
+    "color": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": {"enum": ["black", "dark_brown", "brown", "auburn", "copper", "blonde", "platinum", "gray", "white", "custom"]},
+        "rgb": {
+          "type": "array", "minItems": 3, "maxItems": 3,
+          "items": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "length": {
+      "enum": ["cropped", "ear", "jaw", "chin", "shoulder", "collarbone", "below_shoulder", "chest", "mid_back", "waist"]
+    }
+  }
+}

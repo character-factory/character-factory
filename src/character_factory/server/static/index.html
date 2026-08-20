@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>character-factory</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #14161a; color: #e8e6e1;
+         font: 14px/1.45 system-ui, sans-serif; display: flex; height: 100vh; }
+  #side { width: 340px; min-width: 340px; border-right: 1px solid #2a2d33;
+          padding: 14px; overflow-y: auto; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #viewer { flex: 1; min-height: 0; }
+  #textures { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #2a2d33;
+              overflow-x: auto; background: #101216; }
+  #textures figure { margin: 0; text-align: center; }
+  #textures img { width: 132px; height: 132px; image-rendering: auto;
+                  border: 1px solid #2a2d33; border-radius: 6px; background: #000; }
+  #textures figcaption { font-size: 11px; color: #9aa0a8; margin-top: 3px; }
+  h1 { font-size: 16px; margin: 0 0 10px; }
+  textarea { width: 100%; background: #0d0f12; color: #e8e6e1;
+             border: 1px solid #2a2d33; border-radius: 8px; padding: 8px;
+             font: inherit; resize: vertical; }
+  button { background: #2f6fed; color: white; border: 0; border-radius: 7px;
+           padding: 7px 14px; font: inherit; cursor: pointer; margin-top: 8px; }
+  button.small { padding: 3px 10px; font-size: 12px; background: #3a3f47; }
+  .card { border: 1px solid #2a2d33; border-radius: 9px; padding: 9px 11px;
+          margin: 8px 0; cursor: pointer; }
+  .card.active { border-color: #2f6fed; }
+  .card .status { font-size: 12px; color: #9aa0a8; }
+  .card .status.error { color: #ef6a6a; }
+  #message { font-size: 12px; color: #9aa0a8; min-height: 18px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>character-factory</h1>
+  <textarea id="prompt" rows="3"
+    placeholder="a lean marathon runner with cropped dark hair and green eyes, teal running vest"></textarea>
+  <button id="createBtn">create</button>
+  <div id="message"></div>
+  <div id="list"></div>
+</div>
+<div id="main">
+  <div id="viewer"></div>
+  <div id="textures"></div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const viewerEl = document.getElementById('viewer');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+viewerEl.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x191c21);
+scene.environment = new THREE.PMREMGenerator(renderer)
+  .fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 50);
+camera.position.set(1.4, 1.5, 2.6);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.9, 0);
+scene.add(new THREE.GridHelper(3, 12, 0x3a3f47, 0x22252b));
+
+let mixer = null, current = null, currentRevision = -1, model = null;
+const clock = new THREE.Clock();
+
+function resize() {
+  const w = viewerEl.clientWidth, h = viewerEl.clientHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(viewerEl);
+renderer.setAnimationLoop(() => {
+  if (mixer) mixer.update(clock.getDelta());
+  controls.update(); renderer.render(scene, camera);
+});
+
+function loadScene(id, revision) {
+  new GLTFLoader().load(`/v0/characters/${id}/scene.glb?rev=${revision}`, g => {
+    if (model) scene.remove(model);
+    model = g.scene; scene.add(model);
+    mixer = new THREE.AnimationMixer(model);
+    g.animations.forEach(c => mixer.clipAction(c).play());   // the baked idle clip
+  });
+}
+
+const SLOTS = ['skin', 'eye', 'garment', 'shoe'];
+function showTextures(record) {
+  const holder = document.getElementById('textures');
+  holder.innerHTML = '';
+  const slots = Object.keys(record.character?.textures || {});
+  for (const slot of SLOTS.filter(s => slots.includes(s))) {
+    holder.insertAdjacentHTML('beforeend',
+      `<figure><img src="/v0/characters/${record.id}/assets/${slot}.png?rev=${record.revision}"
+        onerror="this.style.opacity=.15"><figcaption>${slot}</figcaption></figure>`);
+  }
+}
+
+async function refresh() {
+  const rows = await (await fetch('/v0/characters')).json();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  for (const row of rows) {
+    const div = document.createElement('div');
+    div.className = 'card' + (row.id === current ? ' active' : '');
+    div.innerHTML = `<div>${row.name || row.id}</div>
+      <div class="status ${row.status === 'error' ? 'error' : ''}">
+        ${row.status}${row.detail ? ' — ' + row.detail : ''}</div>`;
+    const btn = document.createElement('button');
+    btn.className = 'small'; btn.textContent = 'regenerate';
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      await fetch(`/v0/characters/${row.id}/rebuild`, { method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ from: 'assemble' }) });
+    };
+    div.appendChild(btn);
+    div.onclick = () => { current = row.id; currentRevision = -1; };
+    list.appendChild(div);
+    if (row.id === current && row.has_scene && row.revision !== currentRevision) {
+      currentRevision = row.revision;
+      loadScene(row.id, row.revision);
+      const full = await (await fetch(`/v0/characters/${row.id}`)).json();
+      showTextures(full);
+    }
+  }
+  if (!current && rows.length) current = rows[0].id;
+}
+setInterval(refresh, 1500);
+refresh();
+
+document.getElementById('createBtn').onclick = async () => {
+  const prompt = document.getElementById('prompt').value.trim();
+  if (!prompt) return;
+  const msg = document.getElementById('message');
+  msg.textContent = 'creating (identity runs first — takes a moment)…';
+  const response = await fetch('/v0/characters', { method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ prompt }) });
+  const body = await response.json();
+  msg.textContent = response.ok ? `queued: ${body.name}` : (body.error || 'failed');
+  if (response.ok) current = body.id;
+};
+</script>
+</body>
+</html>

@@ -22,6 +22,8 @@ __all__ = [
     "ValidationIssue",
     "ValidationReport",
     "assemble",
+    "create",
+    "make",
     "canonical_form",
     "character_json_schema",
     "content_id",
@@ -33,8 +35,8 @@ __all__ = [
 def __getattr__(name: str):
     # Heavier entry points import lazily so `import character_factory` stays
     # instant and torch-free until something actually needs them.
-    if name == "assemble":
-        from character_factory.api import assemble
+    if name in ("assemble", "create", "make"):
+        from character_factory import api
 
-        return assemble
+        return getattr(api, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

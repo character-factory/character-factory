@@ -1,21 +1,130 @@
-"""The library's assembly entry point.
+"""The library's generation and assembly entry points.
 
 `assemble(character, assets_dir, out_path)` is the deterministic half of the
 product promise: a character file plus its baked assets in, a rigged .glb
 out (SPEC.md §9). It runs everywhere — CUDA is never required here.
 
-`create` / `bake` / `make` arrive with the interpreter and texture pipelines;
-they are deliberately absent rather than stubbed.
+`create` turns a description into a character file (interpretation +
+deterministic identity); `make` chains create → bake → assemble. Until the
+interpreter component ships, `create` uses the documented rules fallback and
+records that in provenance.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
-from character_factory.schema import Character
+from character_factory.schema import Character, vocab
 
-__all__ = ["AssetError", "assemble"]
+__all__ = ["AssetError", "assemble", "create", "make"]
+
+
+def create(
+    prompt: str,
+    *,
+    seed: int = 0,
+    registry=None,
+    device: str = "cuda",
+    name: str | None = None,
+) -> Character:
+    """Description → character file: interpretation fills the symbolic
+    recipes; the identity component maps the raw prompt to body parameters
+    (deterministic, no seed — the seed governs texture recipes only)."""
+    from character_factory.identity import IdentityComponent, IdentityGenerator
+    from character_factory.interpreter import rules_interpret
+    from character_factory.registry import Registry
+
+    registry = registry or Registry.default()
+    interpretation = rules_interpret(prompt)
+
+    resolved = registry.resolve_slots(sorted(interpretation.slot_prompts))
+    figure_entry = registry.get("make-figure")
+    base_ref = figure_entry.document.get("requires", {}).get("base_model")
+    generator = IdentityGenerator.with_base_model(
+        IdentityComponent.load(registry.ensure("make-figure"), device=device),
+        registry.ensure(base_ref),
+        device=device,
+    )
+    identity, resting_expression = generator.generate(prompt)
+    del generator  # release the text encoder before any diffusion loads (§2.2)
+
+    textures = {}
+    for offset, slot in enumerate(sorted(interpretation.slot_prompts), start=1):
+        entry = resolved[slot]
+        textures[slot] = {
+            "component": entry.name,
+            "component_version": str(entry.version),
+            "prompt": interpretation.slot_prompts[slot],
+            "seed": (seed + offset) % (vocab.SEED_MAX + 1),
+        }
+
+    hair = interpretation.hair
+    if hair is not None:
+        hair = dict(hair, seed=seed % (vocab.SEED_MAX + 1))
+
+    components = {
+        "interpreter": {"version": "0.0.0+rules-fallback"},
+        "make-figure": {"version": str(figure_entry.version)},
+        **{
+            entry.name: {"version": str(entry.version)}
+            for entry in resolved.values()
+        },
+    }
+    if hair is not None:
+        from character_factory.hair import WigProvider
+
+        components[WigProvider.name] = {"version": WigProvider.version}
+
+    if name is None:
+        words = re.findall(r"[a-z0-9]+", prompt.lower())
+        name = "-".join(words[:6]) or "character"
+
+    return Character.from_document(
+        {
+            "format": vocab.FORMAT,
+            "schema_version": vocab.SCHEMA_VERSION,
+            "name": name,
+            "body": {
+                "rig": "mhr-lod1@1.0",
+                "topology": "closed",
+                "identity": identity,
+                "resting_expression": resting_expression,
+            },
+            "textures": textures,
+            "hair": hair,
+            "provenance": {
+                "prompt": prompt,
+                "generator": f"character-factory/"
+                             f"{__import__('character_factory').__version__}",
+                "components": components,
+            },
+        }
+    )
+
+
+def make(
+    prompt: str,
+    out_dir: str | Path,
+    *,
+    seed: int = 0,
+    registry=None,
+    device: str = "cuda",
+) -> Path:
+    """create → bake → assemble: description in, rigged .glb out."""
+    from character_factory.registry import Registry
+    from character_factory.textures import bake
+
+    registry = registry or Registry.default()
+    out_dir = Path(out_dir)
+    character = create(prompt, seed=seed, registry=registry, device=device)
+    baked = bake(character, out_dir / "assets", registry=registry, device=device)
+    baked.character.save(out_dir / "character.char.json")
+    return assemble(
+        baked.character, baked.assets_dir, out_dir / "scene.glb",
+        registry=registry,
+    )
 
 
 class AssetError(ValueError):

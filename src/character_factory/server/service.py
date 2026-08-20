@@ -49,10 +49,12 @@ class CharacterRecord:
 
 
 class CharacterService:
-    def __init__(self, library_dir: str | Path, registry: Registry | None = None):
+    def __init__(self, library_dir: str | Path, registry: Registry | None = None,
+                 device: str = "cuda"):
         self.library_dir = Path(library_dir)
         self.library_dir.mkdir(parents=True, exist_ok=True)
         self.registry = registry or Registry.default()
+        self.device = device
         # One GPU, one worker: assembly/bake jobs run single-flight.
         self._job_lock = threading.Lock()
 
@@ -99,11 +101,53 @@ class CharacterService:
         return self.get(character_id)
 
     def create_from_prompt(self, prompt: str) -> CharacterRecord:
-        raise NotAvailable(
-            "text-to-character is not available yet: the interpreter and "
-            "make-figure components have not been published. Store a character "
-            "document instead, or check back after the first weights release."
-        )
+        """Full make: create the character file now (deterministic identity),
+        then bake + assemble in a background job (single-flight GPU)."""
+        from character_factory.api import create
+        from character_factory.registry import ComponentNotPublished
+
+        try:
+            character = create(
+                prompt, registry=self.registry, device=self.device
+            )
+        except (ComponentNotPublished, FileNotFoundError) as error:
+            raise NotAvailable(
+                f"text-to-character needs generation components that are not "
+                f"available here yet: {error}"
+            ) from error
+        record = self.store_character(character.to_document())
+        directory = self.library_dir / record.id
+        state = self._state(directory)
+        state.update(status="queued", detail="waiting for the generation worker")
+        self._write_state(directory, state)
+        threading.Thread(
+            target=self._run_generation, args=(record.id,), daemon=True
+        ).start()
+        return self.get(record.id)
+
+    def _run_generation(self, character_id: str) -> None:
+        from character_factory.textures import bake
+
+        directory = self.library_dir / character_id
+        with self._job_lock:
+            state = self._state(directory)
+            try:
+                state.update(status="baking", detail=None)
+                self._write_state(directory, state)
+                character = Character.load(directory / "character.char.json")
+                baked = bake(
+                    character, directory / "assets",
+                    registry=self.registry, device=self.device,
+                )
+                baked.character.save(directory / "character.char.json")
+            except Exception as error:  # noqa: BLE001 - job state must record it
+                state.update(status="error", detail=f"bake failed: {error}")
+                self._write_state(directory, state)
+                return
+        try:
+            self.assemble(character_id)
+        except ServiceError:
+            pass  # assemble already recorded the error state
 
     def list(self) -> list[CharacterRecord]:
         records = []

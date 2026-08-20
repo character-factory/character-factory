@@ -118,6 +118,18 @@ def create_app(service: CharacterService):
     async def health():
         return service.health()
 
+    # The bundled browser view: a plain client of the /v0 contract above —
+    # no server-side rendering, no local-only endpoints (ARCHITECTURE §2.3).
+    @app.get("/", include_in_schema=False)
+    async def index():
+        from fastapi.responses import HTMLResponse
+        from importlib import resources
+
+        page = resources.files("character_factory.server").joinpath(
+            "static/index.html"
+        )
+        return HTMLResponse(page.read_text(encoding="utf-8"))
+
     return app
 
 

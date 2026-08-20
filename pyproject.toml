@@ -60,6 +60,8 @@ where = ["src"]
 [tool.setuptools.package-data]
 "character_factory.schema" = ["data/*.json"]
 "character_factory.registry" = ["data/*.json"]
+"character_factory.hair.wig.schemas" = ["*.json"]
+"character_factory.server" = ["static/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

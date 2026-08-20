@@ -47,9 +47,10 @@ def test_store_rejects_invalid_documents(service):
 
 
 def test_create_from_prompt_reports_unavailable(service):
+    # The isolated cache has no generation components.
     with pytest.raises(NotAvailable) as excinfo:
         service.create_from_prompt("a tall person")
-    assert "not been published" in str(excinfo.value)
+    assert "not available" in str(excinfo.value)
 
 
 def test_get_unknown_character(service):
@@ -131,7 +132,7 @@ def test_http_round_trip(client):
 def test_http_prompt_returns_501_not_available(client):
     response = client.post("/v0/characters", json={"prompt": "a tall person"})
     assert response.status_code == 501
-    assert "not been published" in response.json()["error"]
+    assert "not available" in response.json()["error"]
 
 
 def test_http_validate_endpoint(client):

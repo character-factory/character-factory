@@ -1,0 +1,85 @@
+"""The MCP server: the same operations as the HTTP surface, as tools.
+
+Parity rule (ARCHITECTURE §2.4): same tool names and input/output shapes
+local and hosted; both layers delegate to the one CharacterService, so they
+cannot drift. Resources expose the character JSON Schema and each stored
+character's document — an agent can read the format it is writing against
+without leaving the session.
+
+Install extra ``[mcp]``; run with ``character-factory mcp``.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from character_factory.server.service import CharacterService
+
+__all__ = ["build_mcp"]
+
+
+def build_mcp(service: CharacterService):
+    try:  # MCP SDK 2.x
+        from mcp.server.mcpserver import MCPServer as _Server
+    except ImportError:  # MCP SDK 1.x
+        from mcp.server.fastmcp import FastMCP as _Server
+
+    mcp = _Server("character-factory")
+
+    @mcp.tool()
+    def validate_character(character: dict, strict: bool = False) -> dict:
+        """Validate a character document against the format spec."""
+        return service.validate(character, strict=strict)
+
+    @mcp.tool()
+    def store_character(character: dict) -> dict:
+        """Validate and store a character document; returns its record."""
+        record = service.store_character(character)
+        return record.__dict__
+
+    @mcp.tool()
+    def create_character(prompt: str) -> dict:
+        """Create a character from a text description (needs published
+        generation components; reports clearly when unavailable)."""
+        return service.create_from_prompt(prompt).__dict__
+
+    @mcp.tool()
+    def get_character(character_id: str) -> dict:
+        """A stored character's record and full document."""
+        record = service.get(character_id).__dict__
+        record["character"] = service.document(character_id)
+        return record
+
+    @mcp.tool()
+    def list_characters() -> list[dict]:
+        """All stored characters."""
+        return [record.__dict__ for record in service.list()]
+
+    @mcp.tool()
+    def assemble_character(character_id: str) -> dict:
+        """Build the rigged .glb from the character's stored assets."""
+        return service.assemble(character_id).__dict__
+
+    @mcp.tool()
+    def list_components() -> list[dict]:
+        """Registry view: every known component and its publication state."""
+        return service.components()
+
+    @mcp.resource("character-factory://schema/character")
+    def character_schema() -> str:
+        """The published JSON Schema for the character format."""
+        from character_factory.schema import character_json_schema
+
+        return json.dumps(character_json_schema(), indent=2)
+
+    @mcp.resource("character-factory://characters/{character_id}")
+    def character_document(character_id: str) -> str:
+        """One stored character's document."""
+        return json.dumps(service.document(character_id), indent=2)
+
+    return mcp
+
+
+def run(library_dir: str | Path) -> None:
+    build_mcp(CharacterService(library_dir)).run()

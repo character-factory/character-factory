@@ -78,7 +78,41 @@ def build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("--device", default="cpu")
     assemble.set_defaults(func=_cmd_assemble)
 
+    serve = commands.add_parser(
+        "serve", help="run the local /v0 HTTP server (install extra [server])"
+    )
+    serve.add_argument("--library", type=Path, default=Path("characters"))
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8400)
+    serve.set_defaults(func=_cmd_serve)
+
+    mcp = commands.add_parser(
+        "mcp", help="run the MCP server on stdio (install extra [mcp])"
+    )
+    mcp.add_argument("--library", type=Path, default=Path("characters"))
+    mcp.set_defaults(func=_cmd_mcp)
+
     return parser
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    try:
+        from character_factory.server import serve
+    except ImportError as error:
+        print(f"error: the [server] extra is not installed ({error})", file=sys.stderr)
+        return 1
+    serve(args.library, host=args.host, port=args.port)
+    return 0
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    try:
+        from character_factory.mcp import run
+    except ImportError as error:
+        print(f"error: the [mcp] extra is not installed ({error})", file=sys.stderr)
+        return 1
+    run(args.library)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

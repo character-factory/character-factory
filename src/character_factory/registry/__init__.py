@@ -71,6 +71,29 @@ class Registry:
     def from_path(cls, path: str | Path) -> "Registry":
         return cls(RegistryIndex(json.loads(Path(path).read_text(encoding="utf-8"))))
 
+    @classmethod
+    def refresh(cls) -> "Registry":
+        """Fetch the configured alternate registry index, validate it, cache
+        it, and return a Registry over it. Requires a configured
+        ``registry_url`` (environment or config file — see
+        :mod:`character_factory.registry.config`)."""
+        from character_factory.registry.config import load_config
+        from character_factory.registry.store import fetch_json
+
+        config = load_config()
+        if not config.registry_url:
+            raise RegistryError(
+                "no registry_url configured: set CHARACTER_FACTORY_REGISTRY_URL "
+                "or add registry_url to the config file"
+            )
+        index = RegistryIndex(fetch_json(config.registry_url, config.headers()))
+        target = cache_dir() / "registry.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(index.document, indent=2) + "\n", encoding="utf-8"
+        )
+        return cls(index)
+
     # -- resolution -----------------------------------------------------------
 
     def get(self, ref_or_name: str, version: str | None = None) -> ComponentEntry:
@@ -126,5 +149,10 @@ class Registry:
     def ensure(self, ref_or_name: str, version: str | None = None, **kwargs) -> Path:
         """Local directory of the component's verified artifacts, fetching
         anything missing. Raises ComponentNotPublished for entries whose
-        weights have not been published yet."""
+        weights have not been published yet. Configured auth headers apply
+        to every download unless a custom `fetch` is injected."""
+        if "fetch" not in kwargs and "headers" not in kwargs:
+            from character_factory.registry.config import load_config
+
+            kwargs["headers"] = load_config().headers()
         return ensure_component(self.get(ref_or_name, version), **kwargs)

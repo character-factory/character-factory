@@ -113,9 +113,12 @@ class _DiffusersPipeline:
 
     def __init__(self, base_dir: Path, device: str):
         import torch
-        from diffusers import Flux2Pipeline
+        from diffusers import DiffusionPipeline
 
-        self.pipeline = Flux2Pipeline.from_pretrained(
+        # The base component's model_index.json declares the pipeline class;
+        # resolving it from the distribution keeps this code base-model-
+        # agnostic (a registry data change, not a code change).
+        self.pipeline = DiffusionPipeline.from_pretrained(
             str(base_dir), torch_dtype=torch.bfloat16
         ).to(device)
         self.device = device
@@ -126,7 +129,10 @@ class _DiffusersPipeline:
 
         if self._adapter != adapter_dir:
             self.pipeline.unload_lora_weights()
-            self.pipeline.load_lora_weights(str(adapter_dir))
+            # Component convention: the adapter artifact is adapter.safetensors.
+            self.pipeline.load_lora_weights(
+                str(adapter_dir), weight_name="adapter.safetensors"
+            )
             self._adapter = adapter_dir
         generator = torch.Generator(self.device).manual_seed(seed)
         return self.pipeline(

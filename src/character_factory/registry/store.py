@@ -71,8 +71,15 @@ def resolve_url(entry: ComponentEntry, artifact_path: str) -> str:
     )
 
 
-def _download(url: str, target: Path, expected_bytes: int) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "character-factory"})
+def _request_headers(headers: dict[str, str] | None) -> dict[str, str]:
+    return {"User-Agent": "character-factory", **(headers or {})}
+
+
+def _download(
+    url: str, target: Path, expected_bytes: int,
+    headers: dict[str, str] | None = None,
+) -> None:
+    request = urllib.request.Request(url, headers=_request_headers(headers))
     try:
         with urllib.request.urlopen(request) as response, target.open("wb") as out:
             shutil.copyfileobj(response, out, _CHUNK)
@@ -85,17 +92,35 @@ def _download(url: str, target: Path, expected_bytes: int) -> None:
         )
 
 
+def fetch_json(url: str, headers: dict[str, str] | None = None) -> dict:
+    """Fetch a JSON document (an alternate registry index) over HTTPS,
+    applying the configured auth headers."""
+    request = urllib.request.Request(url, headers=_request_headers(headers))
+    try:
+        with urllib.request.urlopen(request) as response:
+            import json
+
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.URLError as error:
+        raise RegistryError(f"registry index fetch failed: {url} ({error})") from error
+
+
 def ensure_component(
     entry: ComponentEntry,
     *,
     fetch: Callable[[str, Path, int], None] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> Path:
     """Return the local directory holding `entry`'s verified artifacts,
     downloading whatever is missing.
 
-    `fetch` is injectable for tests; the default downloads over HTTPS.
+    `fetch` is injectable for tests; the default downloads over HTTPS with
+    the configured auth headers applied (private staging repositories work
+    authenticated, then identically unauthenticated after a public flip).
     """
-    fetch = fetch or _download
+    if fetch is None:
+        def fetch(url: str, target: Path, expected: int) -> None:  # noqa: E731
+            _download(url, target, expected, headers)
     target_dir = component_dir(entry)
     for artifact in entry.artifacts:
         path = target_dir / artifact["path"]

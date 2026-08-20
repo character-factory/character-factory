@@ -54,8 +54,22 @@ _TEXTURES = {
     "wavy": ("wavy", "waves"),
 }
 _BALD = ("bald", "shaved head", "hairless")
-_SHOE_WORDS = ("shoe", "shoes", "sneaker", "boot", "footwear", "trainers",
-               "loafers", "heels", "sandal")
+_SHOE_WORDS = ("shoe", "shoes", "sneaker", "sneakers", "boot", "boots",
+               "footwear", "trainers", "loafers", "loafer", "heels",
+               "sandal", "sandals", "flip flops", "flip-flops", "flipflops",
+               "slides", "clogs", "moccasins", "oxfords", "pumps", "cleats")
+_GARMENT_WORDS = (
+    "top", "croptop", "crop top", "shirt", "t-shirt", "tshirt", "tee",
+    "blouse", "tank", "vest", "jacket", "hoodie", "sweater", "cardigan",
+    "dress", "gown", "skirt", "shorts", "jeans", "denim", "pants",
+    "trousers", "leggings", "swimsuit", "bikini", "jammers", "wetsuit",
+    "uniform", "suit", "robe", "overalls", "jumpsuit", "romper", "socks",
+    "gloves", "coat", "kimono", "sari", "tunic",
+)
+_EYE_COLORS = ("green", "blue", "brown", "hazel", "amber", "gray", "grey",
+               "dark", "black", "violet")
+_DEFAULT_EYE_PROMPT = ("natural dark brown iris, subtle radial fibers, "
+                       "off-white sclera, faint veins")
 
 
 def _default_hair(family: str, color: str, texture: str | None) -> dict:
@@ -92,24 +106,95 @@ def _first_match(text: str, table: dict[str, tuple]) -> str | None:
     return None
 
 
+def _segments(text: str) -> list[str]:
+    """Comma/'and'-separated fragments, lowercased, order preserved."""
+    parts = re.split(r",|\band\b", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _clothing_split(text: str) -> tuple[str | None, str | None, str | None]:
+    """(identity clause, garment clause, shoe clause) from the description.
+
+    The clothing clause is everything after 'wearing'/'dressed in'/'in a'
+    when present, else the fragments containing clothing nouns. Footwear
+    fragments split out of the clothing clause into the shoe clause.
+    """
+    match = re.search(r"\b(?:wearing|dressed in|clad in)\b(.*)$", text)
+    if match:
+        clothing_text = match.group(1).strip()
+        identity_text = text[: match.start()].strip(" ,.")
+        clothing_segments = _segments(clothing_text)
+    else:
+        clothing_segments = [
+            segment for segment in _segments(text)
+            if any(word in segment for word in _GARMENT_WORDS + _SHOE_WORDS)
+        ]
+        identity_text = text
+        for segment in clothing_segments:
+            identity_text = identity_text.replace(segment, " ")
+        identity_text = re.sub(r"\s+", " ", identity_text).strip(" ,.")
+
+    shoe_segments = [s for s in clothing_segments
+                     if any(word in s for word in _SHOE_WORDS)]
+    garment_segments = [s for s in clothing_segments if s not in shoe_segments]
+
+    return (
+        identity_text or None,
+        ", ".join(garment_segments) or None,
+        ", ".join(shoe_segments) or None,
+    )
+
+
+def _eye_clause(text: str) -> tuple[str | None, str]:
+    """(eye prompt or None, text with the eye fragment removed).
+
+    Matches a one-or-two-word color phrase directly before "eye(s)" whose
+    final word is a known eye color ("green eyes", "deep hazel eyes") —
+    never a longer span, so unrelated words cannot ride into the eye slot.
+    """
+    stopwords = {"and", "with", "a", "the", "has", "her", "his", "their"}
+    for match in re.finditer(r"\b([a-z]+(?:[ -][a-z]+)?)[ -]eyes?\b", text):
+        words = [w for w in re.split(r"[ -]", match.group(1)) if w not in stopwords]
+        phrase = " ".join(words)
+        if words and words[-1] in _EYE_COLORS:
+            remainder = text[: match.start()] + text[match.end():]
+            remainder = re.sub(r"\band\s*(,|$)", r"\1", remainder)
+            remainder = re.sub(r"\s+", " ", remainder).strip(" ,.")
+            return (
+                f"{phrase} iris, off-white sclera, subtle radial fibers",
+                remainder,
+            )
+    return None, text
+
+
 def rules_interpret(prompt: str) -> Interpretation:
     """Deterministic degraded-mode interpretation.
 
-    Slot prompts reuse the full description (each component's conditioning
-    template frames it for its own canvas); the hair block is keyword-mapped
-    with conservative defaults. The model backend replaces all of this.
+    A clause decomposer routes clothing words to the garment slot, footwear
+    to the shoe slot, eye-color phrases to the eye slot, and the identity
+    remainder to the skin slot — so no slot is conditioned on another slot's
+    content (a shoe word in the eye prompt paints shoes on the eyeball).
+    The model backend replaces all of this with real interpretation.
     """
     text = re.sub(r"\s+", " ", prompt.strip().lower())
-    notes = ["rules-fallback interpretation: slot prompts are the full "
-             "description; hair is keyword-mapped with conservative defaults"]
+    notes = ["rules-fallback interpretation: clause-routed slot prompts, "
+             "keyword-mapped hair with conservative defaults"]
+
+    eye_prompt, without_eyes = _eye_clause(text)
+    if eye_prompt is None:
+        eye_prompt = _DEFAULT_EYE_PROMPT
+        notes.append("no eye description found; neutral default used")
+    identity, garment, shoe = _clothing_split(without_eyes)
 
     slots = {
-        "skin": prompt.strip(),
-        "eye": prompt.strip(),
-        "garment": prompt.strip(),
+        "skin": identity or text,
+        "eye": eye_prompt,
+        "garment": garment or "plain fitted t-shirt and plain trousers",
     }
-    if any(word in text for word in _SHOE_WORDS):
-        slots["shoe"] = prompt.strip()
+    if garment is None:
+        notes.append("no clothing description found; plain default garment used")
+    if shoe is not None:
+        slots["shoe"] = shoe
 
     if any(word in text for word in _BALD):
         hair = None

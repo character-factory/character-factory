@@ -162,12 +162,19 @@ class ModelInterpreter:
             tokenizer, JsonSchemaParser(schema)
         )
         with torch.no_grad():
+            generate_kwargs = {}
+            if self.config.repetition_penalty != 1.0:
+                # Greedy decoding can loop inside a grammar-legal string;
+                # a mild penalty breaks the loop without fighting the
+                # grammar the way hard n-gram bans would.
+                generate_kwargs["repetition_penalty"] = self.config.repetition_penalty
             output = self._model.generate(
                 **inputs,
                 max_new_tokens=self.config.max_new_tokens,
                 do_sample=False,
                 prefix_allowed_tokens_fn=prefix_fn,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                **generate_kwargs,
             )
         return tokenizer.decode(
             output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
@@ -182,7 +189,12 @@ class ModelInterpreter:
                 {"role": "system", "content": instruction},
                 {"role": "user", "content": description},
             ],
-            "temperature": 0,
+            # JSON mode instead of a sampling override: current hosted
+            # models reject non-default temperature but honor a JSON
+            # response format, and the validation/repair pass covers the
+            # rest (an unconstrained backend has no decoding grammar).
+            "response_format": {"type": "json_object"},
+            "max_completion_tokens": max(self.config.max_new_tokens, 900),
         }
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
@@ -209,7 +221,12 @@ class ModelInterpreter:
         from character_factory.interpreter import Interpretation
 
         schema = interpretation_schema()
-        instruction = build_instruction(slot_guidance or {})
+        unconstrained = self.generate is None and self.config.endpoint is not None
+        instruction = build_instruction(
+            slot_guidance or {},
+            header=self.config.instruction,
+            schema=schema if unconstrained else None,
+        )
         start = time.monotonic()
         try:
             import torch
@@ -256,16 +273,25 @@ class ModelInterpreter:
             pass
 
 
-def build_instruction(slot_guidance: dict[str, str]) -> str:
-    """The system instruction: the task, the slot surface, and each
+def build_instruction(slot_guidance: dict[str, str],
+                      header: str | None = None,
+                      schema: dict | None = None) -> str:
+    """The system instruction: the task header, the slot surface, and each
     component's declared field guidance (version-bound registry data —
-    what the installed component versions want to be told)."""
+    what the installed component versions want to be told). A configured
+    `instruction` replaces the built-in header — prompt engineering is
+    conditioning-grade data and lives in configuration, not code."""
     from character_factory.schema import vocab
 
+    if header is None:
+        header = (
+            "You turn one character description into texture-generation "
+            "prompts for a rigged 3D human, one prompt per texture slot, "
+            "plus a hair block. Respond with a single JSON object and "
+            "nothing else."
+        )
     lines = [
-        "You turn one character description into texture-generation prompts "
-        "for a rigged 3D human, one prompt per texture slot, plus a hair "
-        "block. Respond with a single JSON object and nothing else.",
+        header,
         "",
         f"Texture slots (keys are singular, exactly these): "
         f"required {', '.join(vocab.REQUIRED_SLOTS)}; "
@@ -281,10 +307,23 @@ def build_instruction(slot_guidance: dict[str, str]) -> str:
         lines.append(f"- {slot}: {guidance}")
     lines += [
         "",
-        "The hair block uses closed vocabularies (the JSON grammar enforces "
-        "them); pick conservative, natural values for anything the "
-        "description leaves unsaid. Set seed to 0.",
+        "The hair block uses closed vocabularies; copy enum values exactly "
+        "— never paraphrase — and set seed to 0. Pick natural values for "
+        "anything the description leaves unsaid.",
+        "",
+        'Output shape: {"textures": {"<slot>": {"prompt": "…"}, …}, '
+        '"hair": {…}} — slot keys at the textures level, each holding one '
+        '"prompt" string.',
     ]
+    if schema is not None:
+        # Backends without a decoding grammar (the endpoint) get the full
+        # schema in-prompt — the proven way to hold an unconstrained model
+        # to closed vocabularies.
+        lines += [
+            "",
+            "Your reply must validate against exactly this JSON Schema:",
+            json.dumps(schema),
+        ]
     return "\n".join(lines)
 
 

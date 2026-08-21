@@ -55,7 +55,9 @@ def create_app(service: CharacterService):
         if "character" in payload:
             return record_json(service.store_character(payload["character"]))
         if "prompt" in payload:
-            return record_json(service.create_from_prompt(payload["prompt"]))
+            return record_json(service.create_from_prompt(
+                payload["prompt"], interpreter=payload.get("interpreter")
+            ))
         raise ServiceError('the body must contain "character" or "prompt"')
 
     @app.get("/v0/characters")
@@ -111,6 +113,10 @@ def create_app(service: CharacterService):
     @app.get("/v0/components")
     async def components():
         return service.components()
+
+    @app.get("/v0/interpreters")
+    async def interpreters():
+        return service.interpreters()
 
     @app.get("/v0/health")
     async def health():

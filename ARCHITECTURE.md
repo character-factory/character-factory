@@ -267,7 +267,10 @@ rather than being a dead end.
 Endpoint sketch (v0):
 
 ```
-POST   /v0/characters                  {prompt, seed?}     → 202 {id}   enqueue full make
+POST   /v0/characters                  {prompt, seed?, interpreter?}  → 202 {id}  enqueue full make
+                                       interpreter: backend alias from /v0/interpreters —
+                                       per-request model selection (hosted tiers use the same field)
+GET    /v0/interpreters                selectable interpreter backends: [{alias, kind}]
 GET    /v0/characters                  list (id, name, status, thumbnail)
 GET    /v0/characters/{id}             status + character document + revision
 GET    /v0/characters/{id}/scene.glb   current build artifact

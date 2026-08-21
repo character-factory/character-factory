@@ -47,18 +47,22 @@ def interpret(
     registry=None,
     device: str = "cuda",
     config=None,
+    backend: str | None = None,
 ) -> tuple[Interpretation, dict]:
     """Description → (Interpretation, metrics).
 
-    Uses the configured model backend when one is configured, the rules
-    fallback otherwise — and, with a note, when the model backend fails
-    (generation must degrade, not die). The model is loaded, run, and
-    released inside this call: no interpreter VRAM survives into the
-    diffusion stages (ARCHITECTURE §2.2).
+    `backend` selects a configured backend by alias (the create UI's
+    model selector; `"rules"` forces the fallback); without it the
+    configured default applies. Uses the model backend when one is
+    configured, the rules fallback otherwise — and, with a note, when the
+    model backend fails (generation must degrade, not die). The model is
+    loaded, run, and released inside this call: no interpreter VRAM
+    survives into the diffusion stages (ARCHITECTURE §2.2).
     """
     from character_factory.interpreter.config import load_interpreter_config
 
-    config = config or load_interpreter_config()
+    if config is None:
+        config = load_interpreter_config(alias=backend)
     start = time.monotonic()
     if not config.configured:
         interpretation = rules_interpret(prompt)

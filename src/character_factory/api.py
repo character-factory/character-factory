@@ -29,6 +29,7 @@ def create(
     registry=None,
     device: str = "cuda",
     name: str | None = None,
+    interpreter: str | None = None,
 ) -> Character:
     """Description → character file: interpretation fills the symbolic
     recipes; the identity component maps the raw prompt to body parameters
@@ -40,7 +41,11 @@ def create(
     registry = registry or Registry.default()
     # The interpreter model (if configured) loads, runs, and releases here —
     # before the identity encoder or any diffusion pipeline loads (§2.2).
-    interpretation, _ = interpret(prompt, registry=registry, device=device)
+    # `interpreter` selects a configured backend by alias (per-request; the
+    # create UI's model selector); None means the configured default.
+    interpretation, _ = interpret(
+        prompt, registry=registry, device=device, backend=interpreter
+    )
 
     resolved = registry.resolve_slots(sorted(interpretation.slot_prompts))
     figure_entry = registry.get("make-figure")

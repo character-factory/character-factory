@@ -100,19 +100,33 @@ class CharacterService:
         self._write_state(directory, state)
         return self.get(character_id)
 
-    def create_from_prompt(self, prompt: str) -> CharacterRecord:
+    def create_from_prompt(
+        self, prompt: str, interpreter: str | None = None
+    ) -> CharacterRecord:
         """Full make: create the character file now (interpretation +
         deterministic identity), then bake + assemble in a background job.
-        The create stage runs GPU models too (the interpreter, the identity
-        encoder), so it takes the same job lock as bake/assemble: one GPU
-        stage at a time, ever — concurrent requests queue."""
+        `interpreter` selects a configured backend by alias (the create
+        UI's model selector); None uses the configured default. The create
+        stage runs GPU models too (the interpreter, the identity encoder),
+        so it takes the same job lock as bake/assemble: one GPU stage at a
+        time, ever — concurrent requests queue."""
         from character_factory.api import create
         from character_factory.registry import ComponentNotPublished
 
+        if interpreter is not None:
+            from character_factory.interpreter.config import (
+                load_interpreter_config,
+            )
+
+            try:
+                load_interpreter_config(alias=interpreter)
+            except ValueError as error:
+                raise ServiceError(str(error)) from error
         try:
             with self._job_lock:
                 character = create(
-                    prompt, registry=self.registry, device=self.device
+                    prompt, registry=self.registry, device=self.device,
+                    interpreter=interpreter,
                 )
         except (ComponentNotPublished, FileNotFoundError) as error:
             raise NotAvailable(
@@ -202,6 +216,13 @@ class CharacterService:
             "errors": [str(issue) for issue in report.errors],
             "warnings": [str(issue) for issue in report.warnings],
         }
+
+    def interpreters(self) -> list[dict]:
+        """Selectable interpreter backends: aliases and kinds only —
+        model identity is local configuration and never leaves it."""
+        from character_factory.interpreter.config import available_backends
+
+        return available_backends()
 
     def components(self) -> list[dict]:
         rows = []

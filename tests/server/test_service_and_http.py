@@ -189,3 +189,31 @@ def test_mcp_tools_delegate_to_service(service, stored):
     assert {"validate_character", "store_character", "create_character",
             "get_character", "list_characters", "assemble_character",
             "list_components"} <= tool_names
+
+
+def test_http_interpreters_lists_selectable_backends(client, monkeypatch, tmp_path):
+    import json as jsonlib
+
+    (tmp_path / "config.json").write_text(jsonlib.dumps({"interpreter": {
+        "backends": {"local-a": {"model": "x"},
+                     "cloud": {"endpoint": "http://h/v1", "model": "m"}},
+    }}))
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    rows = client.get("/v0/interpreters").json()
+    assert [r["alias"] for r in rows] == ["cloud", "local-a", "rules"]
+    # No model identity leaves the config: aliases and kinds only.
+    assert all(set(r) == {"alias", "kind"} for r in rows)
+
+
+def test_http_create_rejects_unknown_interpreter_alias(client, monkeypatch, tmp_path):
+    (tmp_path / "config.json").write_text("{}")
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    response = client.post(
+        "/v0/characters", json={"prompt": "someone", "interpreter": "nope"}
+    )
+    assert response.status_code == 400
+    assert "unknown interpreter backend" in response.json()["error"]

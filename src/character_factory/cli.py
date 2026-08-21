@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     interpret.add_argument("--device", default="cuda")
     interpret.add_argument(
+        "--backend",
+        help="select a configured backend by alias (see the server's "
+             "/v0/interpreters); 'rules' forces the fallback",
+    )
+    interpret.add_argument(
         "--rules", action="store_true",
         help="force the deterministic rules fallback (no model)",
     )
@@ -126,7 +131,7 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
     if args.rules:
         config = InterpreterConfig()          # nothing configured → rules mode
     else:
-        config = load_interpreter_config()
+        config = load_interpreter_config(alias=args.backend)
         if args.model:
             config = dataclasses.replace(config, model=args.model, endpoint=None)
     interpretation, metrics = interpret(

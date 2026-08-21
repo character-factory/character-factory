@@ -215,5 +215,49 @@ def test_endpoint_backend_speaks_openai_chat(monkeypatch):
     assert result.slot_prompts["skin"].startswith("fair")
     assert seen["url"].endswith("/chat/completions")
     assert seen["body"]["model"] == "served-name"
-    assert seen["body"]["temperature"] == 0
+    assert seen["body"]["response_format"] == {"type": "json_object"}
+    assert seen["body"]["max_completion_tokens"] >= 900
+    assert "temperature" not in seen["body"]   # hosted models reject overrides
     assert seen["auth"] == "Bearer k"
+
+def test_backend_aliases_resolve_and_list(monkeypatch, tmp_path):
+    from character_factory.interpreter import config as configuration
+
+    (tmp_path / "config.json").write_text(json.dumps({"interpreter": {
+        "default": "local-a",
+        "instruction": "custom header",
+        "backends": {
+            "local-a": {"model": "some/weights"},
+            "cloud": {"endpoint": "http://host/v1", "model": "tier-1",
+                      "api_key": "k"},
+        },
+    }}))
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
+                configuration.ENV_API_KEY):
+        monkeypatch.delenv(env, raising=False)
+
+    default = configuration.load_interpreter_config()
+    assert default.model == "some/weights"
+    assert default.instruction == "custom header"
+
+    cloud = configuration.load_interpreter_config(alias="cloud")
+    assert cloud.endpoint == "http://host/v1"
+
+    rules = configuration.load_interpreter_config(alias="rules")
+    assert not rules.configured
+
+    with pytest.raises(ValueError, match="unknown interpreter backend"):
+        configuration.load_interpreter_config(alias="nope")
+
+    listed = configuration.available_backends()
+    assert [row["alias"] for row in listed] == ["cloud", "local-a", "rules"]
+    assert {row["kind"] for row in listed} == {"endpoint", "local-model", "rules"}
+
+
+def test_configured_instruction_replaces_the_header():
+    text = build_instruction({}, header="my custom header")
+    assert text.startswith("my custom header")
+    assert "Texture slots" in text        # the structural surface remains

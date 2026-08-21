@@ -178,7 +178,6 @@ def assemble(
 
     skin = layer("skin")
     garment = layer("garment")
-    shoe = layer("shoe") if "shoe" in character.textures else None
 
     assets_component: Path | None
     try:
@@ -191,13 +190,6 @@ def assemble(
         assets_component = None
         atlas = AtlasDefinition(resolution=skin.shape[0])
 
-    albedo = composite_albedo(skin, garment, shoe, atlas.at_resolution(skin.shape[0]))
-
-    import io
-
-    png = io.BytesIO()
-    Image.fromarray(albedo).save(png, format="PNG")
-
     from character_factory.assembly import (
         Attachment,
         EyeAssets,
@@ -207,6 +199,34 @@ def assemble(
     )
 
     rig = load_rig(registry.ensure("body-rig"), device=device)
+
+    # The shoe generator paints a one-foot canvas; its component's foot
+    # chart maps that canvas onto the atlas's foot islands (SPEC.md §9).
+    shoe_overlay = None
+    if "shoe" in character.textures:
+        from character_factory.assembly.footwear import FootChart, bake_shoe_overlay
+
+        recipe = character.texture_maps()["shoe"]["albedo"]
+        chart = FootChart.load(
+            registry.ensure(recipe["component"], recipe.get("component_version"))
+        )
+        shoe_overlay = bake_shoe_overlay(
+            layer("shoe"),
+            chart,
+            rig.texcoords,
+            rig.texcoord_faces,
+            prompt=recipe.get("prompt", ""),
+            resolution=skin.shape[0],
+        )
+
+    albedo = composite_albedo(
+        skin, garment, shoe_overlay, atlas.at_resolution(skin.shape[0])
+    )
+
+    import io
+
+    png = io.BytesIO()
+    Image.fromarray(albedo).save(png, format="PNG")
     evaluation = rig.evaluate(character.identity, character.resting_expression)
 
     attachments: list[Attachment] = []

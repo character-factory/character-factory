@@ -24,6 +24,13 @@ def painted(region, color):
     return layer
 
 
+def overlay(region, color):
+    """A shoe overlay: RGBA with authoritative alpha (footwear bake output)."""
+    layer = np.zeros((SIZE, SIZE, 4), dtype=np.uint8)
+    layer[region] = (*color, 255)
+    return layer
+
+
 def atlas(**kwargs):
     return AtlasDefinition(resolution=SIZE, feather_radius=0, **kwargs)
 
@@ -61,7 +68,7 @@ def test_compositing_order_skin_garments_footwear():
     skin = solid(100, 80, 60)
     garments = painted(MIDDLE, (10, 200, 10))
     garments[BOTTOM] = (200, 10, 10)          # garment also paints the feet…
-    footwear = painted(BOTTOM, (10, 10, 200))  # …but footwear wins there
+    footwear = overlay(BOTTOM, (10, 10, 200))  # …but footwear wins there
     result = composite_albedo(skin, garments, footwear, atlas())
     assert tuple(result[16, 16]) == (10, 200, 10)   # garment over skin
     assert tuple(result[28, 16]) == (10, 10, 200)   # footwear over garment
@@ -79,8 +86,8 @@ def test_head_mask_blocks_garments():
 def test_feet_mask_confines_footwear():
     feet = np.zeros((SIZE, SIZE), dtype=bool)
     feet[BOTTOM] = True
-    footwear = painted(MIDDLE, (200, 200, 200))   # tries to paint the torso
-    footwear[BOTTOM] = (30, 30, 220)
+    footwear = overlay(MIDDLE, (200, 200, 200))   # tries to paint the torso
+    footwear[BOTTOM] = (30, 30, 220, 255)
     result = composite_albedo(
         solid(90, 90, 90), np.zeros((SIZE, SIZE, 3), np.uint8), footwear,
         atlas(feet_mask=feet),

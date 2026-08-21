@@ -1,14 +1,18 @@
 """UV compositing: one albedo atlas from the generated texture layers.
 
 The normative order (SPEC.md §9): skin, then garment, then shoe.
-Garment and shoe layers are painted over an unoccupied (black)
-background; coverage is recovered from the image itself by a calibrated
-luminance key — the generators keep real garment pixels above a value floor,
-so a keying cutoff well below that floor separates cloth from background,
-including deliberately dark cloth.
+The garment layer is painted over an unoccupied (black) background;
+coverage is recovered from the image itself by a calibrated luminance
+key — the generators keep real garment pixels above a value floor, so a
+keying cutoff well below that floor separates cloth from background,
+including deliberately dark cloth. The shoe layer arrives as an RGBA
+overlay already carrying its coverage: the shoe generator paints a
+one-foot canvas, and `assembly.footwear` bakes it through the component's
+foot chart into atlas space.
 
-Region masks (where the garment layer may not paint, where the shoe layer
-may) are atlas data from the `assembly-assets` component, never code.
+Region masks (where the garment layer may not paint, where the shoe
+overlay may) are atlas data from the `assembly-assets` component, never
+code.
 """
 
 from __future__ import annotations
@@ -136,19 +140,25 @@ def coverage_mask(
 def composite_albedo(
     skin: np.ndarray,
     garment: np.ndarray,
-    shoe: np.ndarray | None,
+    shoe_overlay: np.ndarray | None,
     atlas: AtlasDefinition,
 ) -> np.ndarray:
     """The body's final albedo: skin, then garment, then shoe (SPEC.md §9).
 
-    All layers are (H, W, 3) uint8 at the atlas resolution.
+    `skin` and `garment` are (H, W, 3) uint8 at the atlas resolution;
+    `shoe_overlay` is the (H, W, 4) uint8 result of
+    `footwear.bake_shoe_overlay` — its alpha is authoritative coverage, so
+    it composites directly (with the same inward edge feather the keyed
+    garment layer gets, and confined to the feet mask when one is present).
     """
     expected = (atlas.resolution, atlas.resolution, 3)
     for name, layer in (("skin", skin), ("garment", garment)):
         if layer.shape != expected:
             raise ValueError(f"{name} layer is {layer.shape}, atlas wants {expected}")
-    if shoe is not None and shoe.shape != expected:
-        raise ValueError(f"shoe layer is {shoe.shape}, atlas wants {expected}")
+    if shoe_overlay is not None and shoe_overlay.shape != (*expected[:2], 4):
+        raise ValueError(
+            f"shoe overlay is {shoe_overlay.shape}, atlas wants {(*expected[:2], 4)}"
+        )
 
     result = skin.astype(np.float64)
 
@@ -157,10 +167,16 @@ def composite_albedo(
         garment_alpha = garment_alpha * ~atlas.head_mask
     result = result * (1 - garment_alpha[..., None]) + garment * garment_alpha[..., None]
 
-    if shoe is not None:
-        shoe_alpha = coverage_mask(shoe, atlas.key_cutoff, atlas.feather_radius)
+    if shoe_overlay is not None:
+        shoe_alpha = shoe_overlay[..., 3].astype(np.float64) / 255.0
+        if atlas.feather_radius > 0:
+            radius = max(1, round(atlas.feather_radius))
+            shoe_alpha = _box_blur(shoe_alpha, radius) * (shoe_alpha > 0)
         if atlas.feet_mask is not None:
             shoe_alpha = shoe_alpha * atlas.feet_mask
-        result = result * (1 - shoe_alpha[..., None]) + shoe * shoe_alpha[..., None]
+        result = (
+            result * (1 - shoe_alpha[..., None])
+            + shoe_overlay[..., :3] * shoe_alpha[..., None]
+        )
 
     return np.clip(np.rint(result), 0, 255).astype(np.uint8)

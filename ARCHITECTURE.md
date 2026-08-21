@@ -326,11 +326,16 @@ system and deliberately boring:
    calibrated luminance key against its black background (dark garments are
    protected by a value floor in the generator), cleaned against a small
    library of coverage templates, feathered, and composited over the skin
-   image; the head region is masked from garment coverage. The `shoe` layer,
-   when present, is keyed the same way and composited above the garment
-   layer, restricted to the atlas's shoe regions — the normative order is
-   skin, then garment, then shoe (SPEC.md §9). Result: one albedo atlas on
-   one body mesh.
+   image; the head region is masked from garment coverage. The `shoe`
+   image, when present, is a single-shoe canvas: the component's foot
+   chart (per-texcoord canvas coordinates shipped with the model, because
+   the canvas layout is part of each version's output contract)
+   bakes it onto the foot islands of both feet — the second foot through
+   the chart's horizontal mirror — with style-aware occupancy (open styles
+   keep only their straps; the shaft is cut to the style's declared
+   height), and the resulting RGBA overlay composites above the garment
+   layer — the normative order is skin, then garment, then shoe
+   (SPEC.md §9). Result: one albedo atlas on one body mesh.
 3. **Eyes.** A small patch of faces over each eye socket is removed; a
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
    is placed by a similarity fit of its lid margin to the socket rim, and

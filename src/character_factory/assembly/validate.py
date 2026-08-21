@@ -129,20 +129,56 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
             f"left/right rest frames deviate from exact reflection by {worst:.3f}°"
         )
 
-    # -- the baked idle clip holds bind pose -------------------------------------
+    # -- the baked idle clip, played the way a conforming engine plays it ------
+    # Animation channels REPLACE node TRS: sample every channel mid-clip,
+    # substitute the sampled values into the node hierarchy, recompute the
+    # joint world transforms, skin the mesh through the IBMs, and compare
+    # against the rest-pose skinner. Engine-free, and it catches exactly
+    # the class of failure where baked values only work because a
+    # forgiving viewer reconciles them with node state.
+    import copy
+
     animations = gltf.get("animations", [])
     assert animations, "no baked idle clip"
     idle = animations[0]
+    animated_nodes = copy.deepcopy(gltf["nodes"])
+    driven: dict[int, set] = {}
     for channel in idle["channels"]:
         sampler = idle["samplers"][channel["sampler"]]
         output = read_accessor(gltf, binary, sampler["output"]).astype(np.float64)
-        node = gltf["nodes"][channel["target"]["node"]]
-        bind = np.asarray(node.get("rotation", [0, 0, 0, 1]), float)
-        # A quaternion and its negation are the same rotation.
-        assert (
-            np.allclose(output, bind, atol=1e-6)
-            or np.allclose(output, -bind, atol=1e-6)
-        ), f"idle clip does not hold bind pose on node {channel['target']['node']}"
+        times = read_accessor(gltf, binary, sampler["input"]).astype(np.float64)
+        # Mid-clip LINEAR sample (t = the middle of the clip's time range).
+        middle = (float(times[0]) + float(times[-1])) / 2.0
+        upper = int(np.searchsorted(times, middle, side="right"))
+        upper = min(max(upper, 1), len(times) - 1)
+        span = times[upper] - times[upper - 1]
+        blend = 0.0 if span == 0 else (middle - times[upper - 1]) / span
+        value = (1.0 - blend) * output[upper - 1] + blend * output[upper]
+        if channel["target"]["path"] == "rotation":
+            value = value / np.linalg.norm(value)
+        target = channel["target"]
+        animated_nodes[target["node"]][target["path"]] = [float(v) for v in value]
+        driven.setdefault(target["node"], set()).add(target["path"])
+    for node_index in joints:
+        assert driven.get(node_index) == {"translation", "rotation", "scale"}, (
+            f"idle clip leaves node {node_index} partially driven "
+            f"({sorted(driven.get(node_index, ()))}) — channels replace node "
+            f"TRS, so every joint must carry its complete transform"
+        )
+    globals_animated = _global_matrices({**gltf, "nodes": animated_nodes})
+    joint_mats = np.stack([globals_animated[n] for n in joints]) @ ibms
+    skinned = np.zeros_like(positions)
+    for influence in range(4):
+        mats = joint_mats[joints4[:, influence]]
+        skinned += weights4[:, influence : influence + 1] * np.einsum(
+            "vij,vj->vi", mats, homogeneous
+        )[:, :3]
+    idle_error_m = float(np.abs(skinned - positions).max())
+    report["idle_clip_skin_max_error_mm"] = idle_error_m * 1000.0
+    assert idle_error_m < 1e-6, (
+        f"the baked idle clip, substituted for node TRS, deviates from the "
+        f"rest skin by {idle_error_m * 1000.0:.6f} mm"
+    )
     report["idle_channels"] = len(idle["channels"])
 
     return report

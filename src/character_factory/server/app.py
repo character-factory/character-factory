@@ -116,6 +116,10 @@ def create_app(service: CharacterService):
     async def components():
         return service.components()
 
+    @app.get("/v0/characters/{character_id}/manifest.json")
+    async def manifest(character_id: str):
+        return service.manifest(character_id)
+
     @app.get("/v0/interpreters")
     async def interpreters():
         return service.interpreters()

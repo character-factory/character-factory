@@ -57,6 +57,11 @@ def test_assemble_end_to_end(tmp_path):
 
     gltf, binary = parse_glb(data)
     assert gltf["images"][0]["mimeType"] == "image/png"
+    # The embedded export manifest makes the file self-describing.
+    manifest = gltf["asset"]["extras"]
+    assert manifest["format"] == "character-factory/export-manifest"
+    assert manifest["joint_count"] == 127
+    assert manifest["units"] == "meters"
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
 

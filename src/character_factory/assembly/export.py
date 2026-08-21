@@ -4,8 +4,9 @@ Follows the exporter conventions in ARCHITECTURE.md §3.1: one 0.01 cm→m
 constant and no axis flip; UV-seam unwelding with weights carried through;
 re-authored mirror-invariant rest orientations; a versioned baked knee
 flexion; inverse bind matrices rebuilt after all rest edits; winding
-verified, not assumed; a bone-role manifest sidecar and a baked idle clip
-with every export.
+verified, not assumed; the bone-role manifest embedded in the GLB's asset
+extras (the file is self-describing; a sidecar is an on-request
+projection, never the authority) and a baked idle clip with every export.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497
 @dataclass
 class ExportResult:
     glb_path: Path
-    manifest_path: Path
+    manifest: dict          # the embedded export manifest (asset extras)
     vertex_count: int
     joint_count: int
 
@@ -221,19 +222,33 @@ def export_character_glb(
         ]
     materials.append(body_material)
 
-    # 6. The baked idle clip: one second of every joint held at its bind-pose
-    # local rotation — the integrator's retarget sanity check.
+    # 6. The baked idle clip: one second of every joint held at its bind
+    # pose — the integrator's retarget sanity check. Animation channels
+    # REPLACE node TRS in a conforming player, so the clip carries the
+    # complete local transform for every joint — the baked rotation is the
+    # composed local rotation (pre-rotation · animated rotation; the hold's
+    # animated part is identity), never a partial value the engine must
+    # reconcile with node state, and translation and scale are baked
+    # alongside so nothing is left to engine defaults.
     times = writer.add_accessor(
         np.array([0.0, 1.0], dtype=np.float32), "SCALAR", minmax=True
     )
     samplers, channels = [], []
     for joint in range(joint_count):
-        rotation = np.asarray(local[joint][1], dtype=np.float32)
-        output = writer.add_accessor(np.stack([rotation, rotation]), "VEC4")
-        samplers.append({"input": times, "output": output, "interpolation": "LINEAR"})
-        channels.append(
-            {"sampler": joint, "target": {"node": joint + 1, "path": "rotation"}}
-        )
+        translation, rotation, local_scale = local[joint]
+        for path, value, kind in (
+            ("translation", np.asarray(translation, dtype=np.float32), "VEC3"),
+            ("rotation", np.asarray(rotation, dtype=np.float32), "VEC4"),
+            ("scale", np.asarray([local_scale] * 3, dtype=np.float32), "VEC3"),
+        ):
+            output = writer.add_accessor(np.stack([value, value]), kind)
+            channels.append(
+                {"sampler": len(samplers),
+                 "target": {"node": joint + 1, "path": path}}
+            )
+            samplers.append(
+                {"input": times, "output": output, "interpolation": "LINEAR"}
+            )
 
     meshes.append(
         {
@@ -317,30 +332,13 @@ def export_character_glb(
         parent_node = nodes[attachment.parent_joint + 1]
         parent_node.setdefault("children", []).append(node_index)
 
-    gltf = {
-        "asset": {"version": "2.0", "generator": generator},
-        "scene": 0,
-        "scenes": [{"nodes": [0]}],
-        "nodes": nodes,
-        "skins": [
-            {
-                "inverseBindMatrices": a_ibms,
-                "joints": list(range(1, joint_count + 1)),
-                "skeleton": 1,
-            }
-        ],
-        "meshes": meshes,
-        "materials": materials,
-        "animations": [{"name": "idle", "samplers": samplers, "channels": channels}],
-    }
-    if images:
-        gltf["samplers"] = [_SAMPLER]
-        gltf["images"] = images
-        gltf["textures"] = texture_defs
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(writer.finish(gltf))
-
-    manifest_path = out_path.with_suffix(".manifest.json")
+    # The export manifest: facts about the GLB as an engine deliverable —
+    # a pure function of rig version + exporter constants, identical for
+    # every character on the same rig. It embeds in the asset's extras so
+    # the file is self-describing and the manifest can never be separated
+    # from the mesh it describes. Character identity, textures, hair, and
+    # provenance live in the character document exclusively; nothing from
+    # it is ever duplicated here — one source of truth per fact.
     manifest = {
         "format": "character-factory/export-manifest",
         "generator": generator,
@@ -361,5 +359,28 @@ def export_character_glb(
             "renders additionally apply learned pose correctives.",
         ],
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return ExportResult(out_path, manifest_path, len(positions), joint_count)
+
+    gltf = {
+        "asset": {"version": "2.0", "generator": generator,
+                  "extras": manifest},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": nodes,
+        "skins": [
+            {
+                "inverseBindMatrices": a_ibms,
+                "joints": list(range(1, joint_count + 1)),
+                "skeleton": 1,
+            }
+        ],
+        "meshes": meshes,
+        "materials": materials,
+        "animations": [{"name": "idle", "samplers": samplers, "channels": channels}],
+    }
+    if images:
+        gltf["samplers"] = [_SAMPLER]
+        gltf["images"] = images
+        gltf["textures"] = texture_defs
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(writer.finish(gltf))
+    return ExportResult(out_path, manifest, len(positions), joint_count)

@@ -235,3 +235,10 @@ def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
     rows = service.list()
     assert [r.id for r in rows][0] == later.id
     assert rows[0].created_at >= rows[-1].created_at
+
+
+def test_manifest_route_serves_the_embedded_extras(client, service, stored):
+    # No scene yet: a clean client error, not a 500.
+    response = client.get(f"/v0/characters/{stored.id}/manifest.json")
+    assert response.status_code == 400
+    assert "no built scene" in response.json()["error"]

@@ -275,6 +275,9 @@ GET    /v0/characters                  list (id, name, status, thumbnail)
 GET    /v0/characters/{id}             status + character document + revision
 GET    /v0/characters/{id}/scene.glb   current build artifact
 GET    /v0/characters/{id}/assets/{slot}.png
+GET    /v0/characters/{id}/manifest.json   the scene's embedded export manifest,
+                                           served standalone (same bytes as the
+                                           GLB's asset extras)
 PUT    /v0/characters/{id}/assets/{slot}   image body → replace one baked asset;
                                            the stored hash pin is updated and the
                                            scene rebuilds from the assemble stage
@@ -403,13 +406,26 @@ of conventions chosen so the artifact imports and retargets correctly:
   unsigned-short VEC4 with float VEC4 weights, no UV V-flip (the bake and
   glTF already agree on a top-left origin), counter-clockwise winding
   verified against outward normals rather than assumed.
-- **Two sidecar outputs ship with every export.** A **bone-role manifest**
-  (JSON: engine humanoid role → joint name, the explicit leave-unmapped set
-  such as procedural twist joints and helpers, units, axes, joint count, and
-  the baked knee constant) so integrators never reverse-engineer the
-  mapping; and a **baked idle clip** inside the GLB (every joint held at its
-  bind-pose local rotation for one second) so "does this character stand
-  correctly in-engine?" is answerable without any external animation.
+- **The GLB is self-describing.** The **bone-role manifest** (JSON: engine
+  humanoid role → joint name, the explicit leave-unmapped set such as
+  procedural twist joints and helpers, units, axes, joint count, and the
+  baked knee constant) embeds in the GLB's asset-level `extras` — the
+  spec's mechanism for application metadata, ignored by parsers that don't
+  read it — so one file is the complete engine deliverable and the
+  manifest can never be separated from the mesh it describes. It is a pure
+  function of rig version + exporter constants (identical for every
+  character on the same rig, byte-identical across exports); a sidecar
+  `manifest.json` exists only on request, as a projection of the same
+  bytes (`GET /v0/characters/{id}/manifest.json`). Boundary: the manifest
+  is **export metadata** — facts about the GLB as an engine deliverable.
+  Character identity, textures, hair, and provenance live in the character
+  document exclusively; nothing from it is ever duplicated into GLB
+  `extras` — one source of truth per fact. A **baked idle clip** ships
+  inside the GLB (one second holding the bind pose, with the complete
+  local TRS baked for every joint — animation channels replace node
+  transforms in a conforming player, so the clip leaves nothing to engine
+  defaults) so "does this character stand correctly in-engine?" is
+  answerable without any external animation.
 
 One honest documentation line, twice over: the exported rig animates as
 clean linear-blend skinning — the generator's own renders additionally apply
@@ -651,9 +667,13 @@ Four families, in decreasing order of how much of the product they protect:
 - Rest-pose conventions: the baked knee-flexion constant matches its
   documented version; IBMs were rebuilt after rest edits (implied and
   verified by the re-parse test above).
-- Sidecars: the bone-role manifest is present, complete, and consistent
-  with the exported joint set; the baked idle clip exists and holds every
-  joint at its bind-pose local rotation.
+- The embedded bone-role manifest is present, complete, consistent with
+  the exported joint set, and byte-identical across re-exports; the baked
+  idle clip fully drives every joint's TRS, and — sampled mid-clip and
+  substituted for the node transforms, exactly as a conforming engine
+  plays it — reproduces the rest skin through the hierarchy and IBMs to
+  within numerical tolerance (engine-free, catching bakes that only work
+  when a forgiving viewer reconciles them with node state).
 - Golden-file structural checks on the example characters: mesh/primitive
   inventory, material constants, texture bindings, extension usage — not
   pixel screenshots.

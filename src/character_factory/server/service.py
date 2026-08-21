@@ -55,10 +55,29 @@ class CharacterService:
                  device: str = "cuda"):
         self.library_dir = Path(library_dir)
         self.library_dir.mkdir(parents=True, exist_ok=True)
-        self.registry = registry or Registry.default()
+        self._registry_override = registry
+        self._registry_cache: Registry | None = None
+        self._registry_mtime: float | None = None
         self.device = device
         # One GPU, one worker: assembly/bake jobs run single-flight.
         self._job_lock = threading.Lock()
+
+    @property
+    def registry(self) -> Registry:
+        """The live registry: a restaged local index is picked up on its
+        next use, without a server restart — the components view and new
+        creates always reflect current state (per-character provenance
+        keeps whatever was resolved at its create)."""
+        if self._registry_override is not None:
+            return self._registry_override
+        from character_factory.registry import cache_dir
+
+        path = cache_dir() / "registry.json"
+        mtime = path.stat().st_mtime if path.is_file() else None
+        if self._registry_cache is None or mtime != self._registry_mtime:
+            self._registry_cache = Registry.default()
+            self._registry_mtime = mtime
+        return self._registry_cache
 
     # -- paths and state -----------------------------------------------------
 
@@ -246,6 +265,26 @@ class CharacterService:
             "warnings": [str(issue) for issue in report.warnings],
         }
 
+    def manifest(self, character_id: str) -> dict:
+        """The scene's embedded export manifest — a projection of the same
+        bytes carried in the GLB's asset extras (one authored source, two
+        deliveries)."""
+        from character_factory.assembly.gltf import parse_glb
+
+        scene = self._dir(character_id) / "scene.glb"
+        if not scene.is_file():
+            raise ServiceError(
+                f"character {character_id!r} has no built scene yet"
+            )
+        gltf, _ = parse_glb(scene.read_bytes())
+        manifest = gltf.get("asset", {}).get("extras")
+        if not manifest:
+            raise ServiceError(
+                "this scene predates the embedded manifest; rebuild it "
+                '(rebuild {"from": "assemble"}) to get one'
+            )
+        return manifest
+
     def interpreters(self) -> list[dict]:
         """Selectable interpreter backends: aliases and kinds only —
         model identity is local configuration and never leaves it."""
@@ -327,9 +366,6 @@ class CharacterService:
                         registry=self.registry,
                     )
                     os.replace(built, directory / "scene.glb")
-                    manifest = built.with_suffix(".manifest.json")
-                    if manifest.is_file():
-                        os.replace(manifest, directory / "scene.manifest.json")
             except (AssetError, FileNotFoundError, ValueError) as error:
                 state.update(status="error", detail=str(error))
                 self._write_state(directory, state)

@@ -32,8 +32,9 @@ def test_export_passes_validation(rig, tmp_path):
     report = validate_glb(result.glb_path.read_bytes(), expected_joints=7)
     assert report["reparse_max_error_mm"] < 1e-3
     assert report["mirror_pairs"] == 2  # l_upleg/r_upleg, l_lowleg/r_lowleg
-    assert report["idle_channels"] == 7
-    assert result.manifest_path.is_file()
+    assert report["idle_channels"] == 21          # T, R, and S per joint
+    assert report["idle_clip_skin_max_error_mm"] < 1e-3
+    assert result.manifest["format"] == "character-factory/export-manifest"
 
 
 def test_export_is_byte_deterministic(rig, tmp_path):
@@ -43,6 +44,14 @@ def test_export_is_byte_deterministic(rig, tmp_path):
         generator="character-factory/test",
     ).glb_path.read_bytes()
     assert first == second
+    # The embedded manifest is inside those bytes; assert it explicitly —
+    # a pure function of rig version + exporter constants, identical on
+    # every export, and never separable from the mesh it describes.
+    manifest_a = parse_glb(first)[0]["asset"]["extras"]
+    manifest_b = parse_glb(second)[0]["asset"]["extras"]
+    assert manifest_a == manifest_b
+    assert manifest_a["format"] == "character-factory/export-manifest"
+    assert manifest_a["joint_count"] == 7
 
 
 def test_uv_seam_unwelds_with_weights(rig, tmp_path):

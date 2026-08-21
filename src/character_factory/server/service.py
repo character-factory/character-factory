@@ -101,15 +101,19 @@ class CharacterService:
         return self.get(character_id)
 
     def create_from_prompt(self, prompt: str) -> CharacterRecord:
-        """Full make: create the character file now (deterministic identity),
-        then bake + assemble in a background job (single-flight GPU)."""
+        """Full make: create the character file now (interpretation +
+        deterministic identity), then bake + assemble in a background job.
+        The create stage runs GPU models too (the interpreter, the identity
+        encoder), so it takes the same job lock as bake/assemble: one GPU
+        stage at a time, ever — concurrent requests queue."""
         from character_factory.api import create
         from character_factory.registry import ComponentNotPublished
 
         try:
-            character = create(
-                prompt, registry=self.registry, device=self.device
-            )
+            with self._job_lock:
+                character = create(
+                    prompt, registry=self.registry, device=self.device
+                )
         except (ComponentNotPublished, FileNotFoundError) as error:
             raise NotAvailable(
                 f"text-to-character needs generation components that are not "

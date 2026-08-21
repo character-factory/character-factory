@@ -330,4 +330,43 @@ def _validate(document: dict, prompt: str) -> tuple[dict, dict | None, list]:
     if any(word in prompt.lower() for word in _BALD_WORDS):
         hair = None
         notes.append("description reads as bald; hair set to null")
+    if hair is not None:
+        hair = _repair_hair(hair, notes)
+        from character_factory.schema.validation import hair_block_errors
+
+        problems = hair_block_errors(hair)
+        if problems:
+            raise InterpreterError(
+                "hair block invalid after repair: " + "; ".join(problems)
+            )
     return slots, hair, notes
+
+
+def _repair_hair(hair: dict, notes: list) -> dict:
+    """The repair loop: fix what the decoding grammar deliberately leaves
+    to validation (ARCHITECTURE §2.2). Today that is the color rgb/custom
+    co-constraint — an rgb triple is only meaningful with the "custom"
+    family, and models like writing 0–255 channels — plus the constants a
+    less constrained backend (the endpoint) can get wrong."""
+    from character_factory.schema import vocab
+
+    hair = dict(hair)
+    hair["schema_version"] = vocab.HAIR_SCHEMA_VERSION
+    hair.setdefault("seed", 0)
+    color = hair.get("color")
+    if isinstance(color, dict) and "rgb" in color:
+        color = dict(color)
+        if color.get("family") not in (None, "custom"):
+            del color["rgb"]   # the named family wins; rgb was decoration
+            notes.append("hair color rgb dropped: a named family was given")
+        else:
+            rgb = color.get("rgb")
+            if (isinstance(rgb, list) and len(rgb) == 3
+                    and all(isinstance(v, (int, float)) for v in rgb)):
+                if any(v > 1 for v in rgb):
+                    rgb = [v / 255 for v in rgb]
+                    notes.append("hair color rgb rescaled from 0-255 to 0-1")
+                color["rgb"] = [min(max(float(v), 0.0), 1.0) for v in rgb]
+                color["family"] = "custom"
+        hair["color"] = color
+    return hair

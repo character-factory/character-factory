@@ -18,7 +18,12 @@ from dataclasses import dataclass, field
 
 from character_factory.schema import vocab
 
-__all__ = ["ValidationIssue", "ValidationReport", "validate_document"]
+__all__ = [
+    "ValidationIssue",
+    "ValidationReport",
+    "hair_block_errors",
+    "validate_document",
+]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _RFC3339_RE = re.compile(
@@ -360,6 +365,19 @@ class _Checker:
                     self.unknown(map_path, "unknown texture map")
                     continue
                 self.check_asset_descriptor(descriptor, map_path)
+
+
+def hair_block_errors(hair: object) -> list[str]:
+    """Validation errors for a hair block alone, as printable strings.
+
+    The interpreter's repair loop checks a decoded hair block here before
+    it enters a character document (ARCHITECTURE §2.2) — the decoding
+    grammar is deliberately looser than the validator, so what the grammar
+    admits must still pass this gate or be repaired.
+    """
+    checker = _Checker(strict=False)
+    checker.check_hair(hair)
+    return [f"{issue.path}: {issue.message}" for issue in checker.report.errors]
 
 
 def validate_document(document: object, strict: bool = False) -> ValidationReport:

@@ -16,6 +16,27 @@ from character_factory.interpreter.backend import (
 from character_factory.interpreter.config import InterpreterConfig
 
 
+def full_hair(**overrides) -> dict:
+    hair = {
+        "schema_version": 1, "seed": 0, "family": "loose_long",
+        "part": {"kind": "center", "side": "wearer_left",
+                 "position": "moderate", "extent": "to_crown",
+                 "width": "narrow"},
+        "hairline": {"height": "natural", "shape": "rounded",
+                     "temple_recession": "natural", "sideburns": "natural",
+                     "nape": "natural", "irregularity": "natural"},
+        "length": {"overall": "mid_back", "cut_line": "soft"},
+        "shape": {"volume": "medium", "density": "medium",
+                  "texture": "straight", "wave_size": "medium",
+                  "wave_strength": "medium", "root_lift": "medium"},
+        "drape": {"gravity": "natural", "stiffness": "natural",
+                  "shoulder_routing": "split", "body_clearance": "natural"},
+        "color": {"family": "black"},
+    }
+    hair.update(overrides)
+    return hair
+
+
 def good_document() -> dict:
     return {
         "textures": {
@@ -24,7 +45,7 @@ def good_document() -> dict:
             "garment": {"prompt": "white crop top, denim shorts"},
             "shoe": {"prompt": "simple rubber flip flops"},
         },
-        "hair": {"schema_version": 1, "seed": 0, "family": "loose_long"},
+        "hair": full_hair(),
     }
 
 
@@ -80,6 +101,32 @@ def test_bald_description_nulls_the_hair_block():
 def test_non_json_output_is_an_interpreter_error():
     with pytest.raises(InterpreterError, match="not JSON"):
         backend_with("I could not do that.").interpret("someone")
+
+
+def test_repair_drops_rgb_when_a_named_color_family_is_given():
+    # The field failure: gray rgb triple alongside a named family — the
+    # grammar admits it, the validator rejects it, the repair drops it.
+    document = good_document()
+    document["hair"]["color"] = {"family": "gray", "rgb": [128, 128, 128]}
+    result = backend_with(json.dumps(document)).interpret("an older man")
+    assert result.hair["color"] == {"family": "gray"}
+    assert any("rgb dropped" in note for note in result.notes)
+
+
+def test_repair_rescales_custom_rgb_from_255_to_unit_range():
+    document = good_document()
+    document["hair"]["color"] = {"family": "custom", "rgb": [255, 128, 0]}
+    result = backend_with(json.dumps(document)).interpret("someone")
+    assert result.hair["color"]["rgb"] == [1.0, 128 / 255, 0.0]
+
+
+def test_unrepairable_hair_is_an_interpreter_error():
+    # An unconstrained backend (the endpoint) can omit whole groups; that
+    # must surface as InterpreterError so interpret() falls back to rules.
+    document = good_document()
+    document["hair"] = {"schema_version": 1, "seed": 0, "family": "loose_long"}
+    with pytest.raises(InterpreterError, match="hair block invalid"):
+        backend_with(json.dumps(document)).interpret("someone")
 
 
 def test_interpret_falls_back_to_rules_when_the_model_fails(monkeypatch):

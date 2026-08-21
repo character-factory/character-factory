@@ -144,3 +144,39 @@ def test_bake_result_json_is_loadable(environment, tmp_path):
     saved = result.character.save(tmp_path / "baked.char.json")
     assert Character.load(saved).assets.keys() == {"skin", "eye", "garment"}
     json.loads(saved.read_text())
+
+
+def test_quantization_config_env_overrides_file(monkeypatch, tmp_path):
+    import json
+
+    from character_factory import textures
+
+    (tmp_path / "config.json").write_text(
+        json.dumps({"textures": {"quantization": "int8"}})
+    )
+    monkeypatch.setattr(
+        "character_factory.registry.store.cache_dir", lambda: tmp_path
+    )
+    assert textures.configured_quantization() == "int8"
+    monkeypatch.setenv(textures.ENV_QUANTIZATION, "nf4")
+    assert textures.configured_quantization() == "nf4"
+
+
+def test_quantization_unconfigured_is_full_precision(monkeypatch, tmp_path):
+    from character_factory import textures
+
+    monkeypatch.delenv(textures.ENV_QUANTIZATION, raising=False)
+    monkeypatch.setattr(
+        "character_factory.registry.store.cache_dir", lambda: tmp_path
+    )
+    assert textures.configured_quantization() is None
+
+
+def test_unknown_quantization_mode_is_an_error(monkeypatch):
+    import pytest
+
+    from character_factory import textures
+
+    monkeypatch.setenv(textures.ENV_QUANTIZATION, "fp3")
+    with pytest.raises(ValueError, match="unknown texture quantization"):
+        textures.configured_quantization()

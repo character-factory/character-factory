@@ -53,7 +53,12 @@ class TextureBaker:
         over-subscribed card degrades to shared-memory paging (silently,
         on WSL2) instead of failing loudly.
         """
+        import gc
+
         self._pipeline = None
+        # Reference cycles keep the weights alive past the del; collect
+        # before returning the cache or the VRAM stays resident.
+        gc.collect()
         try:
             import torch
 
@@ -125,6 +130,64 @@ def bake(
     )
 
 
+# Weight quantization modes for the texture pipeline. Full precision is
+# the default; the quantized modes trade a little fidelity for a much
+# smaller resident model, which is what lets the bake fit smaller cards.
+QUANTIZATION_MODES = ("nf4", "int8")
+ENV_QUANTIZATION = "CHARACTER_FACTORY_TEXTURE_QUANTIZATION"
+
+
+def configured_quantization() -> str | None:
+    """The configured texture quantization mode, or None for full
+    precision. Environment first, then the `textures.quantization` key of
+    the cache config (the same file the interpreter and registry read) —
+    configuration, never code."""
+    import json
+    import os
+
+    from character_factory.registry.store import cache_dir
+
+    mode = os.environ.get(ENV_QUANTIZATION)
+    if not mode:
+        path = cache_dir() / "config.json"
+        if path.is_file():
+            document = json.loads(path.read_text(encoding="utf-8"))
+            section = document.get("textures", {}) if isinstance(document, dict) else {}
+            mode = section.get("quantization")
+    if not mode:
+        return None
+    if mode not in QUANTIZATION_MODES:
+        raise ValueError(
+            f"unknown texture quantization {mode!r}; "
+            f"expected one of {', '.join(QUANTIZATION_MODES)}"
+        )
+    return mode
+
+
+def _quantization_config(mode: str):
+    """The diffusers pipeline-level quantization config for a mode. The
+    transformer and text encoder carry nearly all of the weight memory;
+    the VAE stays full precision (it is small and decode-critical)."""
+    import torch
+    from diffusers.quantizers import PipelineQuantizationConfig
+
+    if mode == "nf4":
+        return PipelineQuantizationConfig(
+            quant_backend="bitsandbytes_4bit",
+            quant_kwargs={
+                "load_in_4bit": True,
+                "bnb_4bit_quant_type": "nf4",
+                "bnb_4bit_compute_dtype": torch.bfloat16,
+            },
+            components_to_quantize=["transformer", "text_encoder"],
+        )
+    return PipelineQuantizationConfig(
+        quant_backend="bitsandbytes_8bit",
+        quant_kwargs={"load_in_8bit": True},
+        components_to_quantize=["transformer", "text_encoder"],
+    )
+
+
 class _DiffusersPipeline:
     """The real backend: the base model via diffusers, adapters hot-swapped.
 
@@ -132,16 +195,24 @@ class _DiffusersPipeline:
     and GPU specifics stay separable.
     """
 
-    def __init__(self, base_dir: Path, device: str):
+    def __init__(self, base_dir: Path, device: str,
+                 quantization: str | None = None):
         import torch
         from diffusers import DiffusionPipeline
 
+        kwargs = {"torch_dtype": torch.bfloat16}
+        if quantization is not None:
+            kwargs["quantization_config"] = _quantization_config(quantization)
         # The base component's model_index.json declares the pipeline class;
         # resolving it from the distribution keeps this code base-model-
         # agnostic (a registry data change, not a code change).
         self.pipeline = DiffusionPipeline.from_pretrained(
-            str(base_dir), torch_dtype=torch.bfloat16
+            str(base_dir), **kwargs
         ).to(device)
+        if quantization is not None and hasattr(self.pipeline, "vae"):
+            # Quantized models report float32, so the pipeline prepares
+            # float32 latents; the (small) VAE runs float32 to match.
+            self.pipeline.vae.to(torch.float32)
         self.device = device
         self._adapter: Path | None = None
 
@@ -168,4 +239,5 @@ class _DiffusersPipeline:
 
 
 def _default_pipeline_factory(base_dir: Path, device: str):
-    return _DiffusersPipeline(base_dir, device)
+    return _DiffusersPipeline(base_dir, device,
+                              quantization=configured_quantization())

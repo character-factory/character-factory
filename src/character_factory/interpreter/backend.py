@@ -110,8 +110,13 @@ class ModelInterpreter:
 
     def close(self) -> None:
         """Release the model — required before any diffusion load."""
+        import gc
+
         self._model = None
         self._tokenizer = None
+        # Reference cycles keep the weights alive past the del; collect
+        # before returning the cache or the VRAM stays resident.
+        gc.collect()
         try:
             import torch
 

@@ -272,6 +272,9 @@ GET    /v0/characters                  list (id, name, status, thumbnail)
 GET    /v0/characters/{id}             status + character document + revision
 GET    /v0/characters/{id}/scene.glb   current build artifact
 GET    /v0/characters/{id}/assets/{slot}.png
+PUT    /v0/characters/{id}/assets/{slot}   image body → replace one baked asset;
+                                           the stored hash pin is updated and the
+                                           scene rebuilds from the assemble stage
 POST   /v0/characters/{id}/rebuild     {from: "bake"|"assemble", overrides?}
 DELETE /v0/characters/{id}
 POST   /v0/validate                    character document in body → validation report
@@ -545,6 +548,10 @@ character-factory make "a lean marathon runner with cropped dark hair" -o runner
 ```
 
 - **Python:** 3.11 floor, tested against 3.12.
+- **Install size:** the base install (schema tools, registry, assembly,
+  server — no generation extras) measures **about 1.1 GB**, most of it
+  the CPU torch wheel the assembler's rig evaluation needs. Generation
+  extras and model components download on top of that.
 - **Linux + NVIDIA CUDA** is the first-class platform; everything works.
 - **Windows** is supported via WSL2 and is the same code path as Linux.
   Native Windows is untested and unclaimed in v0.
@@ -554,19 +561,28 @@ character-factory make "a lean marathon runner with cropped dark hair" -o runner
 
 ### 6.1 VRAM floor
 
-Proposed from actual component sizes, to be confirmed by measurement before
-launch: with the base model's transformer and text encoder loaded 8-bit
-quantized (the default), texture generation at 1024×1024 fits in
-**12 GB VRAM (floor)**; **16 GB is recommended**, and 24 GB removes any need
-for quantization or careful load ordering. The pipeline loads the base
-model once and swaps ~90 MB adapters between slots, and identity generation
-reuses the same text encoder, so the floor is set by the base model, not by
-the number of components. The interpreter does not raise the floor: it runs
-first and releases its VRAM before the diffusion stack loads (or runs
-CPU-only) — the two are never resident together. Indicative timing on an RTX 3090-class card:
-well under a second for text → body parameters, tens of seconds per texture
-slot, a few minutes end-to-end for a first character (plus one-time
-download and model load).
+Measured on a 24 GB card, full four-slot bake at 1024×1024, same
+character and seeds per mode:
+
+- **Full precision (the default): 17.4 GB allocated / 20.3 GB reserved**,
+  about 132 s of diffusion per character — a **24 GB card** runs it
+  without configuration.
+- **`nf4` weight quantization** (`textures.quantization` in the local
+  config; transformer and text encoder quantize, the VAE stays full
+  precision) brings the same bake to **8.9 GB allocated / 9.7 GB
+  reserved** with the expandable-segments CUDA allocator, at roughly
+  twice the bake time (~265 s). Every GPU stage is strictly serialized
+  and releases its memory before the next loads, and no other stage
+  peaks higher, so **the complete pipeline — interpretation, identity,
+  all texture slots, assembly — runs on a 12 GB card** under `nf4`.
+  8 GB is not supported.
+
+The pipeline loads the base model once and swaps ~90 MB adapters between
+slots, and identity generation reuses the same text encoder, so the floor
+is set by the base model, not by the number of components. The
+interpreter does not raise the floor: it runs first and releases its VRAM
+before the diffusion stack loads (or runs CPU-only) — the two are never
+resident together.
 
 On an unsuitable machine the pipeline degrades honestly: `create`, `bake`,
 and `make` probe device and free VRAM up front and exit with a message

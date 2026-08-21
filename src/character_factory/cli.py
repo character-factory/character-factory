@@ -1,8 +1,8 @@
 """The character-factory command line.
 
-Implemented today: `validate` and `assemble` — the commands that work on any
-machine. `create`/`bake`/`make`/`interpret`/`serve` land with their modules
-and are absent, not stubbed: an unknown command is argparse's honest error.
+Implemented today: `validate`, `assemble`, `interpret`, `serve`, `mcp`.
+`create`/`bake`/`make` land with their modules and are absent, not
+stubbed: an unknown command is argparse's honest error.
 """
 
 from __future__ import annotations
@@ -78,6 +78,24 @@ def build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("--device", default="cpu")
     assemble.set_defaults(func=_cmd_assemble)
 
+    interpret = commands.add_parser(
+        "interpret",
+        help="decompose a description into slot prompts + hair "
+             "(prints JSON with wall time and peak memory — the model bench)",
+    )
+    interpret.add_argument("text", help="the character description")
+    interpret.add_argument(
+        "--model",
+        help="override the configured model: a registry component id or a "
+             "local weights path (also CHARACTER_FACTORY_INTERPRETER_MODEL)",
+    )
+    interpret.add_argument("--device", default="cuda")
+    interpret.add_argument(
+        "--rules", action="store_true",
+        help="force the deterministic rules fallback (no model)",
+    )
+    interpret.set_defaults(func=_cmd_interpret)
+
     serve = commands.add_parser(
         "serve", help="run the local /v0 HTTP server (install extra [server])"
     )
@@ -93,6 +111,41 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.set_defaults(func=_cmd_mcp)
 
     return parser
+
+
+def _cmd_interpret(args: argparse.Namespace) -> int:
+    import dataclasses
+    import json
+
+    from character_factory.interpreter import interpret
+    from character_factory.interpreter.config import (
+        InterpreterConfig,
+        load_interpreter_config,
+    )
+
+    if args.rules:
+        config = InterpreterConfig()          # nothing configured → rules mode
+    else:
+        config = load_interpreter_config()
+        if args.model:
+            config = dataclasses.replace(config, model=args.model, endpoint=None)
+    interpretation, metrics = interpret(
+        args.text, device=args.device, config=config
+    )
+    print(json.dumps(
+        {
+            "backend": interpretation.backend,
+            "textures": {
+                slot: {"prompt": prompt}
+                for slot, prompt in interpretation.slot_prompts.items()
+            },
+            "hair": interpretation.hair,
+            "notes": interpretation.notes,
+            "metrics": metrics,
+        },
+        indent=2,
+    ))
+    return 0
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:

@@ -5,9 +5,10 @@ product promise: a character file plus its baked assets in, a rigged .glb
 out (SPEC.md §9). It runs everywhere — CUDA is never required here.
 
 `create` turns a description into a character file (interpretation +
-deterministic identity); `make` chains create → bake → assemble. Until the
-interpreter component ships, `create` uses the documented rules fallback and
-records that in provenance.
+deterministic identity); `make` chains create → bake → assemble.
+Interpretation runs the configured model backend when one is configured
+(`interpreter.model` in the cache config) and the documented rules
+fallback otherwise; provenance records which.
 """
 
 from __future__ import annotations
@@ -33,11 +34,13 @@ def create(
     recipes; the identity component maps the raw prompt to body parameters
     (deterministic, no seed — the seed governs texture recipes only)."""
     from character_factory.identity import IdentityComponent, IdentityGenerator
-    from character_factory.interpreter import rules_interpret
+    from character_factory.interpreter import INTERPRETER_VERSION, interpret
     from character_factory.registry import Registry
 
     registry = registry or Registry.default()
-    interpretation = rules_interpret(prompt)
+    # The interpreter model (if configured) loads, runs, and releases here —
+    # before the identity encoder or any diffusion pipeline loads (§2.2).
+    interpretation, _ = interpret(prompt, registry=registry, device=device)
 
     resolved = registry.resolve_slots(sorted(interpretation.slot_prompts))
     figure_entry = registry.get("make-figure")
@@ -64,8 +67,14 @@ def create(
     if hair is not None:
         hair = dict(hair, seed=seed % (vocab.SEED_MAX + 1))
 
+    # Provenance records the backend kind, never the model identity — the
+    # model is configuration (a local path may even be private).
+    if interpretation.backend == "rules-fallback":
+        interpreter_version = "0.0.0+rules-fallback"
+    else:
+        interpreter_version = f"{INTERPRETER_VERSION}+{interpretation.backend}"
     components = {
-        "interpreter": {"version": "0.0.0+rules-fallback"},
+        "interpreter": {"version": interpreter_version},
         "make-figure": {"version": str(figure_entry.version)},
         **{
             entry.name: {"version": str(entry.version)}

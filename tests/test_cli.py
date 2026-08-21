@@ -51,3 +51,17 @@ def test_assemble_missing_assets_is_a_clean_error(tmp_path, capsys):
     )
     assert code == 1
     assert "missing asset" in capsys.readouterr().err
+
+
+def test_interpret_rules_prints_decomposition_json_with_metrics(capsys):
+    assert main([
+        "interpret", "--rules",
+        "a 19 year old japanese girl wearing a croptop, denim shorts, "
+        "and flip flops",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["backend"] == "rules-fallback"
+    assert "flip" in payload["textures"]["shoe"]["prompt"]
+    assert "flip" not in payload["textures"]["eye"]["prompt"]
+    assert payload["hair"]["family"]
+    assert payload["metrics"]["wall_seconds"] >= 0

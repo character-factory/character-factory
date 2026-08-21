@@ -1,20 +1,36 @@
 """Interpretation: free text → per-slot prompts + the semantic hair block.
 
-The default backend is a small local language model with grammar-constrained
-decoding (ARCHITECTURE §2.2); its component is pending the model bench. What
-lives here today is the **rules fallback** — the documented degraded mode:
-deterministic slot-prompt splitting plus a conservative hair block. It is
-deliberately simple; quality interpretation is the model backend's job.
+The default backend is a local language model with grammar-constrained
+decoding, run in-process (ARCHITECTURE §2.2). Which model is pure
+configuration (`interpreter.model` in the cache config, or the
+environment) — a registry component id or a local weights path — so
+candidates swap in seconds and `character-factory interpret` doubles as
+the side-by-side bench. With nothing configured, `interpret` uses the
+**rules fallback** below: the documented degraded mode — deterministic
+slot-prompt splitting plus a conservative hair block. It is deliberately
+simple; quality interpretation is the model backend's job.
+
+Identity never consumes interpreter output: the raw description goes to
+the identity network unchanged (SPEC.md §7); interpretation conditions
+the texture recipes and the hair block only.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 from character_factory.schema import vocab
 
-__all__ = ["Interpretation", "rules_interpret"]
+__all__ = [
+    "INTERPRETER_VERSION",
+    "Interpretation",
+    "interpret",
+    "rules_interpret",
+]
+
+INTERPRETER_VERSION = "0.1.0"
 
 
 @dataclass
@@ -23,6 +39,90 @@ class Interpretation:
     hair: dict | None
     backend: str = "rules-fallback"
     notes: list[str] = field(default_factory=list)
+
+
+def interpret(
+    prompt: str,
+    *,
+    registry=None,
+    device: str = "cuda",
+    config=None,
+) -> tuple[Interpretation, dict]:
+    """Description → (Interpretation, metrics).
+
+    Uses the configured model backend when one is configured, the rules
+    fallback otherwise — and, with a note, when the model backend fails
+    (generation must degrade, not die). The model is loaded, run, and
+    released inside this call: no interpreter VRAM survives into the
+    diffusion stages (ARCHITECTURE §2.2).
+    """
+    from character_factory.interpreter.config import load_interpreter_config
+
+    config = config or load_interpreter_config()
+    start = time.monotonic()
+    if not config.configured:
+        interpretation = rules_interpret(prompt)
+        return interpretation, {
+            "backend": interpretation.backend,
+            "wall_seconds": time.monotonic() - start,
+        }
+
+    from character_factory.interpreter.backend import (
+        InterpreterError,
+        ModelInterpreter,
+    )
+
+    backend = ModelInterpreter(config, registry=registry, device=device)
+    try:
+        interpretation = backend.interpret(
+            prompt, _slot_guidance(registry)
+        )
+        metrics = backend.metrics.as_dict()
+    except InterpreterError as error:
+        interpretation = rules_interpret(prompt)
+        interpretation.notes.append(
+            f"model backend failed ({error}); rules fallback used"
+        )
+        metrics = {"backend": interpretation.backend, "error": str(error)}
+    finally:
+        backend.close()   # release before any diffusion loads (§2.2)
+    metrics["wall_seconds"] = time.monotonic() - start
+    return interpretation, metrics
+
+
+def _slot_guidance(registry=None) -> dict[str, str]:
+    """Per-slot field guidance from the installed components' registry
+    entries (`interpretation.fields`) — version-bound data, because each
+    component version declares what it wants to be told — plus declared
+    vocabulary constraints (the interpreter clamps prompts to what the
+    installed component supports)."""
+    from character_factory.registry import Registry, RegistryError
+
+    try:
+        registry = registry or Registry.default()
+    except Exception:
+        return {}
+    resolved = {}
+    for slot in vocab.ALL_SLOTS:
+        try:
+            resolved.update(registry.resolve_slots([slot]))
+        except RegistryError:
+            continue   # a slot nothing serves simply gets no guidance
+    guidance: dict[str, str] = {}
+    for slot, entry in resolved.items():
+        document = entry.document
+        fields = document.get("interpretation", {}).get("fields")
+        parts = [fields] if isinstance(fields, str) else []
+        vocabulary = document.get("constraints", {}).get("vocabulary", {})
+        for kind, values in vocabulary.items():
+            if isinstance(values, list) and values:
+                parts.append(
+                    f"supported {kind}: {', '.join(str(v) for v in values)} — "
+                    f"stay within this vocabulary"
+                )
+        if parts:
+            guidance[slot] = "; ".join(parts)
+    return guidance
 
 
 _HAIR_FAMILIES = {

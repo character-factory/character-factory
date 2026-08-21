@@ -20,41 +20,7 @@ import pytest
 lmformatenforcer = pytest.importorskip("lmformatenforcer")
 from lmformatenforcer import JsonSchemaParser  # noqa: E402
 
-from character_factory import character_json_schema  # noqa: E402
-from character_factory.schema import vocab  # noqa: E402
-
-
-def interpretation_schema() -> dict:
-    """The interpreter's output schema, derived from the format vocabulary:
-    a prompt per slot (singular keys, closed set) plus the hair block."""
-    slot_prompt = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["prompt"],
-        "properties": {"prompt": {"type": "string"}},
-    }
-    hair = json.loads(json.dumps(character_json_schema()["properties"]["hair"]))
-    hair.pop("allOf", None)          # co-constraint lives in the repair loop
-    hair["type"] = "object"          # the grammar never emits a null character
-    # Enforcer limitation: non-string `const` values crash its enum path;
-    # an equivalent closed integer range expresses the same constraint.
-    hair["properties"]["schema_version"] = {
-        "type": "integer", "minimum": 1, "maximum": 1
-    }
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["textures", "hair"],
-        "properties": {
-            "textures": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": list(vocab.REQUIRED_SLOTS),
-                "properties": {slot: slot_prompt for slot in vocab.ALL_SLOTS},
-            },
-            "hair": hair,
-        },
-    }
+from character_factory.interpreter.schema import interpretation_schema  # noqa: E402
 
 
 def walk(parser, text: str) -> tuple[bool, int]:

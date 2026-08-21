@@ -406,10 +406,13 @@ of conventions chosen so the artifact imports and retargets correctly:
   unsigned-short VEC4 with float VEC4 weights, no UV V-flip (the bake and
   glTF already agree on a top-left origin), counter-clockwise winding
   verified against outward normals rather than assumed.
-- **The GLB is self-describing.** The **bone-role manifest** (JSON: engine
-  humanoid role → joint name, the explicit leave-unmapped set such as
-  procedural twist joints and helpers, units, axes, joint count, and the
-  baked knee constant) embeds in the GLB's asset-level `extras` — the
+- **The GLB is self-describing.** The **bone-role manifest** (JSON: the
+  full engine humanoid role → joint name mapping, the explicit
+  leave-unmapped set — procedural twist joints, null markers, mouth
+  interior, tarsal helpers — with structured flags for the jaw (mappable,
+  default-unmapped) and fingers (mapped, verify in-engine), units, axes,
+  joint count, and the baked knee constant) embeds in the GLB's
+  asset-level `extras` — the
   spec's mechanism for application metadata, ignored by parsers that don't
   read it — so one file is the complete engine deliverable and the
   manifest can never be separated from the mesh it describes. It is a pure
@@ -421,11 +424,12 @@ of conventions chosen so the artifact imports and retargets correctly:
   Character identity, textures, hair, and provenance live in the character
   document exclusively; nothing from it is ever duplicated into GLB
   `extras` — one source of truth per fact. A **baked idle clip** ships
-  inside the GLB (one second holding the bind pose, with the complete
-  local TRS baked for every joint — animation channels replace node
-  transforms in a conforming player, so the clip leaves nothing to engine
-  defaults) so "does this character stand correctly in-engine?" is
-  answerable without any external animation.
+  inside the GLB: a few seconds of subtle breathing and weight sway, with
+  the complete local TRS baked for every joint — animation channels
+  replace node transforms in a conforming player, so the clip leaves
+  nothing to engine defaults. Frame 0 is exactly the rest pose and the
+  clip loops seamlessly, so "does this character stand — and move —
+  correctly in-engine?" is answerable without any external animation.
 
 One honest documentation line, twice over: the exported rig animates as
 clean linear-blend skinning — the generator's own renders additionally apply
@@ -669,11 +673,14 @@ Four families, in decreasing order of how much of the product they protect:
   verified by the re-parse test above).
 - The embedded bone-role manifest is present, complete, consistent with
   the exported joint set, and byte-identical across re-exports; the baked
-  idle clip fully drives every joint's TRS, and — sampled mid-clip and
-  substituted for the node transforms, exactly as a conforming engine
-  plays it — reproduces the rest skin through the hierarchy and IBMs to
-  within numerical tolerance (engine-free, catching bakes that only work
-  when a forgiving viewer reconciles them with node state).
+  idle clip fully drives every joint's TRS, and — substituted for the node
+  transforms, exactly as a conforming engine plays it — reproduces the
+  rest skin through the hierarchy and IBMs at t=0 within numerical
+  tolerance (engine-free, catching bakes that only work when a forgiving
+  viewer reconciles them with node state), while over the clip it must
+  actually move: some channels vary in time and the peak mesh deviation is
+  non-zero yet bounded, so a fully-driven statue fails exactly like an
+  explosion does.
 - Golden-file structural checks on the example characters: mesh/primitive
   inventory, material constants, texture bindings, extension usage — not
   pixel screenshots.

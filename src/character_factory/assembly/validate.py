@@ -130,54 +130,109 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
         )
 
     # -- the baked idle clip, played the way a conforming engine plays it ------
-    # Animation channels REPLACE node TRS: sample every channel mid-clip,
-    # substitute the sampled values into the node hierarchy, recompute the
-    # joint world transforms, skin the mesh through the IBMs, and compare
-    # against the rest-pose skinner. Engine-free, and it catches exactly
-    # the class of failure where baked values only work because a
-    # forgiving viewer reconciles them with node state.
+    # Animation channels REPLACE node TRS: sample every channel, substitute
+    # the sampled values into the node hierarchy, recompute the joint world
+    # transforms, skin the mesh through the IBMs, and compare against the
+    # rest-pose skinner. Engine-free, and it catches exactly the class of
+    # failure where baked values only work because a forgiving viewer
+    # reconciles them with node state. Three obligations:
+    #   1. at t=0 the substituted clip reproduces the rest skin exactly
+    #      (the clip's contract: frame 0 IS the rest pose);
+    #   2. every joint is fully driven (complete T, R, and S);
+    #   3. the clip actually MOVES — some channels vary over time and the
+    #      peak mesh deviation is non-zero yet bounded (a fully-driven
+    #      statue fails, and so does an explosion).
     import copy
 
     animations = gltf.get("animations", [])
     assert animations, "no baked idle clip"
     idle = animations[0]
-    animated_nodes = copy.deepcopy(gltf["nodes"])
+
+    channel_data = []
     driven: dict[int, set] = {}
+    key_times: set[float] = set()
     for channel in idle["channels"]:
         sampler = idle["samplers"][channel["sampler"]]
         output = read_accessor(gltf, binary, sampler["output"]).astype(np.float64)
         times = read_accessor(gltf, binary, sampler["input"]).astype(np.float64)
-        # Mid-clip LINEAR sample (t = the middle of the clip's time range).
-        middle = (float(times[0]) + float(times[-1])) / 2.0
-        upper = int(np.searchsorted(times, middle, side="right"))
-        upper = min(max(upper, 1), len(times) - 1)
-        span = times[upper] - times[upper - 1]
-        blend = 0.0 if span == 0 else (middle - times[upper - 1]) / span
-        value = (1.0 - blend) * output[upper - 1] + blend * output[upper]
-        if channel["target"]["path"] == "rotation":
-            value = value / np.linalg.norm(value)
         target = channel["target"]
-        animated_nodes[target["node"]][target["path"]] = [float(v) for v in value]
+        channel_data.append((target["node"], target["path"], times, output))
         driven.setdefault(target["node"], set()).add(target["path"])
+        key_times.update(float(t) for t in times)
     for node_index in joints:
         assert driven.get(node_index) == {"translation", "rotation", "scale"}, (
             f"idle clip leaves node {node_index} partially driven "
             f"({sorted(driven.get(node_index, ()))}) — channels replace node "
             f"TRS, so every joint must carry its complete transform"
         )
-    globals_animated = _global_matrices({**gltf, "nodes": animated_nodes})
-    joint_mats = np.stack([globals_animated[n] for n in joints]) @ ibms
-    skinned = np.zeros_like(positions)
-    for influence in range(4):
-        mats = joint_mats[joints4[:, influence]]
-        skinned += weights4[:, influence : influence + 1] * np.einsum(
-            "vij,vj->vi", mats, homogeneous
-        )[:, :3]
-    idle_error_m = float(np.abs(skinned - positions).max())
-    report["idle_clip_skin_max_error_mm"] = idle_error_m * 1000.0
-    assert idle_error_m < 1e-6, (
-        f"the baked idle clip, substituted for node TRS, deviates from the "
-        f"rest skin by {idle_error_m * 1000.0:.6f} mm"
+
+    def sample(times: np.ndarray, output: np.ndarray, at: float) -> np.ndarray:
+        upper = int(np.searchsorted(times, at, side="right"))
+        upper = min(max(upper, 1), len(times) - 1)
+        span = times[upper] - times[upper - 1]
+        blend = 0.0 if span == 0 else (at - times[upper - 1]) / span
+        blend = min(max(blend, 0.0), 1.0)
+        return (1.0 - blend) * output[upper - 1] + blend * output[upper]
+
+    def substituted_skin(at: float) -> np.ndarray:
+        animated_nodes = copy.deepcopy(gltf["nodes"])
+        for node, path, times, output in channel_data:
+            value = sample(times, output, at)
+            if path == "rotation":
+                value = value / np.linalg.norm(value)
+            animated_nodes[node][path] = [float(v) for v in value]
+        globals_animated = _global_matrices({**gltf, "nodes": animated_nodes})
+        joint_mats = np.stack([globals_animated[n] for n in joints]) @ ibms
+        skinned = np.zeros_like(positions)
+        for influence in range(4):
+            mats = joint_mats[joints4[:, influence]]
+            skinned += weights4[:, influence : influence + 1] * np.einsum(
+                "vij,vj->vi", mats, homogeneous
+            )[:, :3]
+        return skinned
+
+    # 1. t=0: the substituted clip must BE the rest pose.
+    rest_error_m = float(np.abs(substituted_skin(0.0) - positions).max())
+    report["idle_clip_rest_error_mm"] = rest_error_m * 1000.0
+    assert rest_error_m < 1e-6, (
+        f"the baked idle clip at t=0, substituted for node TRS, deviates "
+        f"from the rest skin by {rest_error_m * 1000.0:.6f} mm"
+    )
+
+    # 3a. Channel-level temporal variance: some channels must vary; none by
+    # much (translations in meters, rotations in quaternion components), and
+    # scale never animates.
+    largest_spread = 0.0
+    for node, path, times, output in channel_data:
+        spread = float((output.max(axis=0) - output.min(axis=0)).max())
+        if path == "scale":
+            assert spread < 1e-9, f"idle clip animates scale on node {node}"
+        else:
+            bound = 0.05 if path == "translation" else 0.1
+            assert spread < bound, (
+                f"idle {path} channel on node {node} spans {spread:.4f} — "
+                f"far beyond a subtle idle"
+            )
+            largest_spread = max(largest_spread, spread)
+    assert largest_spread > 1e-4, (
+        "the idle clip is motionless — every sampler is constant; the clip "
+        "must carry visible motion, not a statue hold"
+    )
+
+    # 3b. Mesh-level: at every key time, the substituted mesh stays near the
+    # rest pose, and at some time it measurably departs from it.
+    peak_m = 0.0
+    for at in sorted(key_times):
+        deviation = float(np.abs(substituted_skin(at) - positions).max())
+        peak_m = max(peak_m, deviation)
+    report["idle_clip_peak_deviation_mm"] = peak_m * 1000.0
+    assert peak_m < 0.05, (
+        f"the idle clip displaces the mesh by {peak_m * 1000.0:.1f} mm — "
+        f"far beyond a subtle idle"
+    )
+    assert peak_m > 5e-5, (
+        f"the idle clip never displaces the mesh beyond "
+        f"{peak_m * 1000.0:.4f} mm — a statue in all but channel count"
     )
     report["idle_channels"] = len(idle["channels"])
 

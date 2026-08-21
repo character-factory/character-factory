@@ -34,6 +34,80 @@ SCALE = 0.01
 
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
+# --- the baked idle clip's motion ------------------------------------------
+# A subtle breathing-and-weight-sway cycle. Every term is a sine (or raised
+# cosine) with an integer number of periods over the clip, so the clip loops
+# seamlessly and frame 0 is EXACTLY the rest pose — the t=0 substitution
+# check in validate_glb depends on that. Amplitudes are deliberately small:
+# the clip is a retarget sanity check and a sign of life, not a performance.
+IDLE_SECONDS = 4.0            # one breath at ~15 breaths/minute
+IDLE_KEYS = 41                # 0.1 s keys; LINEAR between
+# Per-role world-frame deltas, applied only when the rig's role table names
+# the joint. pitch = rotation about world +X (chest rise), roll = about
+# world +Z (weight shift); sway/bob are root translations in cm.
+IDLE_MOTION: dict[str, dict[str, float]] = {
+    "spine_mid": {"pitch_degrees": 0.9},
+    "spine_upper": {"pitch_degrees": 0.5},
+    "neck": {"pitch_degrees": -0.8},
+    "head": {"pitch_degrees": -0.4},
+    "root": {"roll_degrees": 0.3, "sway_cm": 0.3, "bob_cm": 0.12},
+}
+
+
+def _idle_motion_keys(rig: RigDefinition, skeleton) -> dict[int, dict]:
+    """Per-joint keyframed idle deltas: joint index → {"rotation": (K, 4),
+    "translation": (K, 3)} in export units, composed onto the rest local
+    transform. Deltas are authored in the world frame and conjugated into
+    each joint's local frame through the parent's rest orientation; for
+    these sub-degree amplitudes, treating animated ancestors as at-rest in
+    the conjugation is exact to second order."""
+    roles = rig.metadata.get("roles", {})
+    t = np.linspace(0.0, IDLE_SECONDS, IDLE_KEYS)
+    breath = np.sin(2.0 * np.pi * t / IDLE_SECONDS)          # 0 at t=0, loops
+    bob = (1.0 - np.cos(4.0 * np.pi * t / IDLE_SECONDS)) / 2.0
+
+    keys: dict[int, dict] = {}
+    for role, spec in IDLE_MOTION.items():
+        joint_name = roles.get(role)
+        if joint_name is None:
+            continue
+        joint = rig.joint_index(joint_name)
+        parent = int(rig.parents[joint])
+        parent_rot = skeleton.rotations[parent] if parent >= 0 else np.eye(3)
+        parent_pos = skeleton.positions[parent] if parent >= 0 else np.zeros(3)
+        parent_scale = skeleton.scales[parent] if parent >= 0 else 1.0
+
+        entry: dict = {}
+        pitch = np.deg2rad(spec.get("pitch_degrees", 0.0)) * breath
+        roll = np.deg2rad(spec.get("roll_degrees", 0.0)) * breath
+        if spec.get("pitch_degrees") or spec.get("roll_degrees"):
+            quats = np.empty((IDLE_KEYS, 4), dtype=np.float64)
+            for k in range(IDLE_KEYS):
+                cx, sx = np.cos(pitch[k]), np.sin(pitch[k])
+                cz, sz = np.cos(roll[k]), np.sin(roll[k])
+                d_pitch = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+                d_roll = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+                local = parent_rot.T @ (d_roll @ d_pitch) @ skeleton.rotations[joint]
+                quats[k] = restpose.quat_from_matrix(local)
+                # quat_from_matrix canonicalizes to w >= 0; near w == 0 that
+                # flips hemispheres between neighboring keys. Keep the key
+                # sequence on one continuous path instead.
+                if k > 0 and float(quats[k] @ quats[0]) < 0.0:
+                    quats[k] = -quats[k]
+            entry["rotation"] = quats.astype(np.float32)
+        if spec.get("sway_cm") or spec.get("bob_cm"):
+            delta_world = np.zeros((IDLE_KEYS, 3))
+            delta_world[:, 0] = spec.get("sway_cm", 0.0) * breath
+            delta_world[:, 1] = -spec.get("bob_cm", 0.0) * bob
+            translations = (
+                (skeleton.positions[joint] + delta_world - parent_pos)
+                @ parent_rot / parent_scale
+            ) * SCALE
+            entry["translation"] = translations.astype(np.float32)
+        if entry:
+            keys[joint] = entry
+    return keys
+
 
 @dataclass
 class ExportResult:
@@ -222,32 +296,48 @@ def export_character_glb(
         ]
     materials.append(body_material)
 
-    # 6. The baked idle clip: one second of every joint held at its bind
-    # pose — the integrator's retarget sanity check. Animation channels
-    # REPLACE node TRS in a conforming player, so the clip carries the
-    # complete local transform for every joint — the baked rotation is the
-    # composed local rotation (pre-rotation · animated rotation; the hold's
-    # animated part is identity), never a partial value the engine must
-    # reconcile with node state, and translation and scale are baked
-    # alongside so nothing is left to engine defaults.
-    times = writer.add_accessor(
-        np.array([0.0, 1.0], dtype=np.float32), "SCALAR", minmax=True
+    # 6. The baked idle clip: a subtle breathing-and-sway loop — the
+    # integrator's retarget sanity check and a sign of life. Animation
+    # channels REPLACE node TRS in a conforming player, so the clip carries
+    # the complete local transform for every joint — the baked rotation is
+    # the composed local rotation (pre-rotation · animated rotation), never
+    # a partial value the engine must reconcile with node state, and
+    # translation and scale are baked alongside so nothing is left to
+    # engine defaults. Frame 0 is exactly the rest pose and the last frame
+    # equals the first, so the clip loops seamlessly and validate_glb can
+    # check the composition against the rest skin at t=0.
+    motion = _idle_motion_keys(rig, skeleton)
+    times_hold = writer.add_accessor(
+        np.array([0.0, IDLE_SECONDS], dtype=np.float32), "SCALAR", minmax=True
     )
+    times_motion = None
+    if motion:
+        times_motion = writer.add_accessor(
+            np.linspace(0.0, IDLE_SECONDS, IDLE_KEYS).astype(np.float32),
+            "SCALAR", minmax=True,
+        )
     samplers, channels = [], []
     for joint in range(joint_count):
         translation, rotation, local_scale = local[joint]
+        animated = motion.get(joint, {})
         for path, value, kind in (
             ("translation", np.asarray(translation, dtype=np.float32), "VEC3"),
             ("rotation", np.asarray(rotation, dtype=np.float32), "VEC4"),
             ("scale", np.asarray([local_scale] * 3, dtype=np.float32), "VEC3"),
         ):
-            output = writer.add_accessor(np.stack([value, value]), kind)
+            if path in animated:
+                output = writer.add_accessor(animated[path], kind)
+                input_times = times_motion
+            else:
+                output = writer.add_accessor(np.stack([value, value]), kind)
+                input_times = times_hold
             channels.append(
                 {"sampler": len(samplers),
                  "target": {"node": joint + 1, "path": path}}
             )
             samplers.append(
-                {"input": times, "output": output, "interpolation": "LINEAR"}
+                {"input": input_times, "output": output,
+                 "interpolation": "LINEAR"}
             )
 
     meshes.append(
@@ -349,12 +439,17 @@ def export_character_glb(
         "rest_knee_flexion_degrees": restpose.KNEE_FLEXION_DEGREES,
         "skeleton_root": rig.metadata["roles"]["world"],
         "humanoid_map": rig.metadata.get("humanoid_map", {}),
+        "idle_clip": {
+            "name": "idle",
+            "seconds": IDLE_SECONDS,
+            "loops": True,
+            "starts_at_rest": True,
+            "content": "subtle breathing and weight sway; every joint fully "
+                       "driven (complete local TRS)",
+        },
         "notes": [
             "Proportions are per-character and not normalized; ground contact "
             "needs foot IK.",
-            "Jaw is mappable but should default to unmapped: locomotion clips "
-            "commonly inject spurious jaw curves.",
-            "Finger mappings should be verified in-engine before use.",
             "The rig animates as linear-blend skinning; the generator's own "
             "renders additionally apply learned pose correctives.",
         ],

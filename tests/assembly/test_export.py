@@ -33,8 +33,11 @@ def test_export_passes_validation(rig, tmp_path):
     assert report["reparse_max_error_mm"] < 1e-3
     assert report["mirror_pairs"] == 2  # l_upleg/r_upleg, l_lowleg/r_lowleg
     assert report["idle_channels"] == 21          # T, R, and S per joint
-    assert report["idle_clip_skin_max_error_mm"] < 1e-3
+    assert report["idle_clip_rest_error_mm"] < 1e-3
+    # The clip is a real (if subtle) motion loop, not a statue hold.
+    assert report["idle_clip_peak_deviation_mm"] > 0.05
     assert result.manifest["format"] == "character-factory/export-manifest"
+    assert result.manifest["idle_clip"]["starts_at_rest"] is True
 
 
 def test_export_is_byte_deterministic(rig, tmp_path):
@@ -52,6 +55,44 @@ def test_export_is_byte_deterministic(rig, tmp_path):
     assert manifest_a == manifest_b
     assert manifest_a["format"] == "character-factory/export-manifest"
     assert manifest_a["joint_count"] == 7
+
+
+def test_motionless_idle_clip_is_rejected(rig, tmp_path, monkeypatch):
+    # A fully-driven statue must fail validation: with every motion
+    # amplitude zeroed, the exporter produces exactly the old constant-hold
+    # clip, and the validator's variance requirement catches it.
+    import character_factory.assembly.export as export_module
+
+    monkeypatch.setattr(export_module, "IDLE_MOTION", {})
+    result = export(rig, tmp_path)
+    with pytest.raises(AssertionError, match="motionless"):
+        validate_glb(result.glb_path.read_bytes(), expected_joints=7)
+
+
+def test_idle_clip_loops_and_starts_at_rest(rig, tmp_path):
+    # Frame 0 == rest pose == last frame, per channel: the clip loops
+    # seamlessly and the t=0 substitution check is meaningful.
+    data = export(rig, tmp_path).glb_path.read_bytes()
+    gltf, binary = parse_glb(data)
+    idle = gltf["animations"][0]
+    node_locals = {}
+    for index, node in enumerate(gltf["nodes"]):
+        node_locals[index] = {
+            "translation": np.asarray(node.get("translation", [0, 0, 0])),
+            "rotation": np.asarray(node.get("rotation", [0, 0, 0, 1])),
+            "scale": np.asarray(node.get("scale", [1, 1, 1])),
+        }
+    saw_motion = False
+    for channel in idle["channels"]:
+        sampler = idle["samplers"][channel["sampler"]]
+        output = read_accessor(gltf, binary, sampler["output"])
+        target = channel["target"]
+        rest = node_locals[target["node"]][target["path"]]
+        assert np.allclose(output[0], rest, atol=1e-6)
+        assert np.allclose(output[-1], output[0], atol=1e-6)
+        if len(output) > 2 and np.abs(output - output[0]).max() > 1e-4:
+            saw_motion = True
+    assert saw_motion
 
 
 def test_uv_seam_unwelds_with_weights(rig, tmp_path):
@@ -227,3 +268,19 @@ def test_real_rig_export_passes_acceptance(tmp_path):
     assert report["reparse_max_error_mm"] < 1e-2
     assert report["mirror_worst_deviation_degrees"] < 0.5
     assert result.vertex_count == 19455  # the documented unweld count
+
+    # The embedded humanoid map: 54 engine roles mapped, the jaw carried as
+    # a structured flag (mappable, default-unmapped), and every joint
+    # accounted for exactly once across map + jaw + leave-unmapped groups.
+    humanoid = result.manifest["humanoid_map"]
+    assert humanoid["map"]["Hips"] == "root"
+    assert humanoid["map"]["LeftHand"] == "l_wrist"
+    assert len(humanoid["map"]) == 54
+    assert humanoid["jaw"]["mappable"] and not humanoid["jaw"]["default_mapped"]
+    assert humanoid["fingers"]["mapped"] and humanoid["fingers"]["verify_in_engine"]
+    joint_names = set(rig.joint_names)
+    mapped = set(humanoid["map"].values())
+    unmapped = {j for group in humanoid["unmapped"].values() for j in group}
+    covered = mapped | {humanoid["jaw"]["joint"]} | unmapped
+    assert covered == joint_names
+    assert len(mapped) + 1 + len(unmapped) == len(joint_names)

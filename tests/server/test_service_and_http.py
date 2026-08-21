@@ -217,3 +217,21 @@ def test_http_create_rejects_unknown_interpreter_alias(client, monkeypatch, tmp_
     )
     assert response.status_code == 400
     assert "unknown interpreter backend" in response.json()["error"]
+
+
+def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
+    import time as timelib
+
+    first = service.get(stored.id)
+    assert first.created_at and first.updated_at
+
+    # A second character stored later must list first.
+    timelib.sleep(1.1)   # timestamps have second resolution
+    other = json.loads((service.library_dir / stored.id / "character.char.json")
+                       .read_text())
+    other["name"] = "later-one"
+    other["body"]["identity"][0] += 0.25   # different content id
+    later = service.store_character(other)
+    rows = service.list()
+    assert [r.id for r in rows][0] == later.id
+    assert rows[0].created_at >= rows[-1].created_at

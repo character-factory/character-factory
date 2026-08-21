@@ -46,6 +46,8 @@ class CharacterRecord:
     detail: str | None
     revision: int
     has_scene: bool
+    created_at: str | None = None    # ISO 8601 UTC; sidecar metadata,
+    updated_at: str | None = None    # never the character document
 
 
 class CharacterService:
@@ -68,13 +70,36 @@ class CharacterService:
             raise ServiceError(f"unknown character {character_id!r}")
         return path
 
+    @staticmethod
+    def _now() -> str:
+        import datetime
+
+        return datetime.datetime.now(datetime.timezone.utc).isoformat(
+            timespec="seconds"
+        )
+
     def _state(self, directory: Path) -> dict:
         path = directory / "state.json"
         if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return {"status": "stored", "detail": None, "revision": 0}
+            state = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            state = {"status": "stored", "detail": None, "revision": 0}
+        if "created_at" not in state:
+            # Records from before timestamps existed: the character file's
+            # mtime is the best available creation time.
+            import datetime
+
+            source = directory / "character.char.json"
+            if source.is_file():
+                state["created_at"] = datetime.datetime.fromtimestamp(
+                    source.stat().st_mtime, datetime.timezone.utc
+                ).isoformat(timespec="seconds")
+            else:
+                state["created_at"] = self._now()
+        return state
 
     def _write_state(self, directory: Path, state: dict) -> None:
+        state["updated_at"] = self._now()
         with tempfile.NamedTemporaryFile(
             "w", dir=directory, suffix=".tmp", delete=False, encoding="utf-8"
         ) as tmp:
@@ -180,10 +205,12 @@ class CharacterService:
             pass  # assemble already recorded the error state
 
     def list(self) -> list[CharacterRecord]:
+        """Every stored character, newest first."""
         records = []
         for path in sorted(self.library_dir.iterdir()):
             if path.is_dir() and (path / "character.char.json").is_file():
                 records.append(self.get(path.name))
+        records.sort(key=lambda r: r.created_at or "", reverse=True)
         return records
 
     def get(self, character_id: str) -> CharacterRecord:
@@ -197,6 +224,8 @@ class CharacterService:
             detail=state.get("detail"),
             revision=state.get("revision", 0),
             has_scene=(directory / "scene.glb").is_file(),
+            created_at=state.get("created_at"),
+            updated_at=state.get("updated_at"),
         )
 
     def document(self, character_id: str) -> dict:

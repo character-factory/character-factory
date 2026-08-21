@@ -139,6 +139,7 @@ button:disabled { opacity: .45; cursor: default; }
   <aside class="lb-rail">
     <div class="mono" id="lb-id"></div>
     <div class="mono dim" id="lb-status"></div>
+    <div class="mono dim" id="lb-created"></div>
     <p class="lb-prompt" id="lb-prompt"></p>
     <div class="mono dim" id="lb-writer"></div>
     <details open><summary class="mono dim">generated UV maps</summary>
@@ -286,6 +287,9 @@ async function openLightbox(id) {
   $('lightbox').hidden = false;
   resize();
   $('lb-id').textContent = id;
+  const listed = rows.find(r => r.id === id);
+  $('lb-created').textContent = listed?.created_at
+    ? 'created ' + new Date(listed.created_at).toLocaleString() : '';
   $('lb-download').href = `/v0/characters/${id}/scene.glb`;
   const full = await (await fetch(`/v0/characters/${id}`)).json();
   const character = full.character || {};

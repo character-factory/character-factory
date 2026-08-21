@@ -40,6 +40,8 @@ def create_app(service: CharacterService):
             "detail": record.detail,
             "revision": record.revision,
             "has_scene": record.has_scene,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
         }
 
     @app.exception_handler(NotAvailable)

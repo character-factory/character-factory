@@ -195,3 +195,28 @@ def test_wig_engine_suite():
 
 if __name__ == "__main__":
     main()
+
+
+def test_every_preset_base_texture_plate_is_vendored():
+    """The engine raises at synthesis time if a preset's base plate is
+    missing — the failure that broke a build must be structurally
+    impossible: every referenced plate ships with the package."""
+    import dataclasses
+    from pathlib import Path
+
+    from character_factory.hair.wig import presets as preset_module
+
+    package_root = Path(preset_module.__file__).resolve().parents[2]
+    referenced = set()
+    for name in dir(preset_module):
+        value = getattr(preset_module, name)
+        if isinstance(value, dict):
+            for entry in value.values():
+                for part in (entry if isinstance(entry, tuple) else (entry,)):
+                    if dataclasses.is_dataclass(part):
+                        base = getattr(part, "base_texture", None)
+                        if base:
+                            referenced.add(base)
+    assert referenced, "expected at least one preset to reference a plate"
+    for relative in referenced:
+        assert (package_root / relative).is_file(), f"missing plate: {relative}"

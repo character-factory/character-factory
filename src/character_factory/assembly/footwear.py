@@ -265,6 +265,20 @@ def _canvas_occupancy(
             np.arange(height, dtype=np.float64)[:, None] / max(height - 1, 1)
         ) * np.ones((1, width))
         occupied &= ~leg_region | (grid_y >= y1 - (y1 - y0) * fraction)
+        # Within the kept shaft band, drop texels the generator left as
+        # canvas background — a shaft painted shorter than the style's
+        # declared height must not composite background over the leg. The
+        # background reference is the canvas's own unmapped region, so no
+        # calibration constant is introduced.
+        background_pixels = canvas[~mask]
+        if background_pixels.size:
+            background = np.median(
+                background_pixels.reshape(-1, canvas.shape[2]), axis=0
+            )
+            deviation = np.abs(
+                canvas.astype(np.float64) - background
+            ).mean(axis=2)
+            occupied &= ~leg_region | (deviation > 12.0)
 
     if style["treatment"] in ("toe_post_straps", "adaptive_straps"):
         occupied = _strap_occupancy(canvas, occupied, chart, style["treatment"])

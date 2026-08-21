@@ -189,3 +189,24 @@ def test_shaft_clause_comes_from_registry_data():
 def test_boot_keywords_resolve_with_longest_match():
     c = chart()
     assert c.style_for_prompt("black leather boots")["name"] == "mid_boot"
+
+
+def test_short_painted_shaft_does_not_composite_background():
+    # The generator may paint a shorter shaft than the style's declared
+    # height; unpainted background inside the geometric band must not
+    # reach the body. Background is estimated from the unmapped region.
+    c = chart(left_is_leg=True)
+    c.mask = np.ones((CANVAS, CANVAS), dtype=bool)
+    c.mask[:8, :8] = False                      # unmapped corner = background
+    image = np.full((CANVAS, CANVAS, 3), (28, 28, 32), dtype=np.uint8)
+    painted = (slice(int(0.80 * CANVAS), int(0.90 * CANVAS)),
+               slice(int(0.05 * CANVAS), int(0.40 * CANVAS)))
+    image[painted] = (120, 40, 50)              # the actual shaft band
+    overlay = bake(c, image, style="mid_boot")  # keeps y >= 0.8 of leg cell
+    assert at(overlay, 0.2, 0.85)[3] == 255     # painted shaft survives
+    assert at(overlay, 0.2, 0.62)[3] == 0       # above the band: cut anyway
+    # Inside the geometric band but unpainted: background keyed out.
+    image2 = image.copy(); image2[painted] = (28, 28, 32)
+    bare = bake(c, image2, style="mid_boot")
+    assert bare[..., 3].max() >= 0              # runs clean
+    assert at(bare, 0.2, 0.85)[3] == 0          # nothing painted -> nothing kept

@@ -76,8 +76,19 @@ class TextureBaker:
         inference = {**entry.inference, **recipe.get("overrides", {})}
         template = inference.get("prompt_template", "{prompt}")
         resolution = inference.get("resolution", 1024)
+        fields = {"prompt": recipe["prompt"]}
+        if "{shaft_clause}" in template:
+            # Style-dependent conditioning: the component's foot chart maps
+            # the recipe prompt to a style, whose shaft clause (declared in
+            # the registry entry) completes the caption.
+            from character_factory.assembly.footwear import FootChart, shaft_clause
+
+            chart = FootChart.load(adapter_dir)
+            fields["shaft_clause"] = shaft_clause(
+                chart.style_for_prompt(recipe["prompt"]), inference
+            )
         image = pipeline.generate(
-            prompt=template.format(prompt=recipe["prompt"]),
+            prompt=template.format(**fields),
             seed=recipe["seed"],
             steps=inference.get("steps", 20),
             guidance=inference.get("guidance", 4.0),

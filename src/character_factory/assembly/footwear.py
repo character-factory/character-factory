@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["FootChart", "bake_shoe_overlay"]
+__all__ = ["FootChart", "bake_shoe_overlay", "shaft_clause"]
 
 # Straps darker/more saturated than the canvas background read as covered;
 # these are the fixed thresholds for styles with hard-edged straps.
@@ -100,6 +100,23 @@ class FootChart:
             if style["name"] == name:
                 return style
         raise ValueError(f"style {name!r} is not in the component's vocabulary")
+
+
+def shaft_clause(style: dict, inference: dict) -> str:
+    """The style's shaft clause for a component whose conditioning template
+    carries a `{shaft_clause}` hole. The clause wording is the component's
+    caption vocabulary and comes from its registry entry
+    (`shaft_clause_empty` / `shaft_clause_shafted`, the latter with a
+    `{percent}` hole) — data, never code."""
+    fraction = float(style["leg_fraction"])
+    key = "shaft_clause_empty" if fraction <= 0 else "shaft_clause_shafted"
+    template = inference.get(key)
+    if template is None:
+        raise ValueError(
+            f"the component's conditioning template uses {{shaft_clause}} but "
+            f"its registry entry declares no {key!r}"
+        )
+    return template.format(percent=round(fraction * 100))
 
 
 def _otsu(values: np.ndarray) -> float:

@@ -180,3 +180,67 @@ def test_unknown_quantization_mode_is_an_error(monkeypatch):
     monkeypatch.setenv(textures.ENV_QUANTIZATION, "fp3")
     with pytest.raises(ValueError, match="unknown texture quantization"):
         textures.configured_quantization()
+
+
+def test_shaft_clause_template_resolves_from_the_chart(environment, tmp_path, doc):
+    import numpy as np
+
+    fake, registry, character = environment
+    # A shoe adapter whose template carries the style-dependent shaft
+    # clause; the clause wording is registry data, never code.
+    entry_doc = {
+        "name": "make-shoe", "version": "0.1.0", "kind": "texture-adapter",
+        "slot": "shoe",
+        "requires": {"base_model": "test-base", "schema": ">=0.1 <1.0"},
+        "inference": {
+            "prompt_template": "shoe sheet: {prompt}, layout: {shaft_clause}",
+            "shaft_clause_empty": "no upper strip",
+            "shaft_clause_shafted": "a {percent}% upper strip",
+            "steps": 7, "guidance": 3.0, "resolution": 64,
+        },
+        "artifacts": [], "source": None,
+    }
+    document_index = registry.index.document
+    document_index["components"].append(entry_doc)
+    registry = Registry(RegistryIndex(document_index))
+    from character_factory.registry.store import component_dir
+
+    shoe_entry = registry.get("make-shoe")
+    shoe_dir = component_dir(shoe_entry)
+    shoe_dir.mkdir(parents=True, exist_ok=True)
+    # A minimal chart: one mapped texcoord triple, two styles.
+    np.savez(shoe_dir / "foot_chart.npz",
+             chart_uv=np.full((3, 2), 0.5, np.float32),
+             part_index=np.zeros(3, np.int8))
+    (shoe_dir / "foot_chart.json").write_text(json.dumps({
+        "format": "character-factory/foot-chart",
+        "texcoord_count": 3,
+        "parts": [],
+        "styles": [
+            {"name": "low_top", "leg_fraction": 0.0, "treatment": "closed",
+             "keywords": []},
+            {"name": "tall_boot", "leg_fraction": 0.36, "treatment": "closed",
+             "keywords": ["riding boot", "boots"]},
+        ],
+    }))
+    Image.new("L", (8, 8), 255).save(shoe_dir / "foot_chart_mask.png")
+
+    document = character.to_document()
+    document["textures"]["shoe"] = {
+        "component": "make-shoe", "component_version": "0.1.0",
+        "prompt": "oxblood tall riding boots", "seed": 9,
+    }
+    shod = Character.from_document(document)
+    bake(shod, tmp_path / "out", registry=registry, device="cpu",
+         pipeline_factory=lambda base_dir, device: fake)
+    shoe_call = next(c for c in fake.calls if c["prompt"].startswith("shoe"))
+    assert shoe_call["prompt"] == (
+        "shoe sheet: oxblood tall riding boots, layout: a 36% upper strip")
+
+    fake.calls.clear()
+    document["textures"]["shoe"]["prompt"] = "plain white sneakers"
+    bake(Character.from_document(document), tmp_path / "out2",
+         registry=registry, device="cpu",
+         pipeline_factory=lambda base_dir, device: fake)
+    shoe_call = next(c for c in fake.calls if c["prompt"].startswith("shoe"))
+    assert "no upper strip" in shoe_call["prompt"]

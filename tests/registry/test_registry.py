@@ -85,7 +85,11 @@ def test_packaged_snapshot_is_valid_and_complete():
 
 
 def test_snapshot_shoe_maker_declares_vocabulary():
-    registry = Registry.default()
+    # The packaged snapshot specifically — a refreshed local index may
+    # carry newer staged declarations.
+    from character_factory.registry import RegistryIndex, _snapshot_document
+
+    registry = Registry(RegistryIndex(_snapshot_document()))
     assert registry.vocabulary_for("make-shoe") == {"styles": ["below_ankle"]}
     assert registry.vocabulary_for("make-skin") == {}
     assert registry.get("make-shoe").map == "albedo"

@@ -35,9 +35,22 @@ def test_assemble_end_to_end(tmp_path):
     solid_png(assets / "eye.png", (90, 60, 40))
     solid_png(assets / "garment.png", (0, 0, 0))       # nothing keyed
     solid_png(assets / "shoe.png", (0, 0, 0))
-    out = assemble(
-        EXAMPLES / "marathon-runner.char.json", assets, tmp_path / "runner.glb"
-    )
+    # Re-pin the example's texture components to what the active registry
+    # resolves — the example pins release versions; a staged local index
+    # may carry a different version line, and the pipeline (not the pin's
+    # absolute value) is what this test exercises.
+    import json as jsonlib
+
+    from character_factory.registry import Registry
+    from character_factory.schema import Character
+
+    document = jsonlib.loads((EXAMPLES / "marathon-runner.char.json").read_text())
+    resolved = Registry.default().resolve_slots(sorted(document["textures"]))
+    for slot, recipe in document["textures"].items():
+        recipe["component_version"] = str(resolved[slot].version)
+    character_path = tmp_path / "runner.char.json"
+    Character.from_document(document).save(character_path)
+    out = assemble(character_path, assets, tmp_path / "runner.glb")
     data = out.read_bytes()
     report = validate_glb(data, expected_joints=127)
     assert report["reparse_max_error_mm"] < 1e-2

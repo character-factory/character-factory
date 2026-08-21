@@ -30,7 +30,7 @@ STYLES = [
     {"name": "open_sandal", "leg_fraction": 0.0, "treatment": "adaptive_straps",
      "keywords": ["sandal"]},
     {"name": "mid_boot", "leg_fraction": 0.2, "treatment": "closed",
-     "keywords": ["boot"]},
+     "keywords": ["boot", "boots"]},
 ]
 PARTS = {
     "leg_ankle": {"name": "leg_ankle", "chart_bounds": [0.0, 0.0, 0.45, 1.0]},
@@ -150,9 +150,15 @@ def test_texcoord_count_mismatch_is_a_hard_error():
         )
 
 
-REAL_CHART = (
-    Path.home() / ".cache/character-factory/components/make-shoe/0.1.0"
-)
+def _newest_real_chart():
+    root = Path.home() / ".cache/character-factory/components/make-shoe"
+    if not root.is_dir():
+        return root / "none"
+    versions = sorted(d for d in root.iterdir() if (d / "foot_chart.json").is_file())
+    return versions[-1] if versions else root / "none"
+
+
+REAL_CHART = _newest_real_chart()
 
 
 @pytest.mark.skipif(
@@ -168,3 +174,18 @@ def test_real_chart_loads_and_matches_the_rig_contract():
     assert {s["name"] for s in real.styles} >= {"flip_flop", "open_sandal", "low_top"}
     # Exactly one keywordless default style.
     assert sum(1 for s in real.styles if not s["keywords"]) == 1
+
+def test_shaft_clause_comes_from_registry_data():
+    from character_factory.assembly.footwear import shaft_clause
+
+    inference = {"shaft_clause_empty": "no upper strip",
+                 "shaft_clause_shafted": "a {percent}% upper strip"}
+    assert shaft_clause({"leg_fraction": 0.0}, inference) == "no upper strip"
+    assert shaft_clause({"leg_fraction": 0.36}, inference) == "a 36% upper strip"
+    with pytest.raises(ValueError, match="declares no"):
+        shaft_clause({"leg_fraction": 0.24}, {})
+
+
+def test_boot_keywords_resolve_with_longest_match():
+    c = chart()
+    assert c.style_for_prompt("black leather boots")["name"] == "mid_boot"

@@ -44,6 +44,24 @@ class TextureBaker:
             self._pipeline = self._pipeline_factory(base_dir, self.device)
         return self._pipeline
 
+    def close(self) -> None:
+        """Drop the pipeline and hand its VRAM back to the driver.
+
+        Long-lived processes (the server) run other GPU stages between
+        bakes — most notably the interpreter model. Torch's allocator
+        would otherwise keep the pipeline's memory reserved, and an
+        over-subscribed card degrades to shared-memory paging (silently,
+        on WSL2) instead of failing loudly.
+        """
+        self._pipeline = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
     def bake_slot(self, slot: str, recipe: dict, out_path: Path) -> dict:
         """Generate one slot's image; returns its SPEC.md §8 asset descriptor."""
         entry = self.registry.get(recipe["component"], recipe["component_version"])
@@ -90,10 +108,13 @@ def bake(
     # albedo shorthand (SPEC.md §5.2, §8). Albedo files are named <slot>.png;
     # future secondary maps will be <slot>.<map>.png.
     descriptors: dict[str, dict] = {}
-    for slot, maps in sorted(character.texture_maps().items()):
-        descriptors[slot] = baker.bake_slot(
-            slot, maps["albedo"], out_dir / f"{slot}.png"
-        )
+    try:
+        for slot, maps in sorted(character.texture_maps().items()):
+            descriptors[slot] = baker.bake_slot(
+                slot, maps["albedo"], out_dir / f"{slot}.png"
+            )
+    finally:
+        baker.close()
 
     document = character.to_document()
     document["assets"] = descriptors

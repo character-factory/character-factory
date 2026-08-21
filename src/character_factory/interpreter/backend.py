@@ -93,6 +93,12 @@ class ModelInterpreter:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        # Hand any reserved-but-free blocks from earlier GPU stages back to
+        # the driver before claiming room for this model; an over-subscribed
+        # card degrades to shared-memory paging instead of failing loudly.
+        if self.device != "cpu" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         weights = self._weights_dir()
         self._tokenizer = AutoTokenizer.from_pretrained(weights)
         self._model = AutoModelForCausalLM.from_pretrained(

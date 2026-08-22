@@ -45,28 +45,41 @@ class ExpertTrunk(nn.Module):
 
 
 class IdentityNetwork(nn.Module):
-    """Body and face trunks with three heads (body, face, resting eyelid).
+    """Body and face trunks with config-declared heads.
 
-    Head outputs are standardized values; the component's stored per-head
-    mean/std de-standardize them (see :mod:`character_factory.identity`).
+    `body` rides the body trunk and `face` rides the face trunk, always.
+    Two optional heads cover the component generations: `eyelid`
+    (resting-eyelid expression, face trunk — earlier components) and
+    `proportions` (skeletal proportions, body trunk — components that own
+    them). Head outputs are standardized values; the component's stored
+    per-head mean/std de-standardize them
+    (see :mod:`character_factory.identity`).
     """
 
     def __init__(self, input_dim: int, hidden: int, blocks: int,
-                 body_size: int, face_size: int, eyelid_size: int):
+                 body_size: int, face_size: int,
+                 eyelid_size: int = 0, proportion_size: int = 0):
         super().__init__()
         self.body_trunk = ExpertTrunk(input_dim, hidden, blocks)
         self.face_trunk = ExpertTrunk(input_dim, hidden, blocks)
         self.body_head = nn.Linear(hidden, body_size)
         self.face_head = nn.Linear(hidden, face_size)
-        self.eyelid_head = nn.Linear(hidden, eyelid_size)
+        self.eyelid_head = (
+            nn.Linear(hidden, eyelid_size) if eyelid_size else None
+        )
+        self.proportion_head = (
+            nn.Linear(hidden, proportion_size) if proportion_size else None
+        )
 
-    def forward(
-        self, embedding: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, embedding: torch.Tensor) -> dict:
         body_hidden = self.body_trunk(embedding)
         face_hidden = self.face_trunk(embedding)
-        return (
-            self.body_head(body_hidden),
-            self.face_head(face_hidden),
-            self.eyelid_head(face_hidden),
-        )
+        out = {
+            "body": self.body_head(body_hidden),
+            "face": self.face_head(face_hidden),
+        }
+        if self.eyelid_head is not None:
+            out["eyelid"] = self.eyelid_head(face_hidden)
+        if self.proportion_head is not None:
+            out["proportions"] = self.proportion_head(body_hidden)
+        return out

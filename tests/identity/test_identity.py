@@ -72,20 +72,24 @@ def generator(tmp_path):
 
 
 def test_shapes_and_types(generator):
-    identity, expression = generator.generate("a tall broad-shouldered person")
+    result = generator.generate("a tall broad-shouldered person")
+    identity, expression = result.identity, result.resting_expression
     assert len(identity) == 45 and len(expression) == 72
     assert all(isinstance(v, float) for v in identity + expression)
+    assert result.proportions == {}  # this component does not own them
 
 
 def test_deterministic_no_seed_anywhere(generator):
     a = generator.generate("a lean marathon runner")
     b = generator.generate("a lean marathon runner")
-    assert a == b
+    assert a.identity == b.identity
+    assert a.resting_expression == b.resting_expression
+    assert a.proportions == b.proportions
 
 
 def test_different_prompts_differ(generator):
-    a, _ = generator.generate("a lean marathon runner")
-    b, _ = generator.generate("a heavyset dockworker")
+    a = generator.generate("a lean marathon runner").identity
+    b = generator.generate("a heavyset dockworker").identity
     assert a != b
 
 
@@ -93,7 +97,8 @@ def test_owned_positions_only(tmp_path):
     base = [7.5] * 45
     component = IdentityComponent.load(write_component(tmp_path, base_identity=base))
     generator = IdentityGenerator(component, fake_embedder)
-    identity, expression = generator.generate("anyone")
+    result = generator.generate("anyone")
+    identity, expression = result.identity, result.resting_expression
     # Body and face heads own all 45 identity positions between them, so no
     # base value survives — but expression positions outside the eyelid head
     # must remain exactly zero.
@@ -123,7 +128,7 @@ def test_base_identity_survives_unowned_positions(tmp_path):
     safetensors_torch.save_file(tensors, str(directory / "weights.safetensors"))
 
     generator = IdentityGenerator(IdentityComponent.load(directory), fake_embedder)
-    identity, _ = generator.generate("anyone")
+    identity = generator.generate("anyone").identity
     assert identity[2:] == [3.25] * 43
     assert identity[0] != 3.25 and identity[1] != 3.25
 
@@ -154,6 +159,67 @@ def test_destandardization_applied(tmp_path):
     tensors["stats.body.std"] = torch.ones(25)
     safetensors_torch.save_file(tensors, str(directory / "weights.safetensors"))
     generator = IdentityGenerator(IdentityComponent.load(directory), fake_embedder)
-    identity, _ = generator.generate("anyone")
+    identity = generator.generate("anyone").identity
     body_values = [identity[i] for i in BODY_INDICES]
     assert all(50.0 < v < 150.0 for v in body_values)
+
+
+PROPORTION_NAMES = (
+    "spine_length", "neck_length", "shoulder_width",
+    "arm_length", "hip_width", "leg_length",
+)
+
+
+def write_proportions_component(directory, *, seed=0, prop_mean=0.0, prop_std=1.0):
+    """A component of the newer generation: proportions head on the body
+    trunk, no eyelid head (resting expression is exact zeros)."""
+    config = {
+        "format": COMPONENT_FORMAT,
+        "component_version": "0.0.0+test",
+        "embedding": {"pooling": "masked_mean", "normalize": "l2",
+                      "max_tokens": 128, "dimensions": EMBED_DIM},
+        "architecture": {"kind": "dual-expert-residual", "hidden": 16, "blocks": 2},
+        "heads": {
+            "body": {"identity_indices": BODY_INDICES},
+            "face": {"identity_indices": FACE_INDICES},
+            "proportions": {"parameters": list(PROPORTION_NAMES), "bound": 0.40},
+        },
+        "identity_size": 45,
+        "expression_size": 72,
+        "base_identity": None,
+    }
+    torch.manual_seed(seed)
+    model = IdentityNetwork(EMBED_DIM, 16, 2, 25, 20,
+                            eyelid_size=0, proportion_size=6)
+    tensors = dict(model.state_dict())
+    generator = torch.Generator().manual_seed(seed + 1)
+    for head, size in (("body", 25), ("face", 20)):
+        tensors[f"stats.{head}.mean"] = torch.randn(size, generator=generator) * 0.1
+        tensors[f"stats.{head}.std"] = torch.rand(size, generator=generator) + 0.5
+    tensors["stats.proportions.mean"] = torch.full((6,), float(prop_mean))
+    tensors["stats.proportions.std"] = torch.full((6,), float(prop_std))
+    (directory / "config.json").write_text(json.dumps(config))
+    safetensors_torch.save_file(tensors, str(directory / "weights.safetensors"))
+    return directory
+
+
+def test_proportions_component_emits_named_bounded_values(tmp_path):
+    component = IdentityComponent.load(write_proportions_component(tmp_path))
+    generator = IdentityGenerator(component, fake_embedder)
+    result = generator.generate("a towering broad-shouldered smith")
+    assert len(result.identity) == 45
+    # No eyelid head: resting expression is exact zeros, by construction.
+    assert result.resting_expression == [0.0] * 72
+    assert set(result.proportions) == set(PROPORTION_NAMES)
+    assert all(abs(v) <= 0.40 for v in result.proportions.values())
+
+
+def test_proportions_bound_clamps_extreme_outputs(tmp_path):
+    # A destandardization mean of 5.0 pushes every raw output far outside
+    # the bound; the generator clamps to the component's declared bound.
+    component = IdentityComponent.load(
+        write_proportions_component(tmp_path, prop_mean=5.0)
+    )
+    generator = IdentityGenerator(component, fake_embedder)
+    result = generator.generate("anyone")
+    assert all(v == 0.40 for v in result.proportions.values())

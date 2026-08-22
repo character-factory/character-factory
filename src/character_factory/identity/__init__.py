@@ -23,9 +23,25 @@ import json
 from pathlib import Path
 from typing import Callable, Protocol
 
-__all__ = ["IdentityComponent", "IdentityGenerator", "TextEmbedder"]
+__all__ = [
+    "IdentityComponent",
+    "IdentityGenerator",
+    "IdentityResult",
+    "TextEmbedder",
+]
 
 COMPONENT_FORMAT = "character-factory/identity-component"
+
+
+class IdentityResult:
+    """One generated identity: coefficients, resting expression, and named
+    skeletal proportions ({} when the component does not own them)."""
+
+    def __init__(self, identity: list, resting_expression: list,
+                 proportions: dict):
+        self.identity = identity
+        self.resting_expression = resting_expression
+        self.proportions = proportions
 
 
 class TextEmbedder(Protocol):
@@ -65,7 +81,14 @@ class IdentityComponent:
             blocks=arch["blocks"],
             body_size=len(heads["body"]["identity_indices"]),
             face_size=len(heads["face"]["identity_indices"]),
-            eyelid_size=len(heads["eyelid"]["expression_indices"]),
+            eyelid_size=(
+                len(heads["eyelid"]["expression_indices"])
+                if "eyelid" in heads else 0
+            ),
+            proportion_size=(
+                len(heads["proportions"]["parameters"])
+                if "proportions" in heads else 0
+            ),
         )
         tensors = load_file(str(directory / "weights.safetensors"), device=device)
         stats = {}
@@ -78,7 +101,7 @@ class IdentityComponent:
                 state[key] = tensor
         model.load_state_dict(state)
         model.to(device).eval()
-        for head in ("body", "face", "eyelid"):
+        for head in heads:
             if head not in stats or set(stats[head]) != {"mean", "std"}:
                 raise ValueError(f"weights.safetensors is missing stats for {head!r}")
         with torch.no_grad():
@@ -107,10 +130,10 @@ class IdentityGenerator:
         )
         return cls(component, embedder)
 
-    def generate(self, prompt: str) -> tuple[list[float], list[float]]:
+    def generate(self, prompt: str) -> "IdentityResult":
         return self.generate_from_embedding(self.embedder(prompt))
 
-    def generate_from_embedding(self, embedding) -> tuple[list[float], list[float]]:
+    def generate_from_embedding(self, embedding) -> "IdentityResult":
         import torch
 
         config = self.component.config
@@ -118,10 +141,10 @@ class IdentityGenerator:
         with torch.no_grad():
             if embedding.dim() == 1:
                 embedding = embedding.unsqueeze(0)
-            body_z, face_z, eyelid_z = self.component.model(embedding.float())
+            raw = self.component.model(embedding.float())
             values = {
                 head: (z[0] * stats[head]["std"] + stats[head]["mean"]).cpu()
-                for head, z in (("body", body_z), ("face", face_z), ("eyelid", eyelid_z))
+                for head, z in raw.items()
             }
 
         heads = config["heads"]
@@ -132,9 +155,21 @@ class IdentityGenerator:
         for index, value in zip(heads["face"]["identity_indices"], values["face"]):
             identity[index] = float(value)
         expression = [0.0] * config["expression_size"]
-        for index, value in zip(heads["eyelid"]["expression_indices"], values["eyelid"]):
-            expression[index] = float(value)
-        return identity, expression
+        if "eyelid" in heads:
+            for index, value in zip(
+                heads["eyelid"]["expression_indices"], values["eyelid"]
+            ):
+                expression[index] = float(value)
+        proportions: dict[str, float] = {}
+        if "proportions" in heads:
+            spec = heads["proportions"]
+            bound = float(spec.get("bound", 0.0)) or None
+            for name, value in zip(spec["parameters"], values["proportions"]):
+                v = float(value)
+                if bound is not None:
+                    v = max(-bound, min(bound, v))
+                proportions[name] = v
+        return IdentityResult(identity, expression, proportions)
 
 
 def _transformers_embedder(

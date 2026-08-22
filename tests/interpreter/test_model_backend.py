@@ -261,3 +261,56 @@ def test_configured_instruction_replaces_the_header():
     text = build_instruction({}, header="my custom header")
     assert text.startswith("my custom header")
     assert "Texture slots" in text        # the structural surface remains
+
+
+def test_proportion_fields_convert_from_hundredths_and_drop_zeros():
+    document = good_document()
+    document["proportions"] = {"leg_length": 25, "shoulder_width": -12,
+                               "neck_length": 0}
+    result = backend_with(json.dumps(document)).interpret("a towering figure")
+    assert result.proportions == {"leg_length": 0.25, "shoulder_width": -0.12}
+
+
+def test_absent_or_empty_proportions_mean_none():
+    assert backend_with(json.dumps(good_document())).interpret("x").proportions is None
+    document = good_document()
+    document["proportions"] = {}
+    assert backend_with(json.dumps(document)).interpret("x").proportions is None
+
+
+def test_unknown_proportion_field_is_an_interpreter_error():
+    document = good_document()
+    document["proportions"] = {"leg_lenght": 20}
+    with pytest.raises(InterpreterError):
+        backend_with(json.dumps(document)).interpret("x")
+
+
+def test_out_of_range_proportion_is_clamped_with_a_note():
+    # An unconstrained backend (the endpoint) can exceed the grammar's
+    # range; the repair loop clamps and notes rather than dying.
+    document = good_document()
+    document["proportions"] = {"leg_length": 90}
+    result = backend_with(json.dumps(document)).interpret("x")
+    assert result.proportions == {"leg_length": 0.40}
+    assert any("clamped" in note for note in result.notes)
+
+
+def test_rules_fallback_never_emits_proportions():
+    from character_factory.interpreter import rules_interpret
+
+    result = rules_interpret("a towering broad-shouldered long-legged smith")
+    assert result.proportions is None
+
+
+def test_interpretation_schema_carries_bounded_integer_proportions():
+    from character_factory.interpreter.schema import interpretation_schema
+
+    schema = interpretation_schema()
+    proportions = schema["properties"]["proportions"]
+    assert "proportions" not in schema["required"]
+    field = proportions["properties"]["leg_length"]
+    assert field == {"type": "integer", "minimum": -40, "maximum": 40}
+    assert set(proportions["properties"]) == {
+        "spine_length", "neck_length", "shoulder_width",
+        "arm_length", "hip_width", "leg_length",
+    }

@@ -101,9 +101,9 @@ class RigDefinition:
 
         topology = self.metadata["topology"]
         if proportions:
-            pose = torch.tensor(
-                [self.proportion_pose(proportions)], dtype=torch.float32
-            )
+            pose = torch.from_numpy(
+                self.proportion_pose(proportions)
+            ).to(torch.float32).unsqueeze(0)
         else:
             pose = torch.zeros(1, topology["pose_size"])
         with torch.no_grad():

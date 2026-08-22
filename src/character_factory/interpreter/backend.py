@@ -250,12 +250,13 @@ class ModelInterpreter:
         self._record_memory()
 
         document = _parse_json(raw)
-        slots, hair, notes = _validate(document, prompt)
+        slots, hair, notes, proportions = _validate(document, prompt)
         return Interpretation(
             slot_prompts=slots,
             hair=hair,
             backend=self.metrics.backend,
             notes=notes,
+            proportions=proportions,
         )
 
     def _record_memory(self) -> None:
@@ -310,6 +311,14 @@ def build_instruction(slot_guidance: dict[str, str],
         "The hair block uses closed vocabularies; copy enum values exactly "
         "— never paraphrase — and set seed to 0. Pick natural values for "
         "anything the description leaves unsaid.",
+        "",
+        "Skeletal proportions: include the optional \"proportions\" object "
+        "ONLY when the description clearly implies unusual build "
+        "(towering, petite, broad-shouldered, long-limbed…). Values are "
+        "INTEGERS in hundredths, -40..40 (25 means +0.25; ~10 cm per 100). "
+        "Keys: spine_length, neck_length, shoulder_width, arm_length, "
+        "hip_width, leg_length. Omit the object — and any key — you have "
+        "no clear signal for; never write 0.",
         "",
         'Output shape: {"textures": {"<slot>": {"prompt": "…"}, …}, '
         '"hair": {…}} — slot keys at the textures level, each holding one '
@@ -389,7 +398,28 @@ def _validate(document: dict, prompt: str) -> tuple[dict, dict | None, list]:
             raise InterpreterError(
                 "hair block invalid after repair: " + "; ".join(problems)
             )
-    return slots, hair, notes
+
+    # Skeletal-proportion overrides: the schema carries integers in
+    # hundredths (closed integer ranges are what the decoding grammar can
+    # actually enforce); the document unit is the float. Zero entries mean
+    # "no deviation" and are dropped; an empty or absent object means the
+    # writer chose not to steer proportions at all.
+    proportions = None
+    raw_proportions = document.get("proportions")
+    if isinstance(raw_proportions, dict) and raw_proportions:
+        proportions = {}
+        for name, value in raw_proportions.items():
+            if name not in vocab.PROPORTION_NAMES:
+                raise InterpreterError(f"unknown proportion field {name!r}")
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise InterpreterError(f"proportion {name!r} is not a number")
+            hundredths = max(-40.0, min(40.0, float(value)))
+            if hundredths != float(value):
+                notes.append(f"proportion {name} clamped to the ±0.40 range")
+            if hundredths != 0.0:
+                proportions[name] = hundredths / 100.0
+        proportions = proportions or None
+    return slots, hair, notes, proportions
 
 
 def _repair_hair(hair: dict, notes: list) -> dict:

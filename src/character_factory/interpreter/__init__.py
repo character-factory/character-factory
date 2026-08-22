@@ -39,6 +39,10 @@ class Interpretation:
     hair: dict | None
     backend: str = "rules-fallback"
     notes: list[str] = field(default_factory=list)
+    # Explicit skeletal-proportion overrides (§4.3), name → value in the
+    # document's units, emitted only when the writer chose to steer them.
+    # None from the rules fallback, always — it never guesses proportions.
+    proportions: dict | None = None
 
 
 def interpret(

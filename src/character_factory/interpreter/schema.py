@@ -39,6 +39,18 @@ def interpretation_schema() -> dict:
         "minimum": vocab.HAIR_SCHEMA_VERSION,
         "maximum": vocab.HAIR_SCHEMA_VERSION,
     }
+    # Skeletal-proportion overrides (§4.3), optional: integers in
+    # HUNDREDTHS of the document unit (the enforcer constrains closed
+    # integer ranges reliably; float bounds it does not), so 25 here means
+    # 0.25 in the document, and the ±0.40 format bound is exactly ±40.
+    proportions = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            name: {"type": "integer", "minimum": -40, "maximum": 40}
+            for name in vocab.PROPORTION_NAMES
+        },
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -51,5 +63,6 @@ def interpretation_schema() -> dict:
                 "properties": {slot: slot_prompt for slot in vocab.ALL_SLOTS},
             },
             "hair": hair,
+            "proportions": proportions,
         },
     }

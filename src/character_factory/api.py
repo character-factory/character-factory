@@ -55,8 +55,23 @@ def create(
         registry.ensure(base_ref),
         device=device,
     )
-    identity, resting_expression = generator.generate(prompt)
+    generated = generator.generate(prompt)
+    identity = generated.identity
+    resting_expression = generated.resting_expression
     del generator  # release the text encoder before any diffusion loads (§2.2)
+
+    # Skeletal proportions (§4.3): the identity component owns them (it
+    # consumes the raw prompt, like everything identity-class); a writer
+    # backend that explicitly emitted proportion fields overrides per key.
+    # The rules fallback never emits any. Only deviations are recorded:
+    # zero-valued keys are dropped and an all-template result omits the
+    # block entirely.
+    proportions = dict(generated.proportions)
+    if interpretation.proportions:
+        proportions.update(interpretation.proportions)
+    proportions = {
+        key: value for key, value in proportions.items() if value != 0.0
+    }
 
     textures = {}
     for offset, slot in enumerate(sorted(interpretation.slot_prompts), start=1):
@@ -104,6 +119,7 @@ def create(
                 "rig": "mhr-lod1@1.0",
                 "topology": "closed",
                 "identity": identity,
+                **({"proportions": proportions} if proportions else {}),
                 "resting_expression": resting_expression,
             },
             "textures": textures,
@@ -241,7 +257,10 @@ def assemble(
 
     png = io.BytesIO()
     Image.fromarray(albedo).save(png, format="PNG")
-    evaluation = rig.evaluate(character.identity, character.resting_expression)
+    evaluation = rig.evaluate(
+        character.identity, character.resting_expression,
+        proportions=character.proportions or None,
+    )
 
     attachments: list[Attachment] = []
     remove_faces = None

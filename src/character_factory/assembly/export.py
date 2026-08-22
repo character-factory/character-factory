@@ -423,8 +423,10 @@ def export_character_glb(
         parent_node.setdefault("children", []).append(node_index)
 
     # The export manifest: facts about the GLB as an engine deliverable —
-    # a pure function of rig version + exporter constants, identical for
-    # every character on the same rig. It embeds in the asset's extras so
+    # a pure function of rig version, exporter constants, and the
+    # character's skeletal proportions (stature is measured from the
+    # exported geometry, never copied from the document — one source of
+    # truth per fact). It embeds in the asset's extras so
     # the file is self-describing and the manifest can never be separated
     # from the mesh it describes. Character identity, textures, hair, and
     # provenance live in the character document exclusively; nothing from
@@ -438,6 +440,9 @@ def export_character_glb(
         "joint_count": joint_count,
         "rest_knee_flexion_degrees": restpose.KNEE_FLEXION_DEGREES,
         "skeleton_root": rig.metadata["roles"]["world"],
+        "stature_m": round(
+            float(positions[:, 1].max() - positions[:, 1].min()), 4
+        ),
         "humanoid_map": rig.metadata.get("humanoid_map", {}),
         "idle_clip": {
             "name": "idle",
@@ -448,8 +453,9 @@ def export_character_glb(
                        "driven (complete local TRS)",
         },
         "notes": [
-            "Skeletal proportions are uniform in v0.1 — identity varies the "
-            "body surface, not the skeleton; ground contact needs foot IK.",
+            "Proportions vary within six semantic controls; detailed "
+            "segment scales are uniform in v0.1. Ground contact needs "
+            "foot IK.",
             "The rig animates as linear-blend skinning; the generator's own "
             "renders additionally apply learned pose correctives.",
         ],

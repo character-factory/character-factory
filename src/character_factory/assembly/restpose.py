@@ -38,6 +38,13 @@ KNEE_FLEXION_DEGREES = 5.0
 _REFERENCE = np.array([0.0, 0.0, 1.0])   # +Z: invariant under the sagittal mirror
 _FALLBACK = np.array([0.0, 1.0, 0.0])    # +Y: also mirror-invariant
 _PARALLEL_LIMIT = 0.99
+# Bones shorter than this (cm) inherit the parent's direction instead of
+# deriving their own: a micrometer-scale bone amplifies micrometer-scale
+# template asymmetry into degrees of frame deviation, and the amplification
+# varies with skeletal proportions. On the production rig this floors the
+# worst left/right frame deviation at ~0.02° across the whole proportion
+# range (it was 0.35° on the template and rose with leg length).
+_DEGENERATE_BONE_CM = 0.1
 
 
 def quat_to_matrix(q: np.ndarray) -> np.ndarray:
@@ -128,7 +135,8 @@ def reauthor_orientations(skeleton: Skeleton) -> None:
             direction = skeleton.positions[joint] - skeleton.positions[parent]
         norm = np.linalg.norm(direction)
         bone_axes[joint] = (
-            direction / norm if norm > 1e-9 else bone_axes[int(skeleton.parents[joint])]
+            direction / norm if norm > _DEGENERATE_BONE_CM
+            else bone_axes[int(skeleton.parents[joint])]
         )
 
     for joint in range(len(skeleton.parents)):

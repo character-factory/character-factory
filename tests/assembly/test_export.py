@@ -300,3 +300,44 @@ def test_proportion_pose_resolves_named_channels(rig):
     a = rig.evaluate([0.0, 0.0], [0.0, 0.0])
     b = rig.evaluate([0.0, 0.0], [0.0, 0.0], proportions=None)
     assert (a.vertices == b.vertices).all()
+
+
+@real_rig
+def test_real_rig_proportioned_export_passes_acceptance(tmp_path):
+    # The full varied-skeleton matrix: tall, short-broad, long-armed —
+    # deliberately at the ±0.40 format bound. Every export must pass the
+    # complete validator (re-parse, mirror, upright, idle), and stature
+    # must actually move.
+    from character_factory import Character
+    from character_factory.assembly import load_rig
+
+    rig = load_rig(_real_rig_dir())
+    examples = __import__("pathlib").Path(__file__).parents[2] / "examples/characters"
+    character = Character.load(examples / "marathon-runner.char.json")
+
+    statures = {}
+    for label, proportions in (
+        ("tall", {"leg_length": 0.4, "spine_length": 0.4}),
+        ("short_broad", {"leg_length": -0.4, "shoulder_width": 0.4,
+                         "hip_width": 0.4}),
+        ("long_arms", {"arm_length": 0.4}),
+        ("template", None),
+    ):
+        result = export_character_glb(
+            rig, character.identity, character.resting_expression,
+            tmp_path / f"{label}.glb", generator="character-factory/test",
+            evaluation=rig.evaluate(
+                character.identity, character.resting_expression,
+                proportions=proportions,
+            ),
+        )
+        report = validate_glb(result.glb_path.read_bytes(), expected_joints=127)
+        assert report["mirror_worst_deviation_degrees"] < 0.1  # the bone floor
+        assert report["idle_clip_rest_error_mm"] < 1e-3
+        statures[label] = result.manifest["stature_m"]
+
+    # Proportions moved the skeleton: legs+spine at +0.4 ≈ +8 cm; legs at
+    # -0.4 ≈ -4 cm; arm length leaves stature alone.
+    assert statures["tall"] > statures["template"] + 0.06
+    assert statures["short_broad"] < statures["template"] - 0.03
+    assert abs(statures["long_arms"] - statures["template"]) < 0.01

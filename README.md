@@ -55,9 +55,10 @@ Measured numbers, not aspirations (details in
   files with no GPU at all.
 
 One honest scope note: in v0.1, identity drives the face, build, and
-surface form; **skeletal proportions are uniform** — every character
-shares the template skeleton. Ground contact in-engine needs foot IK
-either way.
+surface form, and **skeletal proportions vary within six semantic
+controls** (spine, neck, shoulders, arms, hips, legs — `body.proportions`
+in the character file); the rig's finer per-segment scales stay at
+template values. Ground contact in-engine needs foot IK either way.
 
 Start with [SPEC.md](SPEC.md) if you are judging the format,
 [ARCHITECTURE.md](ARCHITECTURE.md) if you are judging the system, and

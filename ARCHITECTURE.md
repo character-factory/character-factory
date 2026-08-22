@@ -196,6 +196,17 @@ plus the semantic hair block. The edit path is the same protocol: given an
 existing character and "give her a ponytail," the interpreter returns an
 updated hair block and leaves everything else alone.
 
+**Skeletal proportions have a fixed precedence stack.** Proportions are
+identity-class output: the identity component writes them from the raw
+prompt on *every* create, regardless of which interpreter backend ran.
+An interpreter backend may additionally emit explicit proportion fields
+(only on clear signal in the description); when it does, those values
+override the identity component's per key. The rules fallback never
+emits proportion fields — it abstains rather than guesses, so a
+rules-mode create still carries the identity component's proportions,
+never keyword-derived ones. In short: **head writes → interpreter
+overrides per key → rules abstains.**
+
 - **Default backend: a small local model, shipped as a registry component**
   like every other model — a versioned, hash-pinned artifact containing
   quantized weights, the system prompt, few-shot examples, and a decoding
@@ -386,7 +397,15 @@ of conventions chosen so the artifact imports and retargets correctly:
   joint's rest orientation from geometry under one mirror-invariant global
   convention (bone-long axis toward the mean of children; a forward-axis
   reference vector, invariant under the sagittal mirror, orthogonalized
-  against it). Joint *positions* are untouched.
+  against it). Joint *positions* are untouched. Bones shorter than one
+  millimeter inherit the parent's direction instead of deriving their
+  own — a change that re-authored four joints' rest orientations (the
+  foot and wrist-twist pairs, whose child joints sit micrometers away):
+  a near-zero bone amplifies micrometer-scale template asymmetry into
+  degrees of frame deviation, and the amplification varies with skeletal
+  proportions. With the floor, the worst left/right frame deviation is
+  ~0.02° across the entire proportion range (previously 0.35° on the
+  template, rising past the mirror bound on long-legged characters).
 - **A small knee flexion is baked into the exported rest pose** (a
   documented, versioned constant), because a near-straight knee is a
   degenerate hinge that retargeters can resolve backwards. It is applied as
@@ -416,8 +435,9 @@ of conventions chosen so the artifact imports and retargets correctly:
   spec's mechanism for application metadata, ignored by parsers that don't
   read it — so one file is the complete engine deliverable and the
   manifest can never be separated from the mesh it describes. It is a pure
-  function of rig version + exporter constants (identical for every
-  character on the same rig, byte-identical across exports); a sidecar
+  function of rig version, exporter constants, and the character's
+  skeletal proportions (stature is measured from the exported geometry;
+  byte-identical across re-exports of the same character); a sidecar
   `manifest.json` exists only on request, as a projection of the same
   bytes (`GET /v0/characters/{id}/manifest.json`). Boundary: the manifest
   is **export metadata** — facts about the GLB as an engine deliverable.

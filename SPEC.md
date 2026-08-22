@@ -159,6 +159,7 @@ model — no mesh data appears in the file.
 | `rig` | string | yes | The body model and version, as `<model>@<version>`. v0.1 defines exactly one value: `"mhr-lod1@1.0"`. |
 | `topology` | string | yes | Surface topology variant. v0.1 defines exactly one value: `"closed"`. Reserved for extension; see §4.2. |
 | `identity` | array of 45 numbers | yes | MHR identity coefficients, in MHR's native order. Together these determine the body and face shape. |
+| `proportions` | object | no | Skeletal-proportion parameters: rig proportion-parameter name → number, `0.0` meaning the rig's template value. Absent (or empty) means the template skeleton. §4.3. |
 | `resting_expression` | array of 72 numbers | yes | MHR expression coefficients describing the character's *resting* face (for example, natural eyelid posture). Most entries are typically `0.0`. This is part of identity — it is not an animation pose. |
 
 ### 4.1 The `mhr-lod1@1.0` rig
@@ -180,8 +181,12 @@ The character format relies on this: everything index-based (UV layout,
 attachment regions, the topology variant below) is defined against the rig
 version, not against an individual character.
 
-Animation is out of scope for the format. Body pose and non-resting
-expression are runtime inputs to the rig, not properties of a character.
+Animation is out of scope for the format. The rig's 204-value body pose
+vector contains two kinds of channels: articulation (joint rotations —
+runtime inputs, never properties of a character) and **skeletal
+proportions** (segment lengths — identity-class data, carried by
+`proportions`, §4.3). A character file never contains articulation;
+non-resting expression is likewise a runtime input.
 
 ### 4.2 The `topology` reservation
 
@@ -200,6 +205,41 @@ surface. Writers targeting v0.1 MUST emit `"closed"`. Mechanically, the
 variant ships as a new `body-rig` component version plus grown
 `assembly-assets` (the interior meshes are placed by assembly, like the
 eyeballs) — no new texture slot and no new component kind.
+
+### 4.3 `proportions` — skeletal proportions
+
+`proportions` maps rig proportion-parameter names to numbers. For
+`mhr-lod1@1.0` the vocabulary is exactly six semantic controls:
+`spine_length`, `neck_length`, `shoulder_width`, `arm_length`,
+`hip_width`, and `leg_length`. Values are in the rig's native proportion
+parameterization: `0.0` is the template, positive lengthens or widens the
+named dimension (roughly 10 cm per unit for the length controls), and the
+valid range is **±0.40**, compared at float32 — the format's canonical
+parameter precision (§2.1). Out-of-range values are validation errors,
+never clamped. Evaluation is left/right-uniform by construction — the
+vocabulary contains no lateralized parameters. The mapping from these
+names to rig parameters is registry metadata on the rig version,
+alongside the joint-name table; the rig's finer-grained per-segment
+scales are not exposed in v0.1 and remain at template values.
+
+An absent block, an empty block, and an absent key all mean the same
+thing: the template value. Every document without the block therefore
+keeps producing byte-identical output forever.
+
+Readers MUST treat this block like `topology`, not like an optional
+annotation: **a reader that does not understand `proportions`, or
+encounters an unknown key or out-of-range value in it, MUST refuse to
+assemble the document** rather than build the template skeleton — a
+proportioned character silently built on the template skeleton is a
+different character than the file describes. Unknown keys are hard errors
+in every validation mode, with a did-you-mean correction where one is
+close. Writers SHOULD omit the block entirely rather than emit an empty
+object, and SHOULD NOT emit keys carrying `0.0` — only deviations are
+recorded.
+
+Note on the first-party generator: `make-figure` ≥ 0.1.0 authors
+`resting_expression` as exact zeros — that field is unchanged in the
+format; only the generator's behavior changed.
 
 ## 5. `textures` — generation recipes
 
@@ -472,12 +512,16 @@ produce an identical scene, and SHOULD produce a byte-identical scene file.
   the meaning or validity of any document that was valid under an earlier
   minor version of the same major. The anticipated additive path is **named
   secondary maps within existing slots plus conditioning inputs (§5.2,
-  §5.3)** — not new slots.
+  §5.3), and the widening of the skeletal-proportion vocabulary (§4.3) as
+  rig versions expose finer-grained parameters** — not new slots.
 - **Readers** encountering a document with a newer minor version than they
   implement SHOULD process it, ignoring unrecognized optional fields, with
-  two exceptions that are hard errors: an unrecognized `topology` or `rig`
-  value (§4.2), and a recipe carrying `inputs` (§5.3) — a conditioning
-  input ignored is a different image silently built. All three change what
+  three exceptions that are hard errors: an unrecognized `topology` or
+  `rig` value (§4.2), a recipe carrying `inputs` (§5.3) — a conditioning
+  input ignored is a different image silently built — and a
+  `body.proportions` block or key the reader does not implement (§4.3) — a
+  proportioned character silently built on the template skeleton is a
+  different character than the file describes. All of these change what
   the document *builds*, not just what it *records*.
 - **Major version 0 caveat.** While the major version is 0, breaking changes
   may occur between minors; each will ship with a documented migration. From
@@ -494,8 +538,10 @@ vocabulary (including `topology` and `rig`); seed ranges; the
 `color.rgb`/`custom` co-constraint; the optional-slot omission rule (§5);
 singular slot keys, with plural spellings rejected as hard errors naming the
 correction (§5); the albedo requirement and shorthand shapes (§5.2); the
-reserved `inputs` field (§5.3, hard error); and finiteness of all numbers
-(NaN and infinities are invalid everywhere). The reference implementation publishes a
+reserved `inputs` field (§5.3, hard error); the `proportions` vocabulary and
+range (§4.3 — unknown names and out-of-range values are hard errors in every
+mode, with a did-you-mean correction for near-miss names); and finiteness of
+all numbers (NaN and infinities are invalid everywhere). The reference implementation publishes a
 machine-readable JSON Schema for each schema version and exposes validation
 as a library call, a CLI command, and an MCP tool; third parties are
 encouraged to validate against the JSON Schema directly.

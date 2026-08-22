@@ -52,6 +52,42 @@
           "minItems": 45,
           "maxItems": 45
         },
+        "proportions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "spine_length": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            },
+            "neck_length": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            },
+            "shoulder_width": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            },
+            "arm_length": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            },
+            "hip_width": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            },
+            "leg_length": {
+              "type": "number",
+              "minimum": -0.4,
+              "maximum": 0.4
+            }
+          }
+        },
         "resting_expression": {
           "type": "array",
           "items": {

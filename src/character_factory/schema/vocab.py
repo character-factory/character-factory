@@ -17,6 +17,20 @@ TOPOLOGIES = frozenset({"closed"})
 IDENTITY_LENGTH = 45
 RESTING_EXPRESSION_LENGTH = 72
 
+# Skeletal proportions (§4.3): named semantic controls, 0.0 = the rig's
+# template, valid range ±PROPORTION_LIMIT (the generator's calibrated range
+# becomes the format's validity bound — out of range is an error, never a
+# clamp). The mapping to rig parameters is registry metadata, not spec.
+PROPORTION_NAMES = (
+    "spine_length",
+    "neck_length",
+    "shoulder_width",
+    "arm_length",
+    "hip_width",
+    "leg_length",
+)
+PROPORTION_LIMIT = 0.40
+
 REQUIRED_SLOTS = ("skin", "eye", "garment")
 OPTIONAL_SLOTS = ("shoe",)
 ALL_SLOTS = REQUIRED_SLOTS + OPTIONAL_SLOTS

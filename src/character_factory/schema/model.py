@@ -46,6 +46,12 @@ def _normalize_float32(document: dict) -> None:
         values = body.get(key)
         if isinstance(values, list):
             body[key] = [float32_value(v) for v in values]
+    proportions = body.get("proportions")
+    if isinstance(proportions, dict):
+        body["proportions"] = {
+            key: (float32_value(value) if isinstance(value, (int, float)) else value)
+            for key, value in proportions.items()
+        }
     hair = document.get("hair")
     if isinstance(hair, dict):
         rgb = hair.get("color", {}).get("rgb") if isinstance(hair.get("color"), dict) else None
@@ -157,6 +163,11 @@ class Character:
     @property
     def identity(self) -> list[float]:
         return list(self._document["body"]["identity"])
+
+    @property
+    def proportions(self) -> dict:
+        """Skeletal proportions (§4.3); {} means the template skeleton."""
+        return dict(self._document["body"].get("proportions", {}))
 
     @property
     def resting_expression(self) -> list[float]:

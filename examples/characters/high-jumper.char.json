@@ -1,7 +1,7 @@
 {
   "format": "character-factory/character",
   "schema_version": "0.1",
-  "name": "marathon-runner",
+  "name": "high-jumper",
   "body": {
     "rig": "mhr-lod1@1.0",
     "topology": "closed",
@@ -53,8 +53,9 @@
       -0.3418000042438507
     ],
     "proportions": {
-      "leg_length": 0.24,
-      "hip_width": -0.06
+      "leg_length": 0.34,
+      "spine_length": 0.12,
+      "hip_width": -0.08
     },
     "resting_expression": [
       0.0,
@@ -135,8 +136,8 @@
     "skin": {
       "component": "make-skin",
       "component_version": "0.1.0",
-      "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
-      "seed": 41002
+      "prompt": "deep warm-toned skin, early-20s feminine-presenting adult, focused calm expression, high cheekbones, athletic lean build",
+      "seed": 51001
     },
     "eye": {
       "component": "make-eye",
@@ -147,8 +148,8 @@
     "garment": {
       "component": "make-garment",
       "component_version": "0.1.0",
-      "prompt": "teal running vest and black shorts, white piping",
-      "seed": 41004
+      "prompt": "streamlined cobalt athletics singlet and briefs, technical knit fabric, minimal seams, competition number panel on the chest",
+      "seed": 51002
     },
     "shoe": {
       "component": "make-shoe",
@@ -199,7 +200,7 @@
     }
   },
   "provenance": {
-    "prompt": "a lean marathon runner with cropped dark hair and green eyes, teal running vest, white running shoes",
+    "prompt": "a long-legged high jumper in a cobalt singlet, shaved-side dark hair, green eyes",
     "generator": "character-factory/0.1.0.dev0",
     "components": {
       "interpreter": {

@@ -170,6 +170,18 @@ def build_json_schema() -> dict:
                     "rig": _enum(vocab.RIGS),
                     "topology": _enum(vocab.TOPOLOGIES),
                     "identity": _float_array(vocab.IDENTITY_LENGTH),
+                    "proportions": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            name: {
+                                "type": "number",
+                                "minimum": -vocab.PROPORTION_LIMIT,
+                                "maximum": vocab.PROPORTION_LIMIT,
+                            }
+                            for name in vocab.PROPORTION_NAMES
+                        },
+                    },
                     "resting_expression": _float_array(vocab.RESTING_EXPRESSION_LENGTH),
                 },
             },

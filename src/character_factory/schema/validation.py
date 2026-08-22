@@ -129,7 +129,11 @@ class _Checker:
         if not isinstance(body, dict):
             self.error("body", "must be an object")
             return
-        self.check_keys(body, {"rig", "topology", "identity", "resting_expression"}, "body")
+        self.check_keys(
+            body,
+            {"rig", "topology", "identity", "proportions", "resting_expression"},
+            "body",
+        )
         # rig/topology: unrecognized values are hard errors in every mode.
         rig = self.expect_str(body, "rig", "body")
         if rig is not None and rig not in vocab.RIGS:
@@ -143,6 +147,51 @@ class _Checker:
         self.expect_float_array(
             body, "resting_expression", vocab.RESTING_EXPRESSION_LENGTH, "body"
         )
+        if "proportions" in body:
+            self.check_proportions(body["proportions"])
+
+    def check_proportions(self, proportions: object) -> None:
+        """§4.3: every issue here is a hard error in every mode — like
+        `topology` and `inputs`, a proportion misread changes what the
+        document *builds*: a proportioned character silently assembled on
+        the template skeleton is a different character than the file
+        describes."""
+        if not isinstance(proportions, dict):
+            self.error("body.proportions", "must be an object")
+            return
+        for key, value in proportions.items():
+            path = f"body.proportions.{key}"
+            if key not in vocab.PROPORTION_NAMES:
+                import difflib
+
+                close = difflib.get_close_matches(
+                    key, vocab.PROPORTION_NAMES, n=1, cutoff=0.6
+                )
+                hint = f" — did you mean {close[0]!r}?" if close else ""
+                self.error(
+                    path,
+                    f"unknown proportion parameter{hint} (a proportion "
+                    f"ignored is a different skeleton than the document "
+                    f"describes)",
+                )
+                continue
+            if not self.expect_number(value, path):
+                continue
+            # Compared at float32 — the format's canonical parameter
+            # precision — so a canonicalized boundary value (float32(0.40)
+            # is a hair above the decimal 0.40) round-trips as valid.
+            import struct
+
+            def _f32(v: float) -> float:
+                return struct.unpack("f", struct.pack("f", v))[0]
+
+            if abs(_f32(float(value))) > _f32(vocab.PROPORTION_LIMIT):
+                self.error(
+                    path,
+                    f"out of range: |{float(value)}| exceeds the valid range "
+                    f"±{vocab.PROPORTION_LIMIT} (out-of-range values are "
+                    f"errors, never clamped)",
+                )
 
     def check_recipe(self, recipe: object, path: str) -> None:
         if not isinstance(recipe, dict):

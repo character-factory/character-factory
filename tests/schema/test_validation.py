@@ -92,6 +92,64 @@ def test_bad_parameter_values(doc, bad):
     assert errors_at(validate_document(doc), "body.identity[3]")
 
 
+# --- body.proportions (§4.3) -------------------------------------------------
+
+
+def test_absent_proportions_block_is_valid_and_strict(doc):
+    # The pre-proportions corpus: absent block = template skeleton, valid
+    # forever in both modes.
+    assert "proportions" not in doc["body"]
+    assert validate_document(doc, strict=True).ok
+
+
+def test_proportioned_document_is_valid(doc):
+    doc["body"]["proportions"] = {"leg_length": 0.25, "shoulder_width": -0.1}
+    report = validate_document(doc, strict=True)
+    assert report.ok and not report.warnings
+
+
+def test_empty_proportions_block_is_valid(doc):
+    # Same meaning as absent (writers should omit it; readers accept it).
+    doc["body"]["proportions"] = {}
+    assert validate_document(doc, strict=True).ok
+
+
+@pytest.mark.parametrize("value", [0.41, -0.41, 1.0, -7.5])
+def test_out_of_range_proportion_is_hard_error_in_both_modes(doc, value):
+    doc["body"]["proportions"] = {"leg_length": value}
+    assert errors_at(validate_document(doc), "body.proportions.leg_length")
+    assert errors_at(
+        validate_document(doc, strict=True), "body.proportions.leg_length"
+    )
+
+
+def test_unknown_proportion_key_is_hard_error_with_suggestion(doc):
+    # Topology-class: a proportion ignored is a different skeleton, so this
+    # errors in BOTH modes (unlike ordinary unknown optional fields).
+    doc["body"]["proportions"] = {"leg_lenght": 0.2}
+    default = errors_at(validate_document(doc), "body.proportions.leg_lenght")
+    assert default and "leg_length" in str(default[0])
+    assert errors_at(
+        validate_document(doc, strict=True), "body.proportions.leg_lenght"
+    )
+
+
+@pytest.mark.parametrize("bad", [True, "0.2", None, float("nan"), float("inf")])
+def test_bad_proportion_values(doc, bad):
+    doc["body"]["proportions"] = {"hip_width": bad}
+    assert errors_at(validate_document(doc), "body.proportions.hip_width")
+
+
+def test_proportions_must_be_an_object(doc):
+    doc["body"]["proportions"] = [0.1] * 6
+    assert errors_at(validate_document(doc), "body.proportions")
+
+
+def test_boundary_proportion_values_are_valid(doc):
+    doc["body"]["proportions"] = {"arm_length": 0.4, "neck_length": -0.4}
+    assert validate_document(doc, strict=True).ok
+
+
 # --- textures ------------------------------------------------------------------
 
 
@@ -301,3 +359,16 @@ def test_character_constructor_raises_with_report(doc):
     with pytest.raises(CharacterError) as excinfo:
         Character.from_document(doc)
     assert any("identity" in issue.path for issue in excinfo.value.report.errors)
+
+
+def test_boundary_proportion_round_trips_through_canonicalization(doc):
+    # float32(0.40) is a hair above decimal 0.40; a canonicalized document
+    # carrying it must reload as valid (the bound compares at float32, the
+    # format's canonical parameter precision).
+    import json as _json
+
+    doc["body"]["proportions"] = {"arm_length": 0.4}
+    first = Character.from_document(doc)
+    reloaded = _json.loads(_json.dumps(first.to_document()))
+    assert validate_document(reloaded, strict=True).ok
+    assert Character.from_document(reloaded).content_id == first.content_id

@@ -83,11 +83,24 @@ button:disabled { opacity: .45; cursor: default; }
 .lb-stage { flex: 1; position: relative; min-width: 0; }
 .lb-stage canvas { display: block; }
 .lb-close { position: absolute; top: 12px; left: 12px; z-index: 2; }
+.lb-info { position: absolute; top: 12px; right: 12px; z-index: 2; }
 .lb-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
   color: var(--faint); }
+.lb-spinner { position: absolute; top: 50%; left: 50%; width: 42px; height: 42px;
+  margin: -21px 0 0 -21px; border: 3px solid var(--line);
+  border-top-color: var(--accent); border-radius: 50%; z-index: 1;
+  animation: lbspin .9s linear infinite; }
+@keyframes lbspin { to { transform: rotate(360deg); } }
+/* The detail rail is hidden by default (toggled by the ⓘ button); on
+   narrow screens it overlays the stage instead of squeezing it away. */
 .lb-rail { width: 330px; flex: none; border-left: 1px solid var(--line);
-  padding: 14px; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; display: none; flex-direction: column; gap: 10px;
   overflow-y: auto; background: var(--bg); }
+.lightbox.rail-open .lb-rail { display: flex; }
+@media (max-width: 700px) {
+  .lb-rail { position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(330px, 88vw); z-index: 4; box-shadow: -12px 0 30px rgba(0,0,0,.5); }
+}
 .lb-prompt { color: var(--dim); font-size: 13px; margin: 0; }
 .lb-textures { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .lb-textures figure { margin: 0; text-align: center; }
@@ -135,6 +148,8 @@ button:disabled { opacity: .45; cursor: default; }
 <div class="lightbox" id="lightbox" hidden>
   <div class="lb-stage" id="stage">
     <button class="lb-close" id="lb-close">✕ close</button>
+    <button class="lb-info" id="lb-info">ⓘ details</button>
+    <div class="lb-spinner" id="lb-spinner" hidden></div>
     <div class="lb-hint mono">drag to orbit · scroll to zoom</div>
   </div>
   <aside class="lb-rail">
@@ -189,12 +204,10 @@ function tile(row) {
   const working = !['built', 'stored', 'error'].includes(row.status);
   if (row.has_scene || row.status === 'built' || row.status === 'error' || working) {
     div.className = 'tile';
-    // The face lives in the top-left quadrant of the skin atlas — a cheap
-    // portrait until real thumbnails exist.
+    // The rendered portrait, written by the server when assembly completes
+    // (a 404 for not-yet-thumbnailed characters just leaves the tile card).
     div.style.backgroundImage =
-      `url(/v0/characters/${row.id}/assets/skin.png?rev=${row.revision})`;
-    div.style.backgroundSize = '200% 200%';
-    div.style.backgroundPosition = 'top left';
+      `url(/v0/characters/${row.id}/thumbnail.png?rev=${row.revision})`;
   } else {
     div.className = 'tile pending';
     div.textContent = row.status;
@@ -273,19 +286,34 @@ function resize() {
 }
 new ResizeObserver(resize).observe($('stage'));
 
+// Never show the previously loaded character while a new one downloads:
+// the stage is cleared immediately and a spinner holds it until the right
+// scene arrives (the token drops loads that finish out of order).
+let loadToken = 0;
+function clearStage(spinning) {
+  if (model) { scene.remove(model); model = null; }
+  mixer = null;
+  $('lb-spinner').hidden = !spinning;
+}
 function loadScene(row) {
   openRevision = row.revision;
+  const token = ++loadToken;
+  clearStage(true);
   new GLTFLoader().load(`/v0/characters/${row.id}/scene.glb?rev=${row.revision}`, g => {
-    if (model) scene.remove(model);
+    if (token !== loadToken || open !== row.id) return;   // stale load
     model = g.scene; scene.add(model);
     mixer = new THREE.AnimationMixer(model);
     g.animations.forEach(c => mixer.clipAction(c).play());  // the baked idle
+    $('lb-spinner').hidden = true;
   });
 }
 
 async function openLightbox(id) {
   open = id; openRevision = -1;
   $('lightbox').hidden = false;
+  $('lightbox').classList.remove('rail-open');   // details hidden by default
+  const listedRow = rows.find(r => r.id === id);
+  clearStage(listedRow ? listedRow.status !== 'error' : true);
   resize();
   $('lb-id').textContent = id;
   const listed = rows.find(r => r.id === id);
@@ -311,6 +339,7 @@ async function openLightbox(id) {
 }
 function closeLightbox() { open = null; $('lightbox').hidden = true; }
 $('lb-close').onclick = closeLightbox;
+$('lb-info').onclick = () => $('lightbox').classList.toggle('rail-open');
 addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 async function rebuild(stage) {

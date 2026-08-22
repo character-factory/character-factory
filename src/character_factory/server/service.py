@@ -381,11 +381,31 @@ class CharacterService:
                 state.update(status="error", detail=str(error))
                 self._write_state(directory, state)
                 raise ServiceError(str(error)) from error
+            self._write_thumbnail(directory)
             state.update(
                 status="built", detail=None, revision=state.get("revision", 0) + 1
             )
             self._write_state(directory, state)
         return self.get(character_id)
+
+    def _write_thumbnail(self, directory: Path) -> None:
+        """Render the gallery portrait from the just-built scene. Best-effort:
+        a thumbnail failure must never fail an assembly."""
+        try:
+            from character_factory.assembly.thumbnail import render_thumbnail
+
+            png = render_thumbnail((directory / "scene.glb").read_bytes())
+            (directory / "thumb.png").write_bytes(png)
+        except Exception:  # noqa: BLE001 - cosmetic artifact, never fatal
+            pass
+
+    def thumbnail_path(self, character_id: str) -> Path:
+        path = self._dir(character_id) / "thumb.png"
+        if not path.is_file():
+            raise ServiceError(
+                f"character {character_id} has no thumbnail yet"
+            )
+        return path
 
     def health(self) -> dict:
         report: dict = {"library": str(self.library_dir), "characters": len(self.list())}

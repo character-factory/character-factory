@@ -290,3 +290,14 @@ def test_v0_index_links_to_docs(client):
     assert index["openapi"] == "/v0/openapi.json"
     # And the interactive docs page itself serves.
     assert client.get("/v0/docs").status_code == 200
+
+
+def test_thumbnail_route_missing_is_400_then_serves(client, service, stored, tmp_path):
+    # No thumbnail yet: a clear 400, not a broken image.
+    assert client.get(f"/v0/characters/{stored.id}/thumbnail.png").status_code == 400
+    # Once one exists (assembly writes it best-effort), the route serves it.
+    directory = service.library_dir / stored.id
+    (directory / "thumb.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    response = client.get(f"/v0/characters/{stored.id}/thumbnail.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"

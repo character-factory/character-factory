@@ -238,6 +238,12 @@ def create_app(service: CharacterService):
         return FileResponse(service.asset_path(character_id, slot),
                             media_type="image/png")
 
+    @app.get("/v0/characters/{character_id}/thumbnail.png",
+             responses=_ERROR_400)
+    async def get_thumbnail(character_id: str):
+        return FileResponse(service.thumbnail_path(character_id),
+                            media_type="image/png")
+
     @app.post(
         "/v0/characters/{character_id}/rebuild",
         responses={200: _RECORD_OK, **_ERROR_400},

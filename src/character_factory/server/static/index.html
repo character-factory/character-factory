@@ -141,6 +141,9 @@ button:disabled { opacity: .45; cursor: default; }
     <label class="chip">writer
       <select id="interpreter"><option value="">auto</option></select>
     </label>
+    <label class="chip" title="Bake textures on the fast distilled base — speed over fidelity">
+      <input type="checkbox" id="turbo"> turbo
+    </label>
     <span class="bar-note" id="note"></span>
   </div>
 </div></div>
@@ -246,6 +249,7 @@ $('create').onclick = async () => {
   if (!prompt) return;
   const body = { prompt };
   if ($('interpreter').value) body.interpreter = $('interpreter').value;
+  if ($('turbo').checked) body.turbo = true;
   $('create').disabled = true;
   $('note').textContent = 'creating (the writer and identity run first)…';
   try {

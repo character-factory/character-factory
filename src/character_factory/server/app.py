@@ -191,6 +191,14 @@ def create_app(service: CharacterService):
                                        "GET /v0/interpreters; omit for the "
                                        "configured default.",
                     },
+                    "turbo": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Bake textures on the fast distilled "
+                                       "base variant (speed over fidelity). "
+                                       "A bake-time option; not recorded in "
+                                       "the character document.",
+                    },
                 },
             }}}}},
     )
@@ -199,7 +207,8 @@ def create_app(service: CharacterService):
             return record_json(service.store_character(payload["character"]))
         if "prompt" in payload:
             return record_json(service.create_from_prompt(
-                payload["prompt"], interpreter=payload.get("interpreter")
+                payload["prompt"], interpreter=payload.get("interpreter"),
+                turbo=bool(payload.get("turbo", False)),
             ))
         raise ServiceError('the body must contain "character" or "prompt"')
 
@@ -256,6 +265,10 @@ def create_app(service: CharacterService):
                     "description": '"assemble" rebuilds the scene from stored '
                                    'assets; "bake" re-runs the stored texture '
                                    "recipes first.",
+                }, "turbo": {
+                    "type": "boolean", "default": False,
+                    "description": "For \"bake\": use the fast distilled "
+                                   "base variant.",
                 }},
             }}}}},
     )
@@ -269,7 +282,9 @@ def create_app(service: CharacterService):
             )
             return record_json(record)
         if stage == "bake":
-            return record_json(service.regenerate(character_id))
+            return record_json(service.regenerate(
+                character_id, turbo=bool(payload.get("turbo", False))
+            ))
         raise ServiceError(f'unknown rebuild stage {stage!r}')
 
     @app.delete("/v0/characters/{character_id}", status_code=204)

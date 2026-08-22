@@ -47,6 +47,14 @@ def make_registry(tmp_path):
             {
                 "name": "test-base", "version": "1.0.0", "kind": "base-model",
                 "requires": {"schema": ">=0.1 <1.0"}, "artifacts": [], "source": None,
+                "turbo_variant": "test-base-fast",
+            },
+            {
+                "name": "test-base-fast", "version": "1.0.0",
+                "kind": "base-model",
+                "requires": {"schema": ">=0.1 <1.0"}, "artifacts": [],
+                "source": None,
+                "inference": {"steps": 4, "guidance": 1.0},
             },
         ],
     }
@@ -244,3 +252,56 @@ def test_shaft_clause_template_resolves_from_the_chart(environment, tmp_path, do
          pipeline_factory=lambda base_dir, device: fake)
     shoe_call = next(c for c in fake.calls if c["prompt"].startswith("shoe"))
     assert "no upper strip" in shoe_call["prompt"]
+
+
+def test_turbo_swaps_base_and_sampling_regime(environment, tmp_path):
+    # Turbo bakes on the base's declared fast variant, with that variant's
+    # steps/guidance replacing each adapter's — templates, prompts, seeds,
+    # and resolution untouched.
+    fake, registry, character = environment
+    factory_dirs = []
+
+    def factory(base_dir, device):
+        factory_dirs.append(base_dir)
+        return fake
+
+    bake(character, tmp_path / "assets", registry=registry,
+         pipeline_factory=factory, device="cpu", turbo=True)
+    assert len(factory_dirs) == 1
+    assert factory_dirs[0].name == "1.0.0"
+    assert "test-base-fast" in str(factory_dirs[0])
+    for call in fake.calls:
+        assert call["steps"] == 4 and call["guidance"] == 1.0
+        assert call["resolution"] == 64          # adapter data, not regime
+
+
+def test_turbo_without_declared_variant_is_a_clear_error(environment, tmp_path):
+    fake, registry, character = environment
+    entry = registry.index.get("test-base")
+    del entry.document["turbo_variant"]
+    with pytest.raises(ValueError, match="turbo variant"):
+        bake(character, tmp_path / "assets", registry=registry,
+             pipeline_factory=lambda d, dev: fake, device="cpu", turbo=True)
+
+
+def test_recipe_overrides_beat_turbo_regime(environment, tmp_path, doc):
+    fake, registry, _ = environment
+    doc["textures"]["skin"]["overrides"] = {"steps": 9}
+    character = Character.from_document(doc)
+    bake(character, tmp_path / "assets", registry=registry,
+         pipeline_factory=lambda d, dev: fake, device="cpu", turbo=True)
+    by_steps = sorted(call["steps"] for call in fake.calls)
+    assert 9 in by_steps                          # the explicit override won
+    assert all(steps in (4, 9) for steps in by_steps)
+
+
+def test_default_bake_is_unchanged_by_turbo_metadata(environment, tmp_path):
+    # turbo=False never touches the variant: adapters' declared regime runs.
+    fake, registry, character = environment
+    dirs = []
+    bake(character, tmp_path / "assets", registry=registry,
+         pipeline_factory=lambda d, dev: dirs.append(d) or fake,
+         device="cpu", turbo=False)
+    assert "test-base-fast" not in str(dirs[0])
+    assert all(call["steps"] == 7 and call["guidance"] == 3.0
+               for call in fake.calls)

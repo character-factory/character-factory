@@ -145,7 +145,8 @@ class CharacterService:
         return self.get(character_id)
 
     def create_from_prompt(
-        self, prompt: str, interpreter: str | None = None
+        self, prompt: str, interpreter: str | None = None,
+        turbo: bool = False,
     ) -> CharacterRecord:
         """Full make: create the character file now (interpretation +
         deterministic identity), then bake + assemble in a background job.
@@ -183,11 +184,12 @@ class CharacterService:
         state.update(status="queued", detail="waiting for the generation worker")
         self._write_state(directory, state)
         threading.Thread(
-            target=self._run_generation, args=(record.id,), daemon=True
+            target=self._run_generation, args=(record.id, turbo), daemon=True
         ).start()
         return self.get(record.id)
 
-    def regenerate(self, character_id: str) -> CharacterRecord:
+    def regenerate(self, character_id: str,
+                   turbo: bool = False) -> CharacterRecord:
         """Re-run bake + assemble for a stored character (its recipes are
         unchanged; component updates and template changes take effect)."""
         directory = self._dir(character_id)
@@ -195,11 +197,11 @@ class CharacterService:
         state.update(status="queued", detail="waiting for the generation worker")
         self._write_state(directory, state)
         threading.Thread(
-            target=self._run_generation, args=(character_id,), daemon=True
+            target=self._run_generation, args=(character_id, turbo), daemon=True
         ).start()
         return self.get(character_id)
 
-    def _run_generation(self, character_id: str) -> None:
+    def _run_generation(self, character_id: str, turbo: bool = False) -> None:
         from character_factory.textures import bake
 
         directory = self.library_dir / character_id
@@ -211,7 +213,7 @@ class CharacterService:
                 character = Character.load(directory / "character.char.json")
                 baked = bake(
                     character, directory / "assets",
-                    registry=self.registry, device=self.device,
+                    registry=self.registry, device=self.device, turbo=turbo,
                 )
                 baked.character.save(directory / "character.char.json")
             except Exception as error:  # noqa: BLE001 - job state must record it

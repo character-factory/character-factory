@@ -28,19 +28,43 @@ class BakeResult:
 
 
 class TextureBaker:
-    """Runs one adapter per slot against a shared base pipeline."""
+    """Runs one adapter per slot against a shared base pipeline.
+
+    `turbo` swaps the adapters' declared base model for the fast variant
+    the base's registry entry names (`turbo_variant` — a distilled
+    sibling), and adopts that variant's declared sampling regime (its
+    `inference` steps/guidance) in place of each adapter's. The adapters
+    themselves are unchanged; explicit recipe overrides still win.
+    """
 
     def __init__(self, registry: Registry, device: str = "cuda",
-                 pipeline_factory=None):
+                 pipeline_factory=None, turbo: bool = False):
         self.registry = registry
         self.device = device
+        self.turbo = turbo
         self._pipeline_factory = pipeline_factory or _default_pipeline_factory
         self._pipeline = None
+        self._turbo_overrides: dict = {}
 
     def _pipeline_for(self, entry: ComponentEntry):
         if self._pipeline is None:
             base_ref = entry.document.get("requires", {}).get("base_model")
-            base_dir = self.registry.ensure(base_ref)
+            if self.turbo:
+                base_entry = self.registry.get(base_ref)
+                turbo_ref = base_entry.document.get("turbo_variant")
+                if not turbo_ref:
+                    raise ValueError(
+                        f"base model {base_ref!r} declares no turbo variant"
+                    )
+                turbo_entry = self.registry.get(turbo_ref)
+                inference = turbo_entry.document.get("inference", {}) or {}
+                self._turbo_overrides = {
+                    key: inference[key]
+                    for key in ("steps", "guidance") if key in inference
+                }
+                base_dir = self.registry.ensure(turbo_entry.ref)
+            else:
+                base_dir = self.registry.ensure(base_ref)
             self._pipeline = self._pipeline_factory(base_dir, self.device)
         return self._pipeline
 
@@ -73,7 +97,11 @@ class TextureBaker:
         adapter_dir = self.registry.ensure(entry.ref)
         pipeline = self._pipeline_for(entry)
 
-        inference = {**entry.inference, **recipe.get("overrides", {})}
+        inference = {
+            **entry.inference,
+            **self._turbo_overrides,
+            **recipe.get("overrides", {}),
+        }
         template = inference.get("prompt_template", "{prompt}")
         resolution = inference.get("resolution", 1024)
         fields = {"prompt": recipe["prompt"]}
@@ -113,12 +141,18 @@ def bake(
     registry: Registry | None = None,
     device: str = "cuda",
     pipeline_factory=None,
+    turbo: bool = False,
 ) -> BakeResult:
     """Bake every texture slot in the character; write `<slot>.png` files and
-    return the character with its `assets` block pinned to what was written."""
+    return the character with its `assets` block pinned to what was written.
+
+    `turbo` is a bake-time speed/quality trade (like quantization): the
+    fast distilled base variant with its own sampling regime. It is not
+    recorded in the character document — recipes stay the recipes."""
     out_dir = Path(out_dir)
     registry = registry or Registry.default()
-    baker = TextureBaker(registry, device=device, pipeline_factory=pipeline_factory)
+    baker = TextureBaker(registry, device=device,
+                         pipeline_factory=pipeline_factory, turbo=turbo)
 
     # v0.1 bakes each slot's albedo map; the flat asset descriptor is the
     # albedo shorthand (SPEC.md §5.2, §8). Albedo files are named <slot>.png;

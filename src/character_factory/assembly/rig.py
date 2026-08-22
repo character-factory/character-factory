@@ -69,20 +69,47 @@ class RigDefinition:
                 members.add(index)
         return sorted(members)
 
+    def proportion_pose(self, proportions: dict) -> "np.ndarray":
+        """Resolve named skeletal-proportion parameters into a full pose
+        vector via the rig metadata's proportion table. The articulation
+        channels stay zero — proportions are the only pose channels a
+        character document may set. Unknown names are errors: a proportion
+        ignored is a different skeleton than the document describes."""
+        import numpy as np
+
+        table = self.metadata.get("proportions", {}).get("parameters", {})
+        pose = np.zeros(self.metadata["topology"]["pose_size"], dtype=np.float64)
+        for name, value in proportions.items():
+            entry = table.get(name)
+            if entry is None:
+                raise ValueError(
+                    f"unknown proportion parameter {name!r} for this rig"
+                )
+            pose[int(entry["channel"])] = float(value)
+        return pose
+
     def evaluate(
         self,
         identity: list[float],
         resting_expression: list[float],
+        proportions: dict | None = None,
     ) -> "RigEvaluation":
-        """Rest-pose evaluation: the character's identity and resting face,
-        zero body pose. Deterministic; CPU-capable."""
+        """Rest-pose evaluation: the character's identity, resting face, and
+        skeletal proportions (template when absent), zero articulation.
+        Deterministic; CPU-capable."""
         import torch
 
         topology = self.metadata["topology"]
+        if proportions:
+            pose = torch.tensor(
+                [self.proportion_pose(proportions)], dtype=torch.float32
+            )
+        else:
+            pose = torch.zeros(1, topology["pose_size"])
         with torch.no_grad():
             verts, skeleton = self.model(
                 torch.tensor([identity], dtype=torch.float32),
-                torch.zeros(1, topology["pose_size"]),
+                pose,
                 torch.tensor([resting_expression], dtype=torch.float32),
             )
         return RigEvaluation(

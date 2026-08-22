@@ -132,6 +132,12 @@ def make_rig(vertex_joints=None, vertex_weights=None) -> RigDefinition:
             "right_knee": "r_lowleg",
             "head": "c_head",
         },
+        "proportions": {
+            "parameters": {
+                "leg_length": {"channel": 1, "range": [-2.0, 2.0]},
+                "spine_length": {"channel": 2, "range": [-2.0, 2.0]},
+            },
+        },
     }
     return RigDefinition(
         model=FakeRigModel(VERTICES, skeleton),

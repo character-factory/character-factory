@@ -284,3 +284,19 @@ def test_real_rig_export_passes_acceptance(tmp_path):
     covered = mapped | {humanoid["jaw"]["joint"]} | unmapped
     assert covered == joint_names
     assert len(mapped) + 1 + len(unmapped) == len(joint_names)
+
+
+def test_proportion_pose_resolves_named_channels(rig):
+    # Inert plumbing for the proportions schema event: named parameters
+    # resolve through the rig metadata table into pose channels;
+    # articulation channels stay zero; unknown names are hard errors (a
+    # proportion ignored is a different skeleton).
+    pose = rig.proportion_pose({"leg_length": 0.9, "spine_length": -0.4})
+    assert pose[1] == 0.9 and pose[2] == -0.4
+    assert (pose[[0]] == 0).all() and pose.shape == (3,)
+    with pytest.raises(ValueError, match="unknown proportion"):
+        rig.proportion_pose({"leg_lenght": 1.0})
+    # evaluate() without proportions is the template path, unchanged.
+    a = rig.evaluate([0.0, 0.0], [0.0, 0.0])
+    b = rig.evaluate([0.0, 0.0], [0.0, 0.0], proportions=None)
+    assert (a.vertices == b.vertices).all()

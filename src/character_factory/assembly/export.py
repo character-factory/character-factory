@@ -448,8 +448,8 @@ def export_character_glb(
                        "driven (complete local TRS)",
         },
         "notes": [
-            "Proportions are per-character and not normalized; ground contact "
-            "needs foot IK.",
+            "Skeletal proportions are uniform in v0.1 — identity varies the "
+            "body surface, not the skeleton; ground contact needs foot IK.",
             "The rig animates as linear-blend skinning; the generator's own "
             "renders additionally apply learned pose correctives.",
         ],

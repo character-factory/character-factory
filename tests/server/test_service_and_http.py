@@ -242,3 +242,51 @@ def test_manifest_route_serves_the_embedded_extras(client, service, stored):
     response = client.get(f"/v0/characters/{stored.id}/manifest.json")
     assert response.status_code == 400
     assert "no built scene" in response.json()["error"]
+
+
+def test_components_carry_an_active_marker(client):
+    rows = client.get("/v0/components").json()
+    assert all("active" in row for row in rows)
+    # Exactly one active version per component name that has any.
+    by_name: dict = {}
+    for row in rows:
+        by_name.setdefault(row["name"], []).append(row)
+    for name, versions in by_name.items():
+        active = [row for row in versions if row["active"]]
+        assert len(active) == 1, f"{name}: {len(active)} active versions"
+        # The active one is the newest listed (unpinned resolution).
+        newest = max(versions,
+                     key=lambda r: tuple(int(p) for p in r["version"].split(".")))
+        assert active[0]["version"] == newest["version"]
+
+
+def test_openapi_schemas_are_real(client):
+    spec = client.get("/v0/openapi.json").json()
+    schemas = spec["components"]["schemas"]
+    # The character document schema is the published JSON Schema, injected
+    # as-is — one source of truth.
+    assert schemas["CharacterDocument"]["properties"]["format"]["const"] == (
+        "character-factory/character"
+    )
+    for name in ("CharacterRecord", "ValidationReport", "Component",
+                 "Interpreter", "Health", "Error"):
+        assert name in schemas
+    # Key routes reference real response schemas — no bare `{}` bodies.
+    listing = spec["paths"]["/v0/characters"]["get"]["responses"]["200"]
+    assert listing["content"]["application/json"]["schema"]["items"]["$ref"] \
+        == "#/components/schemas/CharacterRecord"
+    create = spec["paths"]["/v0/characters"]["post"]
+    body = create["requestBody"]["content"]["application/json"]["schema"]
+    assert body["properties"]["character"]["$ref"] \
+        == "#/components/schemas/CharacterDocument"
+    validate = spec["paths"]["/v0/validate"]["post"]["responses"]["200"]
+    assert validate["content"]["application/json"]["schema"]["$ref"] \
+        == "#/components/schemas/ValidationReport"
+
+
+def test_v0_index_links_to_docs(client):
+    index = client.get("/v0").json()
+    assert index["docs"] == "/v0/docs"
+    assert index["openapi"] == "/v0/openapi.json"
+    # And the interactive docs page itself serves.
+    assert client.get("/v0/docs").status_code == 200

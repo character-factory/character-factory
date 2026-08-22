@@ -602,7 +602,10 @@ character and seeds per mode:
 
 The pipeline loads the base model once and swaps ~90 MB adapters between
 slots, and identity generation reuses the same text encoder, so the floor
-is set by the base model, not by the number of components. The
+is set by the base model, not by the number of components. On
+Ada-generation and newer NVIDIA hardware, fp8 weight formats should bring
+the full-precision footprint down further; that is anticipated but
+unmeasured, and no number is claimed for it in v0. The
 interpreter does not raise the floor: it runs first and releases its VRAM
 before the diffusion stack loads (or runs CPU-only) — the two are never
 resident together.

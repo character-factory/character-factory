@@ -293,8 +293,18 @@ class CharacterService:
         return available_backends()
 
     def components(self) -> list[dict]:
+        # `active` marks the version that unpinned resolution picks today —
+        # the one a new create uses. Older versions remain listed because
+        # stored recipes may still pin them.
+        index = self.registry.index
+        active: set[str] = set()
+        for name in {entry.name for entry in index.entries}:
+            try:
+                active.add(index.get(name).ref)
+            except Exception:  # noqa: BLE001 - no compatible version: none active
+                pass
         rows = []
-        for entry in self.registry.index.entries:
+        for entry in index.entries:
             rows.append(
                 {
                     "name": entry.name,
@@ -302,6 +312,7 @@ class CharacterService:
                     "kind": entry.kind,
                     "slot": entry.slot,
                     "published": entry.source is not None,
+                    "active": entry.ref in active,
                     "vocabulary": entry.vocabulary,
                 }
             )

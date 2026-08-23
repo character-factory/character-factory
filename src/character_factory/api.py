@@ -333,6 +333,22 @@ def assemble(
             )
         )
 
+    # Mouth interior (SPEC.md §4.2, §9 step 4): remove the rig version's
+    # fixed portal, stitch the socket strip into the skinned body, place
+    # the anatomy meshes on the jaw chain, and bake the 72 expression morph
+    # targets. The closed path above is untouched by any of this.
+    mouth_glb = None
+    if character.topology == "mouth-interior":
+        mouth_glb, mouth_attachments, mouth_removal = _prepare_mouth(
+            rig, assets_component, evaluation, character
+        )
+        attachments.extend(mouth_attachments)
+        remove_faces = (
+            mouth_removal if remove_faces is None
+            else np.concatenate([np.asarray(remove_faces, dtype=np.int64),
+                                 mouth_removal])
+        )
+
     result = export_character_glb(
         rig,
         character.identity,
@@ -344,5 +360,82 @@ def assemble(
         remove_faces=remove_faces,
         attachments=attachments,
         evaluation=evaluation,
+        mouth=mouth_glb,
     )
     return result.glb_path
+
+
+def _prepare_mouth(rig, assets_component, evaluation, character):
+    """Build the MouthGlb bundle, anatomy attachments, and the portal
+    removal set for a mouth-interior character."""
+    from character_factory.assembly import mouth as mouth_assembly
+    from character_factory.assembly.export import Attachment, MouthGlb
+
+    if assets_component is None:
+        raise ValueError(
+            "mouth-interior assembly requires the assembly-assets component"
+        )
+    data = mouth_assembly.MouthData.load(
+        rig_component_dir(rig), rig.metadata
+    )
+    rest = evaluation.vertices
+    socket, ring = mouth_assembly.build_socket(rest, data)
+    uv = mouth_assembly.socket_uvs(rig, data, socket, ring)
+    joints4, weights4 = mouth_assembly.socket_skin(rig, data, socket, ring)
+
+    vertex_count = len(rest)
+    body_dense = [data.morph_dense(unit, vertex_count)
+                  for unit in range(len(data.morph_names))]
+    socket_dense = []
+    for unit in range(len(data.morph_names)):
+        morphed, _ = mouth_assembly.build_socket(rest + body_dense[unit], data)
+        socket_dense.append(morphed.vertices - socket.vertices)
+
+    manifest = {
+        "expression_morphs": {
+            "names": list(data.morph_names),
+            "count": len(data.morph_names),
+            "encoding": "sparse POSITION+NORMAL deltas; exact (the rig's "
+                        "expression is a linear vertex basis)",
+            "semantics": data.semantics,
+        },
+        "jaw": data.jaw,
+        "animation_limitations": data.limitations,
+    }
+    mouth_glb = MouthGlb(
+        socket_vertices_cm=socket.vertices,
+        socket_faces=socket.faces,
+        socket_uv=uv,
+        socket_joints=joints4,
+        socket_weights=weights4,
+        morph_names=list(data.morph_names),
+        body_morph_dense=body_dense,
+        socket_morph_dense=socket_dense,
+        manifest=manifest,
+    )
+    attachments = [
+        Attachment(
+            name=piece.name,
+            vertices=piece.vertices,
+            faces=piece.faces,
+            uv=piece.uv,
+            parent_joint=rig.joint_index(piece.parent_role),
+            base_color=piece.base_color,
+            roughness=piece.roughness,
+        )
+        for piece in mouth_assembly.place_anatomy(
+            assets_component, data, rest
+        )
+    ]
+    return mouth_glb, attachments, data.portal_faces
+
+
+def rig_component_dir(rig) -> Path:
+    """The directory the rig component was loaded from (recorded at load)."""
+    directory = getattr(rig, "component_dir", None)
+    if directory is None:
+        raise ValueError(
+            "this rig was loaded without a component directory; mouth "
+            "assembly needs the component's derived artifacts"
+        )
+    return Path(directory)

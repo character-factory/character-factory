@@ -26,3 +26,10 @@ UnityEyes2
   Source of the stock eyeball and lash assets redistributed in the
   `assembly-assets` component, which carries this attribution and the
   pinned upstream revision in its metadata.
+
+Google Neutral Model (GNM), Google
+  Licensed under the Apache License, Version 2.0.
+  Source of the mouth-interior anatomy (teeth, gum, and tongue geometry)
+  redistributed in the `assembly-assets` component in a form fitted to the
+  body model's canonical head; the component metadata carries this
+  attribution.

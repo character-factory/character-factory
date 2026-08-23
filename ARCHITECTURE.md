@@ -34,8 +34,8 @@ Character Factory turns a text description into a rigged, textured, realtime
         │                        deterministic, no diffusion)
         ▼
   assembly                      (evaluate the rig, composite garments over skin in UV
-        │                        space, place eyes and lashes, attach hair, emit a
-        ▼                        skinned glTF with the full 127-joint skeleton)
+        │                        space, place eyes and the mouth interior, attach hair,
+        ▼                        emit a skinned glTF with the full 127-joint skeleton)
   character.char.json  +  scene.glb
 ```
 
@@ -72,11 +72,13 @@ the boundaries more than the features:
   cadence after launch (§4), so this does not wait on a code release. (Hair
   is the exception: the hair synthesizer emits its own albedo and normal
   textures.)
-- **No mouth interior.** v0 characters have a closed mouth. The character
-  format already reserves the topology variant for a mouth-interior body
-  (teeth, gums, tongue behind a fixed removed patch of the face surface —
-  see SPEC.md §4.2), and the test surface for it is specified (§7.4), but
-  v0 ships without it.
+- **Facial animation is data, not authoring.** `mouth-interior`
+  characters carry 72 exact expression morph targets and a jaw that
+  animates through `c_jaw` (SPEC.md §4.2, §7.4 here) — but the system
+  authors no facial performances: playing expressions, lip-sync, and
+  blends is the consumer's job, within the measured limitation table the
+  manifest ships. The `closed` topology remains available and assembles
+  with no mouth interior and no morph targets.
 - **Footwear is below-ankle styles only.** Footwear ships at launch as the
   optional `shoe` texture slot on the foot regions of the body atlas —
   closed, below-ankle shoes can be painted; boots above the ankle, sandals,
@@ -360,8 +362,23 @@ system and deliberately boring:
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
    is placed by a similarity fit of its lid margin to the socket rim, and
    receives the generated eye albedo. Procedural lash cards, caruncle
-   patches, and a darkened socket backing complete the region.
-4. **Hair.** The hair provider's mesh (§5) is attached rigidly to the head
+   patches, and a darkened socket backing are planned post-v0.1 polish —
+   today the eyeball alone fills the socket, and no interior geometry is
+   stitched into the body mesh for the eyes.
+4. **Mouth** (`"mouth-interior"` topology). The rig version's fixed mouth
+   patch is removed; a posterior-lip cuff and cavity strip — built from the
+   character's inner-lip curves, skinned by extending the lips' own
+   influences, UV-mapped into the removed patch's own atlas region at
+   measured-even density — is stitched into the body mesh; GNM-derived
+   teeth, gums, and tongue are placed by identity anchors (upper on the
+   skull, lower and tongue on the jaw chain). The export gains the rig's
+   72 expression coefficients as exact sparse morph targets
+   (`facs_00`–`facs_71`) and machine-readable jaw guidance and
+   animation-limitation tables in its manifest. Interior geometry obeys
+   the interior-UV contract: original vertex UVs bit-exact, no new atlas
+   islands, no chart overlap, no UV inversion — all asserted by the
+   permanent suite.
+5. **Hair.** The hair provider's mesh (§5) is attached rigidly to the head
    joint.
 5. **Skinned glTF export.** The exporter emits the full 127-joint node
    hierarchy with human-readable joint names (from the rig component's
@@ -488,7 +505,7 @@ throughout, matching the texture slot keys they serve.
 | `make-shoe` | Texture adapter for the `shoe` slot's albedo (optional slot; declares a below-ankle style vocabulary at launch) | ~90 MB |
 | `make-wig` | The default hair provider (vendored procedural engine; registry entry records versions for provenance) | in package |
 | `body-rig` | Pinned MHR TorchScript rig + topology metadata + the authoritative 127-joint name table (Apache 2.0, mirrored with attribution) | ~700 MB |
-| `assembly-assets` | Eyeball/lash meshes and textures, UV occupancy templates, atlas metadata | ~20 MB |
+| `assembly-assets` | Eyeball and mouth-interior meshes, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
 
 First-run download for full generation ≈ 18–20 GB (the final figure depends
@@ -724,12 +741,13 @@ bake tests assert structure, not bytes:
 - a reference-GPU golden run (hash-exact) runs in CI on self-hosted
   hardware, and is advisory elsewhere.
 
-### 7.4 Mouth-variant contract cases (reserved)
+### 7.4 Mouth-variant contract cases
 
-Written now, gated behind the future topology variant, so the variant ships
-against a pre-agreed contract. Mechanically the variant is a `body-rig`
-version bump plus grown `assembly-assets` — interior meshes placed by
-assembly like the eyeballs, no new texture slot or component kind:
+Written before the variant existed and now implemented as written — the
+`mouth-interior` topology ships against this pre-agreed contract.
+Mechanically the variant is a `body-rig` version bump plus grown
+`assembly-assets` — interior meshes placed by assembly like the eyeballs,
+no new texture slot or component kind:
 
 - the removal patch is validated against the pinned rig topology: exact
   expected face count, closed boundary of the expected edge count, identical
@@ -742,7 +760,15 @@ assembly like the eyeballs, no new texture slot or component kind:
   bit-identical under expression-only changes;
 - a clearance sweep over the supported pose set proves no interior geometry
   protrudes through the face surface, and the supported pose set is an
-  explicit list that tests prevent from widening silently.
+  explicit list that tests prevent from widening silently;
+- synthetic stress-envelope identities at the mechanism's tested
+  mouth-width bounds run the same construction and clearance checks, so
+  the guarantee covers the identity space, not the library sample;
+- interior geometry stitched into the skinned body carries UVs under the
+  interior-UV contract: original vertex UVs bit-exact before and after
+  construction, new UVs inside an already-appropriate existing region
+  (no new islands), no chart overlap, no UV winding inversion, and
+  per-face texel density measured against stated bounds.
 
 ## 8. Repository layout
 

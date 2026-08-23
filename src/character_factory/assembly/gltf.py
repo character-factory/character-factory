@@ -80,6 +80,54 @@ class GlbWriter:
         self.accessors.append(accessor)
         return len(self.accessors) - 1
 
+    def add_sparse_accessor(
+        self,
+        indices: np.ndarray,
+        values: np.ndarray,
+        count: int,
+        accessor_type: str,
+        *,
+        minmax: bool = False,
+    ) -> int:
+        """A sparse accessor over an implicit all-zeros base — the natural
+        encoding for morph-target deltas, where most vertices do not move.
+        `indices` must be sorted, unique uint32; `values` the matching rows."""
+        if indices.dtype != np.dtype(np.uint32):
+            raise TypeError("sparse indices must be uint32")
+        if len(indices) != len(values):
+            raise ValueError("sparse indices and values disagree in length")
+        if len(indices) and not bool(np.all(np.diff(indices.astype(np.int64)) > 0)):
+            raise ValueError("sparse indices must be strictly increasing")
+        width = _TYPE_SIZES[accessor_type]
+        accessor = {
+            "componentType": _COMPONENT_TYPES[values.dtype],
+            "count": count,
+            "type": accessor_type,
+            "sparse": {
+                "count": int(len(indices)),
+                "indices": {
+                    "bufferView": self.add_view(
+                        np.ascontiguousarray(indices).tobytes()
+                    ),
+                    "componentType": _COMPONENT_TYPES[np.dtype(np.uint32)],
+                },
+                "values": {
+                    "bufferView": self.add_view(
+                        np.ascontiguousarray(values).tobytes()
+                    ),
+                },
+            },
+        }
+        if minmax:
+            flat = values.reshape(-1, width) if width > 1 else values.reshape(-1, 1)
+            if len(flat) == 0:
+                flat = np.zeros((1, width), dtype=values.dtype)
+            # The implicit base is zero, so min/max must include 0.
+            accessor["min"] = [min(float(v), 0.0) for v in flat.min(axis=0)]
+            accessor["max"] = [max(float(v), 0.0) for v in flat.max(axis=0)]
+        self.accessors.append(accessor)
+        return len(self.accessors) - 1
+
     def add_image(self, png_bytes: bytes) -> dict:
         """An embedded PNG: returns the glTF image object referencing a view."""
         return {"bufferView": self.add_view(png_bytes), "mimeType": "image/png"}
@@ -128,10 +176,33 @@ def parse_glb(data: bytes) -> tuple[dict, bytes]:
 
 def read_accessor(gltf: dict, binary: bytes, index: int) -> np.ndarray:
     accessor = gltf["accessors"][index]
-    view = gltf["bufferViews"][accessor["bufferView"]]
     dtype = _DTYPES_BY_CODE[accessor["componentType"]]
     width = _TYPE_SIZES[accessor["type"]]
-    start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
-    count = accessor["count"] * width
-    array = np.frombuffer(binary, dtype=dtype, count=count, offset=start)
-    return array.reshape(accessor["count"], width) if width > 1 else array
+
+    def view_array(view_index: int, count: int, item_dtype) -> np.ndarray:
+        view = gltf["bufferViews"][view_index]
+        return np.frombuffer(
+            binary, dtype=item_dtype, count=count,
+            offset=view.get("byteOffset", 0),
+        )
+
+    if "bufferView" in accessor:
+        view = gltf["bufferViews"][accessor["bufferView"]]
+        start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        dense = np.frombuffer(
+            binary, dtype=dtype, count=accessor["count"] * width, offset=start
+        ).reshape(accessor["count"], width)
+    else:
+        dense = np.zeros((accessor["count"], width), dtype=dtype)
+
+    sparse = accessor.get("sparse")
+    if sparse is not None:
+        n = sparse["count"]
+        idx_dtype = _DTYPES_BY_CODE[sparse["indices"]["componentType"]]
+        indices = view_array(sparse["indices"]["bufferView"], n, idx_dtype)
+        values = view_array(
+            sparse["values"]["bufferView"], n * width, dtype
+        ).reshape(n, width)
+        dense = dense.copy()
+        dense[indices.astype(np.int64)] = values
+    return dense if width > 1 else dense.reshape(-1)

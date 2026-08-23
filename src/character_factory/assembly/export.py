@@ -25,7 +25,7 @@ from character_factory.assembly.gltf import (
 )
 from character_factory.assembly.rig import RigDefinition
 
-__all__ = ["ExportResult", "SCALE", "export_character_glb"]
+__all__ = ["ExportResult", "MouthGlb", "SCALE", "export_character_glb"]
 
 # The single unit-conversion constant in the exporter: rig centimeters to
 # glTF meters. There is deliberately no axis flip anywhere (both are Y-up,
@@ -118,6 +118,24 @@ class ExportResult:
 
 
 @dataclass
+class MouthGlb:
+    """The mouth-interior additions to a body export, prepared by assembly
+    (SPEC.md §4.2): the socket strip stitched into the skinned body mesh,
+    plus the 72 expression morph targets. Anatomy meshes arrive separately
+    as ordinary attachments."""
+
+    socket_vertices_cm: "np.ndarray"    # (S, 3)
+    socket_faces: "np.ndarray"          # (F, 3) local, interior-wound
+    socket_uv: "np.ndarray"             # (S, 2) — inside the removed patch region
+    socket_joints: "np.ndarray"         # (S, 4)
+    socket_weights: "np.ndarray"        # (S, 4)
+    morph_names: list                   # 72 index-stable names
+    body_morph_dense: list              # per unit: (V_rig, 3) float64 cm
+    socket_morph_dense: list            # per unit: (S, 3) float64 cm
+    manifest: dict                      # manifest additions (inventory, tables)
+
+
+@dataclass
 class Attachment:
     """A rigid accessory: parented to one joint, not skinned.
 
@@ -192,6 +210,7 @@ def export_character_glb(
     remove_faces: "np.ndarray | None" = None,
     attachments: list[Attachment] = (),
     evaluation=None,
+    mouth: "MouthGlb | None" = None,
 ) -> ExportResult:
     out_path = Path(out_path)
 
@@ -215,12 +234,42 @@ def export_character_glb(
         keep = np.ones(len(faces), dtype=bool)
         keep[np.asarray(remove_faces, dtype=np.int64)] = False
         faces, texcoord_faces = faces[keep], texcoord_faces[keep]
-    positions_cm, uvs, joints4, weights4, indices, _ = _unweld(
+    positions_cm, uvs, joints4, weights4, indices, position_index = _unweld(
         rig, vertices_cm, faces, texcoord_faces
     )
     positions = (positions_cm * SCALE).astype(np.float32)
     normals64 = _vertex_normals(positions.astype(np.float64), indices)
     indices, normals64 = _ensure_ccw(positions, indices, normals64)
+
+    # Mouth interior (SPEC.md §9 step 4): stitch the socket strip into the
+    # skinned body mesh AFTER the original surface is fully assembled, so
+    # every original vertex's position, UV, and weights are byte-identical
+    # to the closed export's — the interior-UV contract's first rule,
+    # asserted here rather than assumed.
+    original_vertex_count = len(positions)
+    original_uvs = uvs.copy() if mouth is not None else None
+    if mouth is not None:
+        socket_positions = (
+            np.asarray(mouth.socket_vertices_cm, dtype=np.float64) * SCALE
+        ).astype(np.float32)
+        positions = np.vstack([positions, socket_positions])
+        uvs = np.vstack([uvs.astype(np.float32),
+                         np.asarray(mouth.socket_uv, dtype=np.float32)])
+        joints4 = np.vstack([joints4, np.asarray(mouth.socket_joints,
+                                                 dtype=joints4.dtype)])
+        weights4 = np.vstack([weights4, np.asarray(mouth.socket_weights,
+                                                   dtype=np.float32)])
+        socket_indices = (
+            np.asarray(mouth.socket_faces, dtype=np.uint32)
+            + np.uint32(original_vertex_count)
+        )
+        indices = np.vstack([indices, socket_indices])
+        normals64 = _vertex_normals(positions.astype(np.float64), indices)
+        if not np.array_equal(uvs[:original_vertex_count], original_uvs):
+            raise AssertionError(
+                "interior construction modified original vertex UVs — the "
+                "atlas contract is bit-exact"
+            )
     normals = normals64.astype(np.float32)
 
     # 3. The world-transform root must not deform anything.
@@ -340,24 +389,60 @@ def export_character_glb(
                  "interpolation": "LINEAR"}
             )
 
-    meshes.append(
-        {
-            "name": "body",
-            "primitives": [
-                {
-                    "attributes": {
-                        "POSITION": a_position,
-                        "NORMAL": a_normal,
-                        "TEXCOORD_0": a_uv,
-                        "JOINTS_0": a_joints,
-                        "WEIGHTS_0": a_weights,
-                    },
-                    "indices": a_indices,
-                    "material": 0,
-                }
-            ],
-        }
-    )
+    body_mesh: dict = {
+        "name": "body",
+        "primitives": [
+            {
+                "attributes": {
+                    "POSITION": a_position,
+                    "NORMAL": a_normal,
+                    "TEXCOORD_0": a_uv,
+                    "JOINTS_0": a_joints,
+                    "WEIGHTS_0": a_weights,
+                },
+                "indices": a_indices,
+                "material": 0,
+            }
+        ],
+    }
+    if mouth is not None:
+        # The 72 expression morph targets: exact by construction (the rig's
+        # expression is a linear vertex basis), sparse POSITION+NORMAL. The
+        # socket strip morphs with the lips it extends. Names are the
+        # index-stable facs_NN vocabulary — semantics stay registry
+        # metadata, never invented here.
+        base64 = positions.astype(np.float64)
+        targets = []
+        for unit in range(len(mouth.morph_names)):
+            delta = np.zeros_like(base64)
+            delta[:original_vertex_count] = (
+                mouth.body_morph_dense[unit][position_index] * SCALE
+            )
+            delta[original_vertex_count:] = (
+                np.asarray(mouth.socket_morph_dense[unit], dtype=np.float64)
+                * SCALE
+            )
+            normal_delta = (
+                _vertex_normals(base64 + delta, indices) - normals64
+            )
+            moved = np.where(
+                (np.abs(delta).max(axis=1) > 0)
+                | (np.abs(normal_delta).max(axis=1) > 1e-3)
+            )[0].astype(np.uint32)
+            targets.append({
+                "POSITION": writer.add_sparse_accessor(
+                    moved, delta[moved].astype(np.float32),
+                    len(positions), "VEC3", minmax=True,
+                ),
+                "NORMAL": writer.add_sparse_accessor(
+                    moved, normal_delta[moved].astype(np.float32),
+                    len(positions), "VEC3",
+                ),
+            })
+        body_mesh["primitives"][0]["targets"] = targets
+        body_mesh["weights"] = [0.0] * len(mouth.morph_names)
+        body_mesh["extras"] = {"targetNames": list(mouth.morph_names)}
+    meshes.append(body_mesh)
 
     # 7. Rigid attachments: each becomes a child node of its carrier joint,
     # re-expressed in that joint's local frame (the IBMs are exactly the
@@ -460,6 +545,20 @@ def export_character_glb(
             "renders additionally apply learned pose correctives.",
         ],
     }
+    manifest["topology"] = "closed" if mouth is None else "mouth-interior"
+    if mouth is not None:
+        manifest.update(mouth.manifest)
+        jaw = manifest.get("jaw")
+        if jaw and "world_axis" in jaw:
+            # The rest orientations are re-authored at export, so the jaw's
+            # certified rotation axis is restated in the exported joint's
+            # own local frame — the frame a consumer actually rotates in.
+            jaw = dict(jaw)
+            world_axis = np.asarray(jaw["world_axis"], dtype=np.float64)
+            local_axis = skeleton.rotations[rig.joint_index("c_jaw")].T @ world_axis
+            local_axis /= np.linalg.norm(local_axis)
+            jaw["rotation_axis_local"] = [round(float(x), 6) for x in local_axis]
+            manifest["jaw"] = jaw
 
     gltf = {
         "asset": {"version": "2.0", "generator": generator,

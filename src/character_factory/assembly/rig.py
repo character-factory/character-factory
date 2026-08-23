@@ -46,6 +46,7 @@ class RigDefinition:
     parents: "np.ndarray"        # (J,) int64, parents[i] < i, parents[0] == -1
     vertex_joints: "np.ndarray"  # (V, 4) uint16 — LBS joints (rig native ≤ 4)
     vertex_weights: "np.ndarray" # (V, 4) float32 — sums to 1
+    component_dir: "Path | None" = None  # where the component was loaded from
 
     @property
     def joint_names(self) -> list[str]:
@@ -218,4 +219,5 @@ def load_rig(component_dir: str | Path, device: str = "cpu") -> RigDefinition:
         parents=parents,
         vertex_joints=vertex_joints,
         vertex_weights=vertex_weights,
+        component_dir=component_dir,
     )

@@ -459,6 +459,15 @@ def export_character_glb(
         att_normals = _vertex_normals(
             local_pos.astype(np.float64), att_faces.astype(np.int64)
         ).astype(np.float32)
+        # Winding guard: an attachment wound coherently inside-out (the hair
+        # provider emits one) gets flipped — but only on a decisive vote;
+        # concave shells like dental arches make the centroid test
+        # uninformative, and authored winding is trusted there.
+        outward = local_pos - local_pos.mean(axis=0)
+        agreement = float(((att_normals * outward).sum(axis=1) > 0).mean())
+        if agreement < 0.25:
+            att_faces = att_faces[:, ::-1].copy()
+            att_normals = -att_normals
 
         attributes = {
             "POSITION": writer.add_accessor(

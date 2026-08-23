@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-__all__ = ["EyeAssets", "PlacedEye", "place_eyes"]
+__all__ = ["EyeAssets", "PlacedEye", "place_eyes", "socket_backing"]
 
 _RESAMPLE = 64
 
@@ -71,6 +71,30 @@ class PlacedEye:
     uv: np.ndarray
     gaze: np.ndarray          # (3,) world unit vector
     fit_rms_cm: float
+    rim: np.ndarray = None    # (M, 3) ordered socket-rim loop, world cm
+
+
+def socket_backing(rim: np.ndarray, gaze: np.ndarray):
+    """A dark occluder skirt behind the eyeball: the socket rim extruded
+    inward and back, closed by an apex. It exists to stop the see-through
+    gap between the eyeball and the socket rim — a rigid attachment with
+    its own material, like the eyeball itself (the interior-UV contract
+    covers geometry stitched into the body; this is not).
+
+    Returns (vertices, faces); winding is irrelevant (rendered
+    double-sided)."""
+    centroid = rim.mean(axis=0)
+    inner = centroid + (rim - centroid) * 0.45 - gaze * 1.5
+    apex = centroid - gaze * 2.2
+    n = len(rim)
+    vertices = np.vstack([rim, inner, apex])
+    faces = []
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append((i, j, n + j))
+        faces.append((i, n + j, n + i))
+        faces.append((n + i, n + j, 2 * n))
+    return vertices, np.asarray(faces, dtype=np.int64)
 
 
 def _umeyama(src: np.ndarray, dst: np.ndarray):
@@ -156,7 +180,8 @@ def place_eyes(
     for side, selector in (("left", centroids[:, 0] < 0),
                            ("right", centroids[:, 0] > 0)):
         subset = assets.socket_faces[selector]
-        rim = body_vertices[_rim_loop(body_faces, subset)]
+        rim_points = body_vertices[_rim_loop(body_faces, subset)]
+        rim = rim_points
 
         # outward socket normal: mean of the removed faces' normals
         tri = body_vertices[body_faces[subset]]
@@ -197,6 +222,6 @@ def place_eyes(
 
         placed.append(
             PlacedEye(side=side, vertices=world, faces=faces, uv=assets.uv,
-                      gaze=world_gaze, fit_rms_cm=rms)
+                      gaze=world_gaze, fit_rms_cm=rms, rim=rim_points)
         )
     return placed

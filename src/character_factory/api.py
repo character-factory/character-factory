@@ -278,6 +278,8 @@ def assemble(
     # Eyes: socket faces removed, eyeballs fitted to the rims, each parented
     # to its eye joint, textured with the slot's albedo.
     if assets_component is not None and (assets_component / "eye_placement.json").is_file():
+        from character_factory.assembly.eyes import socket_backing
+
         eye_assets = EyeAssets.load(assets_component)
         eye_png = _load_asset(assets_dir, "eye", character).read_bytes()
         remove_faces = eye_assets.socket_faces
@@ -291,6 +293,22 @@ def assemble(
                     parent_joint=rig.role_index(f"{placed.side}_eye"),
                     albedo_png=eye_png,
                     roughness=0.15,   # cornea is glossy
+                )
+            )
+            # The dark occluder skirt behind the eyeball: without it the
+            # rim-to-eyeball gap (measured ~1.5 mm) reads straight through
+            # the head. Skull-parented: eyelid morphs close in front of it.
+            backing_v, backing_f = socket_backing(placed.rim, placed.gaze)
+            attachments.append(
+                Attachment(
+                    name=f"eye_{placed.side}_backing",
+                    vertices=backing_v,
+                    faces=backing_f,
+                    uv=None,
+                    parent_joint=rig.role_index("head"),
+                    base_color=(0.055, 0.032, 0.03, 1.0),
+                    double_sided=True,
+                    roughness=0.9,
                 )
             )
 

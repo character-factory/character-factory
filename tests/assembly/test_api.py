@@ -65,9 +65,19 @@ def test_assemble_end_to_end(tmp_path):
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
 
+    from character_factory.assembly.gltf import read_accessor as _ra
+
     # The full assembly: eyes attached to the eye joints, hair to the head.
     mesh_names = {m["name"] for m in gltf["meshes"]}
-    assert {"eye_left", "eye_right", "hair"} <= mesh_names
+    assert {"eye_left", "eye_right", "hair",
+            "eye_left_backing", "eye_right_backing"} <= mesh_names
+    # The hair provider emits inside-out winding; the exporter's decisive
+    # winding guard must have flipped it to majority-outward.
+    hair = next(m for m in gltf["meshes"] if m["name"] == "hair")
+    hair_positions = _ra(gltf, binary, hair["primitives"][0]["attributes"]["POSITION"])
+    hair_normals = _ra(gltf, binary, hair["primitives"][0]["attributes"]["NORMAL"])
+    outward = hair_positions - hair_positions.mean(axis=0)
+    assert ((hair_normals * outward).sum(axis=1) > 0).mean() > 0.75
     names = {node.get("name"): i for i, node in enumerate(gltf["nodes"])}
     for joint, child in (("l_eye", "eye_left"), ("r_eye", "eye_right"),
                          ("c_head", "hair")):
@@ -75,7 +85,6 @@ def test_assemble_end_to_end(tmp_path):
     # Socket faces were removed from the body: fewer than the full triangle
     # count, and the body still skins exactly (validated above).
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
-    from character_factory.assembly.gltf import read_accessor as _ra
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
     assert len(indices) // 3 == 36874 - 64
 

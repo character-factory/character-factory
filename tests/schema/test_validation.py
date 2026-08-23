@@ -72,10 +72,24 @@ def test_unknown_rig_is_hard_error_in_both_modes(doc):
     assert errors_at(validate_document(doc, strict=True), "body.rig")
 
 
-def test_unknown_topology_is_hard_error_in_both_modes(doc):
+def test_mouth_interior_topology_is_valid_in_both_modes(doc):
     doc["body"]["topology"] = "mouth-interior"
+    assert validate_document(doc).ok
+    assert validate_document(doc, strict=True).ok
+
+
+def test_unknown_topology_is_hard_error_in_both_modes(doc):
+    doc["body"]["topology"] = "hollow"
     assert errors_at(validate_document(doc), "body.topology")
     assert errors_at(validate_document(doc, strict=True), "body.topology")
+
+
+def test_near_miss_topology_names_the_correction(doc):
+    # A misread topology assembles a different surface; the error must both
+    # refuse and point at the intended value.
+    doc["body"]["topology"] = "mouth_interior"
+    (error,) = errors_at(validate_document(doc), "body.topology")
+    assert "did you mean 'mouth-interior'" in error.message
 
 
 @pytest.mark.parametrize(

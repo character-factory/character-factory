@@ -12,7 +12,10 @@ SCHEMA_MINOR = 1
 SCHEMA_VERSION = f"{SCHEMA_MAJOR}.{SCHEMA_MINOR}"
 
 RIGS = frozenset({"mhr-lod1@1.0"})
-TOPOLOGIES = frozenset({"closed"})
+# Surface topology variants (§4.2): "closed" is the full unmodified rig
+# surface; "mouth-interior" removes the rig-version-fixed mouth patch and
+# assembles interior components (teeth, gums, tongue, cavity) behind it.
+TOPOLOGIES = frozenset({"closed", "mouth-interior"})
 
 IDENTITY_LENGTH = 45
 RESTING_EXPRESSION_LENGTH = 72

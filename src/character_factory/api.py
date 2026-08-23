@@ -230,6 +230,16 @@ def assemble(
 
     rig = load_rig(registry.ensure("body-rig"), device=device)
 
+    # SPEC.md §4.2: a topology beyond "closed" needs a body-rig version that
+    # declares its mouth data — assembling the closed surface instead would
+    # silently build a different character than the document describes.
+    if character.topology != "closed" and "mouth" not in rig.metadata:
+        raise ValueError(
+            f"character topology {character.topology!r} requires a body-rig "
+            "component version with mouth data, and the resolved version "
+            "declares none"
+        )
+
     # The shoe generator paints a one-foot canvas; its component's foot
     # chart maps that canvas onto the atlas's foot islands (SPEC.md §9).
     shoe_overlay = None

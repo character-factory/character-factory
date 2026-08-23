@@ -141,8 +141,15 @@ class _Checker:
                                     "newer schema version than this implementation supports")
         topology = self.expect_str(body, "topology", "body")
         if topology is not None and topology not in vocab.TOPOLOGIES:
-            self.error("body.topology", f"unrecognized topology {topology!r}: refusing to "
-                                        "assemble a different surface than the document asks for")
+            import difflib
+
+            close = difflib.get_close_matches(
+                topology, sorted(vocab.TOPOLOGIES), n=1, cutoff=0.6
+            )
+            hint = f" — did you mean {close[0]!r}?" if close else ""
+            self.error("body.topology", f"unrecognized topology {topology!r}{hint}: "
+                                        "refusing to assemble a different surface "
+                                        "than the document asks for")
         self.expect_float_array(body, "identity", vocab.IDENTITY_LENGTH, "body")
         self.expect_float_array(
             body, "resting_expression", vocab.RESTING_EXPRESSION_LENGTH, "body"

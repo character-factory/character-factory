@@ -106,3 +106,28 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
         EXAMPLES / "freediver.char.json", assets, tmp_path / "diver.glb"
     )
     assert np.frombuffer(out.read_bytes()[:4], dtype=np.uint32)[0] == 0x46546C67
+
+
+def test_mouth_interior_refused_without_rig_mouth_data(tmp_path):
+    # SPEC.md §4.2: assembling a mouth-interior document against a body-rig
+    # version that declares no mouth data is a defined error — never a
+    # silent fall back to the closed surface.
+    import json as jsonlib
+
+    from character_factory.api import assemble
+
+    rig_metadata = jsonlib.loads(
+        (Path(_real_rig_dir()) / "rig.json").read_text()
+    )
+    if "mouth" in rig_metadata:
+        pytest.skip("resolved body-rig declares mouth data")
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    solid_png(assets / "skin.png", (128, 128, 128))
+    solid_png(assets / "eye.png", (90, 60, 40))
+    solid_png(assets / "garment.png", (0, 0, 0))
+    document = jsonlib.loads((EXAMPLES / "freediver.char.json").read_text())
+    document["body"]["topology"] = "mouth-interior"
+    with pytest.raises(ValueError, match="mouth data"):
+        assemble(Character.from_document(document), assets, tmp_path / "m.glb")

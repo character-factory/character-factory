@@ -157,7 +157,7 @@ model — no mesh data appears in the file.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `rig` | string | yes | The body model and version, as `<model>@<version>`. v0.1 defines exactly one value: `"mhr-lod1@1.0"`. |
-| `topology` | string | yes | Surface topology variant. v0.1 defines exactly one value: `"closed"`. Reserved for extension; see §4.2. |
+| `topology` | string | yes | Surface topology variant. v0.1 defines two values: `"closed"` and `"mouth-interior"`. §4.2. |
 | `identity` | array of 45 numbers | yes | MHR identity coefficients, in MHR's native order. Together these determine the body and face shape. |
 | `proportions` | object | no | Skeletal-proportion parameters: rig proportion-parameter name → number, `0.0` meaning the rig's template value. Absent (or empty) means the template skeleton. §4.3. |
 | `resting_expression` | array of 72 numbers | yes | MHR expression coefficients describing the character's *resting* face (for example, natural eyelid posture). Most entries are typically `0.0`. This is part of identity — it is not an animation pose. |
@@ -188,23 +188,43 @@ proportions** (segment lengths — identity-class data, carried by
 `proportions`, §4.3). A character file never contains articulation;
 non-resting expression is likewise a runtime input.
 
-### 4.2 The `topology` reservation
+### 4.2 The `topology` variants
 
-`topology` exists so that a planned **mouth-interior variant** is an additive
-schema change. The v0.1 surface is `"closed"`: the full, unmodified MHR
-surface, with a closed mouth region. A future schema minor version will
-define a second value for a variant that removes a fixed patch of triangles
-from the mouth region of the rig's triangle buffer and adds interior
-components (teeth, gums, tongue, and an inner-mouth cavity) behind it. The
-removal set is defined purely at the topology level, so it is identical for
-every character on a given rig version.
+`topology` selects the surface variant the document assembles to. v0.1
+defines two values.
 
-Readers encountering an unrecognized `topology` value MUST treat the document
-as requiring a newer schema version rather than silently assembling a closed
-surface. Writers targeting v0.1 MUST emit `"closed"`. Mechanically, the
-variant ships as a new `body-rig` component version plus grown
-`assembly-assets` (the interior meshes are placed by assembly, like the
-eyeballs) — no new texture slot and no new component kind.
+**`"closed"`** is the full, unmodified MHR surface, with a closed mouth
+region. It assembles exactly as the sections above describe: no interior
+components, no expression morph targets. This meaning is frozen — a
+document that says `"closed"` assembles to the same surface under every
+future version of this specification.
+
+**`"mouth-interior"`** is the same exterior surface with a fixed patch of
+triangles removed from the mouth region of the rig's triangle buffer, and
+interior components assembled behind it: a posterior-lip cuff, an
+inner-mouth cavity, and teeth, gums, and tongue meshes. The removal set is
+defined purely at the topology level — the same triangle indices for every
+character on a given rig version; the exact set, the interior construction
+parameters, and the interior mesh data are `body-rig` and `assembly-assets`
+component data pinned in the registry, not part of this specification. The
+exported artifact for this variant additionally carries the rig's 72
+expression coefficients as morph targets (index-stable names `facs_00`
+through `facs_71`) plus jaw-animation guidance in its manifest, so the face
+is animatable at runtime. This does not change §4.1's semantics: non-resting
+expression remains a runtime input, never document data.
+
+Assembling a `"mouth-interior"` document requires a `body-rig` component
+version that declares mouth data; assembling it against one that does not is
+a defined error — never a silent fall back to a closed surface.
+
+Readers encountering an unrecognized `topology` value MUST treat the
+document as requiring a newer schema version rather than silently assembling
+a different surface. Writers targeting v0.1 MUST emit one of the two defined
+values; both are valid forever, and no migration between them exists or is
+implied (they are different characters' surfaces, not versions of one).
+Mechanically, the variant ships as a new `body-rig` component version plus
+grown `assembly-assets` (the interior meshes are placed by assembly, like
+the eyeballs) — no new texture slot and no new component kind.
 
 ### 4.3 `proportions` — skeletal proportions
 
@@ -493,10 +513,19 @@ artifact, without prescribing an implementation.
    albedo.
 3. **Eyes.** Apply the `eye` albedo to both eyeball meshes, placed in the
    rig's eye sockets.
-4. **Hair.** If `hair` is non-null, synthesize hair geometry from the hair
+4. **Mouth** (`"mouth-interior"` topology only). Remove the rig version's
+   fixed mouth patch from the body's triangle buffer. Construct the
+   posterior-lip cuff and inner-mouth cavity from the body's inner-lip
+   curves, and place the teeth, gums, and tongue meshes from the body's
+   identity (§4.2). Upper anatomy is skull-locked; lower anatomy binds to
+   the rig's jaw joint.
+5. **Hair.** If `hair` is non-null, synthesize hair geometry from the hair
    block and the assembled head/body geometry; attach it rigidly to the head.
-5. **Rig.** The exported artifact carries the rig's full joint hierarchy and
+6. **Rig.** The exported artifact carries the rig's full joint hierarchy and
    per-vertex skinning weights, so the result is animatable, not a statue.
+   For `"mouth-interior"` documents it also carries the rig's 72 expression
+   coefficients as morph targets (§4.2) and, in its manifest, the measured
+   animation-limitation table and jaw guidance for consumers.
 
 Assembly is deterministic: the same character file, the same pinned assets
 (or byte-identical regenerated ones), and the same assembler version MUST
@@ -540,7 +569,8 @@ singular slot keys, with plural spellings rejected as hard errors naming the
 correction (§5); the albedo requirement and shorthand shapes (§5.2); the
 reserved `inputs` field (§5.3, hard error); the `proportions` vocabulary and
 range (§4.3 — unknown names and out-of-range values are hard errors in every
-mode, with a did-you-mean correction for near-miss names); and finiteness of
+mode, with a did-you-mean correction for near-miss names — the same
+correction applies to near-miss `topology` values); and finiteness of
 all numbers (NaN and infinities are invalid everywhere). The reference implementation publishes a
 machine-readable JSON Schema for each schema version and exposes validation
 as a library call, a CLI command, and an MCP tool; third parties are

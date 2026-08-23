@@ -24,7 +24,7 @@ def test_fixture_passes_third_party_validation(doc):
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda d: d["body"].__setitem__("topology", "mouth-interior"),
+        lambda d: d["body"].__setitem__("topology", "hollow"),
         lambda d: d["body"].__setitem__("identity", [0.0] * 44),
         lambda d: d["textures"].pop("skin"),
         lambda d: d["textures"].__setitem__("shoe", None),

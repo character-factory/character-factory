@@ -133,6 +133,10 @@ class MouthGlb:
     body_morph_dense: list              # per unit: (V_rig, 3) float64 cm
     socket_morph_dense: list            # per unit: (S, 3) float64 cm
     manifest: dict                      # manifest additions (inventory, tables)
+    weld_pairs: list = ()               # [(rig vertex a, rig vertex b)] whose
+                                        # skin weights are averaged: the rig's
+                                        # corner seam duplicates tear under
+                                        # the jaw once the portal is removed
 
 
 @dataclass
@@ -264,6 +268,10 @@ def export_character_glb(
             + np.uint32(original_vertex_count)
         )
         indices = np.vstack([indices, socket_indices])
+        for pair, joint_row, weight_row in mouth.weld_pairs:
+            rows = np.where(np.isin(position_index, pair))[0]
+            joints4[rows] = np.asarray(joint_row, dtype=joints4.dtype)
+            weights4[rows] = np.asarray(weight_row, dtype=np.float32)
         normals64 = _vertex_normals(positions.astype(np.float64), indices)
         if not np.array_equal(uvs[:original_vertex_count], original_uvs):
             raise AssertionError(

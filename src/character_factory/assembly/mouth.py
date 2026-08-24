@@ -28,9 +28,11 @@ import numpy as np
 
 __all__ = [
     "AnatomyPiece",
+    "ExportStrip",
     "MouthData",
     "SocketBuild",
     "build_socket",
+    "export_strip",
     "place_anatomy",
     "socket_uvs",
 ]
@@ -43,6 +45,7 @@ class MouthData:
     portal_faces: np.ndarray        # (288,) int64 — rig face indices to remove
     lip_upper: np.ndarray           # (U,) int64 — position-vertex path
     lip_lower: np.ndarray           # (L,) int64
+    upper_portal: np.ndarray        # (U+2,) int64 — incl. seam duplicates
     samples_per_lip: int            # 32 → a 62-point entrance ring
     anchors_upper: np.ndarray       # (5,) int64
     anchors_lower: np.ndarray       # (6,) int64
@@ -89,6 +92,7 @@ class MouthData:
             portal_faces=portal,
             lip_upper=np.asarray(block["lip_paths"]["upper"], dtype=np.int64),
             lip_lower=np.asarray(block["lip_paths"]["lower"], dtype=np.int64),
+            upper_portal=np.asarray(block["lip_paths"]["upper_portal"], dtype=np.int64),
             samples_per_lip=int(block["entrance_ring"]["samples_per_lip"]),
             anchors_upper=np.asarray(block["anchors"]["upper"], dtype=np.int64),
             anchors_lower=np.asarray(block["anchors"]["lower"], dtype=np.int64),
@@ -176,6 +180,13 @@ class SocketBuild:
     layer_depths: np.ndarray    # (layer_count,) mean 3D distance from the seam
 
 
+def _circular_smooth(values: np.ndarray, window: int = 7) -> np.ndarray:
+    """Circular moving average along the ring."""
+    half = window // 2
+    stacked = np.stack([np.roll(values, k) for k in range(-half, half + 1)])
+    return stacked.mean(axis=0)
+
+
 def _shaped_layer(entrance, center, dz, sx, sy, min_x, min_up, min_down):
     p = entrance.copy()
     dx = p[:, 0] - center[0]
@@ -183,10 +194,22 @@ def _shaped_layer(entrance, center, dz, sx, sy, min_x, min_up, min_down):
     x_scale = max(sx, min_x / max(float(np.abs(dx).max()), 1e-4))
     p[:, 0] = center[0] + dx * x_scale
     # The seam is not symmetric about its mean; the palate needs more
-    # clearance than the floor, so each side scales independently.
-    up_scale = max(sy, min_up / max(float(dy.max()), 1e-4))
-    down_scale = max(sy, min_down / max(float(-dy.min()), 1e-4))
-    p[:, 1] = center[1] + np.where(dy >= 0, dy * up_scale, dy * down_scale)
+    # clearance than the floor, so each side scales independently. At a
+    # nearly closed aperture the minimum-clearance clamps amplify the
+    # ring's vertical offsets by an order of magnitude, which would turn
+    # millimeter wiggles of the resting lip curve into centimeter ridges —
+    # so the AMPLIFIED component follows a smoothed profile while the raw
+    # offsets pass through unscaled (a scale of 1 reproduces the entrance
+    # exactly, which keeps the seam ring untouched).
+    dy_smooth = _circular_smooth(dy)
+    # Scales measured against the smoothed profile, so the minimum
+    # roof/floor clearances are actually reached by the smoothed component.
+    up_scale = max(sy, min_up / max(float(dy_smooth.max()), 1e-4))
+    down_scale = max(sy, min_down / max(float(-dy_smooth.min()), 1e-4))
+    scale = np.where(dy >= 0, up_scale, down_scale)
+    p[:, 1] = center[1] + dy + (scale - 1.0) * np.where(
+        dy_smooth * dy > 0, dy_smooth, dy
+    )
     p[:, 2] += dz
     return p
 
@@ -367,6 +390,148 @@ def socket_skin(rig, data: MouthData, socket: SocketBuild, ring: RingParam):
     # Zero-weight slots must not reference arbitrary joints.
     joints4[weights4 == 0] = 0
     return joints4, weights4
+
+
+# -- the baked export strip ---------------------------------------------------
+
+@dataclass
+class ExportStrip:
+    """The socket strip as baked into a GLB: rest positions authored so
+    that SKINNING the strip open lands on the pose-correct socket.
+
+    The socket construction is aperture-adaptive (its clamps are
+    non-linear in the lip positions), so a strip built at rest and merely
+    skinned cannot land where the open-mouth socket belongs — measured
+    4 cm of deviation at full open, standing as ridges through the
+    jaw-following anatomy. The interior rings are therefore built at the
+    certified full-open reference pose and inverse-skinned back to rest:
+    correct where the interior is visible (open), slack only where it is
+    hidden (closed). The seam ring stays the exact rest entrance ring."""
+
+    vertices: np.ndarray        # (S, 3) rest cm
+    faces: np.ndarray
+    uv: np.ndarray
+    joints: np.ndarray          # (S, 4)
+    weights: np.ndarray         # (S, 4)
+    morph_deltas: list          # per unit: (S, 3) vs these rest vertices
+    weld_pairs: list            # [(lip corner vertex, seam duplicate)] to weld
+
+
+def _jaw_rotation(data: MouthData, pivot: np.ndarray, level: float):
+    axis = np.asarray(data.jaw["world_axis"], dtype=np.float64)
+    axis = axis / np.linalg.norm(axis)
+    theta = np.radians(float(data.jaw["full_open_degrees"]) * level)
+    k = np.array([[0.0, -axis[2], axis[1]],
+                  [axis[2], 0.0, -axis[0]],
+                  [-axis[1], axis[0], 0.0]])
+    rotation = np.eye(3) + np.sin(theta) * k + (1.0 - np.cos(theta)) * k @ k
+    return rotation, pivot
+
+
+def jaw_subtree_weights(rig, vertex_joints, vertex_weights):
+    """Per-vertex total influence of the c_jaw subtree — the fraction of
+    the jaw rotation a skinned vertex follows."""
+    subtree = set(rig.subtree(rig.joint_index("c_jaw")))
+    total = np.zeros(len(vertex_joints))
+    for joint in subtree:
+        total += np.where(
+            (vertex_joints == joint) & (vertex_weights > 0), vertex_weights, 0
+        ).sum(axis=1)
+    return np.clip(total, 0.0, 1.0)
+
+
+def skin_jaw(points, jaw_weight, rotation, pivot):
+    """LBS under a pure c_jaw rotation (head static)."""
+    moved = (points - pivot) @ rotation.T + pivot
+    return points * (1.0 - jaw_weight[:, None]) + moved * jaw_weight[:, None]
+
+
+def export_strip(rig, data: MouthData, evaluation) -> ExportStrip:
+    rest = evaluation.vertices
+    pivot = evaluation.skeleton[rig.joint_index("c_jaw"), :3]
+    rotation, pivot = _jaw_rotation(data, pivot, 1.0)
+
+    body_jaw = jaw_subtree_weights(rig, rig.vertex_joints, rig.vertex_weights)
+    posed = skin_jaw(rest, body_jaw, rotation, pivot)
+
+    rest_build, ring = build_socket(rest, data)
+    target, target_ring = build_socket(posed, data)
+    joints4, weights4 = socket_skin(rig, data, rest_build, ring)
+
+    # MHR's inner-lip seam has near-coincident duplicate vertices at each
+    # mouth corner with slightly different skin weights; with the portal
+    # removed they tear visibly apart under the jaw (measured 1.5 mm at
+    # full open). Both are welded to the pair's average — the body copies
+    # at export, and the strip's corner columns here, so every party at
+    # each corner shares one set of weights.
+    weld_pairs = []
+    for pair, ring_position in (
+        ((int(data.lip_upper[0]), int(data.upper_portal[1])), 0),
+        ((int(data.lip_upper[-1]), int(data.upper_portal[-2])),
+         data.samples_per_lip - 1),
+    ):
+        merged: dict[int, float] = {}
+        for vertex in pair:
+            for joint, weight in zip(rig.vertex_joints[vertex],
+                                     rig.vertex_weights[vertex]):
+                if weight > 0:
+                    merged[int(joint)] = merged.get(int(joint), 0.0) + 0.5 * float(weight)
+        top = sorted(merged.items(), key=lambda kv: -kv[1])[:4]
+        total = sum(w for _, w in top)
+        joint_row = np.zeros(4, dtype=joints4.dtype)
+        weight_row = np.zeros(4, dtype=np.float32)
+        for slot, (joint, weight) in enumerate(top):
+            joint_row[slot] = joint
+            weight_row[slot] = weight / total
+        rows = (np.arange(rest_build.layer_count) * rest_build.ring_size
+                + ring_position)
+        joints4[rows] = joint_row
+        weights4[rows] = weight_row
+        weld_pairs.append((pair, joint_row, weight_row))
+
+    strip_jaw = jaw_subtree_weights(rig, joints4, weights4)
+
+    # Inverse LBS per vertex: y = [(1-w)I + wR](x) + w(p - Rp)
+    systems = ((1.0 - strip_jaw)[:, None, None] * np.eye(3)[None]
+               + strip_jaw[:, None, None] * rotation[None])
+    offsets = target.vertices - strip_jaw[:, None] * (pivot - rotation @ pivot)
+    inverse_skinned = np.linalg.solve(systems, offsets[..., None])[..., 0]
+
+    # Blend per layer between the rest build and the open-referenced
+    # shape: the seam ring must BE the rest lips; the cuff sits right
+    # behind them (visible at rest, small open-pose error), so it stays
+    # near its rest shape; the deep cavity — where a rest-built strip
+    # lands centimeters wrong when skinned open — follows the open
+    # reference fully. The ramp keeps the rest state clear of the closed
+    # lips (the open reference inverse-rotates slightly in front of them).
+    n = rest_build.ring_size
+    ramp = np.concatenate([
+        np.array([0.0, 0.0, 0.5] + [1.0] * (rest_build.layer_count - 3)
+                 ).repeat(n),
+        [1.0],                                   # the cap
+    ])
+    vertices = (rest_build.vertices * (1.0 - ramp[:, None])
+                + inverse_skinned * ramp[:, None])
+    vertices[:n] = ring.points        # the seam ring is the rest lips, exactly
+
+    uv = socket_uvs(rig, data, target, ring)
+
+    morph_deltas = []
+    for unit in range(len(data.morph_names)):
+        morphed, _ = build_socket(
+            rest + data.morph_dense(unit, len(rest)), data
+        )
+        morph_deltas.append(morphed.vertices - vertices)
+
+    return ExportStrip(
+        vertices=vertices,
+        faces=rest_build.faces,
+        uv=uv,
+        joints=joints4,
+        weights=weights4,
+        morph_deltas=morph_deltas,
+        weld_pairs=weld_pairs,
+    )
 
 
 # -- anatomy ------------------------------------------------------------------

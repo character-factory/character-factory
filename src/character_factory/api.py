@@ -397,17 +397,9 @@ def _prepare_mouth(rig, assets_component, evaluation, character):
         rig_component_dir(rig), rig.metadata
     )
     rest = evaluation.vertices
-    socket, ring = mouth_assembly.build_socket(rest, data)
-    uv = mouth_assembly.socket_uvs(rig, data, socket, ring)
-    joints4, weights4 = mouth_assembly.socket_skin(rig, data, socket, ring)
-
-    vertex_count = len(rest)
-    body_dense = [data.morph_dense(unit, vertex_count)
+    strip = mouth_assembly.export_strip(rig, data, evaluation)
+    body_dense = [data.morph_dense(unit, len(rest))
                   for unit in range(len(data.morph_names))]
-    socket_dense = []
-    for unit in range(len(data.morph_names)):
-        morphed, _ = mouth_assembly.build_socket(rest + body_dense[unit], data)
-        socket_dense.append(morphed.vertices - socket.vertices)
 
     manifest = {
         "expression_morphs": {
@@ -421,15 +413,16 @@ def _prepare_mouth(rig, assets_component, evaluation, character):
         "animation_limitations": data.limitations,
     }
     mouth_glb = MouthGlb(
-        socket_vertices_cm=socket.vertices,
-        socket_faces=socket.faces,
-        socket_uv=uv,
-        socket_joints=joints4,
-        socket_weights=weights4,
+        socket_vertices_cm=strip.vertices,
+        socket_faces=strip.faces,
+        socket_uv=strip.uv,
+        socket_joints=strip.joints,
+        socket_weights=strip.weights,
         morph_names=list(data.morph_names),
         body_morph_dense=body_dense,
-        socket_morph_dense=socket_dense,
+        socket_morph_dense=strip.morph_deltas,
         manifest=manifest,
+        weld_pairs=strip.weld_pairs,
     )
     attachments = [
         Attachment(

@@ -527,3 +527,82 @@ def test_mouthed_assembly_is_deterministic(tmp_path):
     first = _assemble_example(tmp_path, "mouth-interior")
     second = _assemble_example(tmp_path, "mouth-interior")
     assert first == second
+
+
+def test_strip_skins_to_the_pose_correct_socket(rig, mouth_data):
+    """The 2d-review artifact fix, held permanently: skinning the baked
+    strip open must land near the per-pose rebuilt socket (a rest-built
+    strip measured 4 cm of deviation, standing as ridges through the
+    jaw-following anatomy). Deep interior exact at the full-open
+    reference; the rest-shaped cuff accounts for the small residual."""
+    import json as jsonlib
+
+    from character_factory.assembly.mouth import (
+        _jaw_rotation,
+        build_socket,
+        export_strip,
+        jaw_subtree_weights,
+        skin_jaw,
+    )
+
+    document = jsonlib.loads((EXAMPLES / "storyteller.char.json").read_text())
+    body = document["body"]
+    evaluation = rig.evaluate(body["identity"], body["resting_expression"],
+                              proportions=body.get("proportions"))
+    strip = export_strip(rig, mouth_data, evaluation)
+    pivot = evaluation.skeleton[rig.joint_index("c_jaw"), :3]
+    strip_jaw = jaw_subtree_weights(rig, strip.joints, strip.weights)
+    body_jaw = jaw_subtree_weights(rig, rig.vertex_joints, rig.vertex_weights)
+    for level, bound_cm in ((0.5, 1.6), (1.0, 1.2)):
+        rotation, _ = _jaw_rotation(mouth_data, pivot, level)
+        skinned = skin_jaw(strip.vertices, strip_jaw, rotation, pivot)
+        posed = skin_jaw(evaluation.vertices, body_jaw, rotation, pivot)
+        rebuilt, _ = build_socket(posed, mouth_data)
+        deviation = np.linalg.norm(skinned - rebuilt.vertices, axis=1)
+        assert deviation.max() < bound_cm, f"jaw {level}: {deviation.max():.2f} cm"
+
+
+def test_corner_seam_duplicates_are_welded(exported):
+    """The rig's corner seam-duplicate vertices carry different weights and
+    tear ~1.5 mm apart under the jaw once the portal is removed; the export
+    welds each pair (and the strip's corner columns) to one averaged set."""
+    from character_factory.assembly.gltf import read_accessor
+
+    gltf, binary, body = _body_prim(exported["mouth-interior"])
+    prim = body["primitives"][0]
+    positions = read_accessor(gltf, binary, prim["attributes"]["POSITION"]).astype(np.float64)
+    joints4 = read_accessor(gltf, binary, prim["attributes"]["JOINTS_0"]).astype(np.int64)
+    weights4 = read_accessor(gltf, binary, prim["attributes"]["WEIGHTS_0"]).astype(np.float64)
+    # Every exported copy of each pair (the lip corner and its seam
+    # duplicate) must share one influence set.
+    document = json.loads((EXAMPLES / "storyteller.char.json").read_text())
+    body_block = document["body"]
+    rest = rig_module_rest(body_block)
+    for pair in ((5463, 5462), (2577, 2576)):
+        cluster = np.concatenate([
+            np.where(np.linalg.norm(positions - rest[v] * 0.01, axis=1) < 1e-6)[0]
+            for v in pair
+        ])
+        assert len(cluster) >= 2
+        influence = {(int(j), round(float(w), 5))
+                     for j, w in zip(joints4[cluster[0]], weights4[cluster[0]]) if w > 0}
+        for vertex in cluster[1:]:
+            got = {(int(j), round(float(w), 5))
+                   for j, w in zip(joints4[vertex], weights4[vertex]) if w > 0}
+            assert got == influence
+
+
+_REST_CACHE = {}
+
+
+def rig_module_rest(body_block):
+    key = json.dumps(body_block, sort_keys=True)[:64]
+    if key not in _REST_CACHE:
+        from character_factory.assembly.rig import load_rig
+
+        rig = load_rig(_real_rig_dir())
+        _REST_CACHE[key] = rig.evaluate(
+            body_block["identity"], body_block["resting_expression"],
+            proportions=body_block.get("proportions"),
+        ).vertices
+    return _REST_CACHE[key]

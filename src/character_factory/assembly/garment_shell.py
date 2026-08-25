@@ -242,12 +242,12 @@ def _bilinear(image: np.ndarray, uv: np.ndarray) -> np.ndarray:
     return top * (1 - fy) + bottom * fy
 
 
-def welded_field(soft: np.ndarray, rig, canonical_vertices: np.ndarray,
+def welded_field(soft: np.ndarray, surface, canonical_vertices: np.ndarray,
                  constants: ShellConstants) -> dict:
     """Area-reconcile per-corner alpha samples onto welded body vertices,
     then smooth only the cutoff-ambiguous band on the surface graph."""
-    faces = rig.faces
-    corner_uv = rig.texcoords[rig.texcoord_faces]          # (F, 3, 2)
+    faces = surface.faces
+    corner_uv = surface.texcoords[surface.texcoord_faces]          # (F, 3, 2)
     corner_alpha = _bilinear(soft, corner_uv)              # (F, 3)
 
     v0 = canonical_vertices[faces[:, 0]]
@@ -325,15 +325,15 @@ def _refine_crossing(soft: np.ndarray, uv_a: np.ndarray, uv_b: np.ndarray,
     return float(np.clip(0.5 * (low_t + high_t), clamp, 1.0 - clamp))
 
 
-def march_cut(values: np.ndarray, soft: np.ndarray, rig,
+def march_cut(values: np.ndarray, soft: np.ndarray, surface,
               canonical_vertices: np.ndarray,
               constants: ShellConstants) -> dict:
     """Clip the body surface at the 0.5 level set. Shared geometry at cut
     edges (their crossing refined against the alpha in UV space),
     per-corner UVs interpolated in the owning source face, exact
     source-face/barycentric correspondence for every shell vertex."""
-    faces = rig.faces
-    corner_uv = rig.texcoords[rig.texcoord_faces]
+    faces = surface.faces
+    corner_uv = surface.texcoords[surface.texcoord_faces]
     covered = values >= 0.5
 
     body_to_shell: dict[int, int] = {}
@@ -420,7 +420,7 @@ def march_cut(values: np.ndarray, soft: np.ndarray, rig,
         "source_bary": np.asarray(source_bary, dtype=np.float64),
     }
     _filter_components(result, constants)
-    _audit_correspondence(result, rig, canonical_vertices)
+    _audit_correspondence(result, surface, canonical_vertices)
     result["boundary"] = _boundary(result["faces"])
     return result
 
@@ -473,8 +473,8 @@ def _compact(cut: dict, keep_face: np.ndarray) -> None:
     cut["source_bary"] = cut["source_bary"][used]
 
 
-def _audit_correspondence(cut: dict, rig, canonical_vertices: np.ndarray) -> None:
-    reconstructed = _from_bary(cut, canonical_vertices, rig)
+def _audit_correspondence(cut: dict, surface, canonical_vertices: np.ndarray) -> None:
+    reconstructed = _from_bary(cut, canonical_vertices, surface)
     error = np.linalg.norm(reconstructed - cut["positions"], axis=1)
     if error.max() > 2e-5:
         raise ShellRejected("correspondence-error",
@@ -487,8 +487,8 @@ def _audit_correspondence(cut: dict, rig, canonical_vertices: np.ndarray) -> Non
         raise ShellRejected("correspondence-error", "barycentric sum")
 
 
-def _from_bary(cut: dict, body_vertices: np.ndarray, rig) -> np.ndarray:
-    triangles = rig.faces[cut["source_face"]]
+def _from_bary(cut: dict, body_vertices: np.ndarray, surface) -> np.ndarray:
+    triangles = surface.faces[cut["source_face"]]
     corners = body_vertices[triangles]                     # (N, 3, 3)
     return np.einsum("nk,nkd->nd", cut["source_bary"], corners)
 
@@ -559,13 +559,13 @@ def _geodesic_from_boundary(positions: np.ndarray, faces: np.ndarray,
     return distances
 
 
-def build_solid(cut: dict, identity_vertices: np.ndarray, rig,
+def build_solid(cut: dict, identity_vertices: np.ndarray, surface,
                 constants: ShellConstants) -> dict:
     """Reconstruct on the character's identity, lift, fair, and close into
     one watertight solid (outer + inner + sidewalls)."""
-    source = _from_bary(cut, identity_vertices, rig)
-    body_normal = _body_normals(identity_vertices, rig.faces)
-    triangles = rig.faces[cut["source_face"]]
+    source = _from_bary(cut, identity_vertices, surface)
+    body_normal = _body_normals(identity_vertices, surface.faces)
+    triangles = surface.faces[cut["source_face"]]
     normal = np.einsum("nk,nkd->nd", cut["source_bary"],
                        body_normal[triangles])
     normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-12)
@@ -710,10 +710,10 @@ def _audit_solid(vertices: np.ndarray, faces: np.ndarray, outer_count: int,
 # skin weights and covered-body faces
 # --------------------------------------------------------------------------
 
-def transfer_weights(cut: dict, rig, outer_count: int) -> tuple[np.ndarray, np.ndarray]:
+def transfer_weights(cut: dict, surface, outer_count: int) -> tuple[np.ndarray, np.ndarray]:
     """Barycentric combination of the source triangle's body influences;
     deterministic top-4 truncation; inner vertices copy their outer."""
-    triangles = rig.faces[cut["source_face"]]              # (N, 3)
+    triangles = surface.faces[cut["source_face"]]              # (N, 3)
     joints = np.zeros((outer_count, 4), dtype=np.uint16)
     weights = np.zeros((outer_count, 4), dtype=np.float64)
     for index in range(outer_count):
@@ -723,11 +723,11 @@ def transfer_weights(cut: dict, rig, outer_count: int) -> tuple[np.ndarray, np.n
             if bary <= 0:
                 continue
             body_vertex = triangles[index, k]
-            for slot in range(rig.vertex_joints.shape[1]):
-                weight = float(rig.vertex_weights[body_vertex, slot])
+            for slot in range(surface.vertex_joints.shape[1]):
+                weight = float(surface.vertex_weights[body_vertex, slot])
                 if weight <= 0:
                     continue
-                joint = int(rig.vertex_joints[body_vertex, slot])
+                joint = int(surface.vertex_joints[body_vertex, slot])
                 combined[joint] = combined.get(joint, 0.0) + bary * weight
         rows = [(joint, weight) for joint, weight in combined.items()
                 if weight > 1e-7]
@@ -746,7 +746,7 @@ def transfer_weights(cut: dict, rig, outer_count: int) -> tuple[np.ndarray, np.n
             np.concatenate([weights, weights]).astype(np.float32))
 
 
-def covered_body_faces(values: np.ndarray, rig, adjacency,
+def covered_body_faces(values: np.ndarray, surface, adjacency,
                        constants: ShellConstants) -> np.ndarray:
     """Conservative hide set: coverage eroded by welded rings; a face hides
     only when all three vertices remain covered."""
@@ -755,7 +755,7 @@ def covered_body_faces(values: np.ndarray, rig, adjacency,
     for _ in range(constants.erode_rings):
         covered_neighbors = adjacency.dot(covered.astype(np.float64))
         covered = covered & (covered_neighbors >= degree - 1e-9)
-    hide = covered[rig.faces].all(axis=1)
+    hide = covered[surface.faces].all(axis=1)
     return np.where(hide)[0].astype(np.int64)
 
 
@@ -779,7 +779,7 @@ class PreparedShell:
     audit: dict = field(default_factory=dict)
 
 
-def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
+def prepare_shell(surface, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
                   canonical_vertices: np.ndarray, atlas_valid: np.ndarray,
                   excluded_regions: np.ndarray | None = None,
                   constants: ShellConstants | None = None) -> PreparedShell:
@@ -791,13 +791,13 @@ def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
     constants = constants or ShellConstants()
     alpha = prepare_alpha(garment_rgb, atlas_valid, constants,
                           excluded_regions=excluded_regions)
-    fields = welded_field(alpha["soft"], rig, canonical_vertices, constants)
+    fields = welded_field(alpha["soft"], surface, canonical_vertices, constants)
     seam = _seam_diagnostic(fields, constants)
-    cut = march_cut(fields["values"], alpha["soft"], rig,
+    cut = march_cut(fields["values"], alpha["soft"], surface,
                     canonical_vertices, constants)
-    solid = build_solid(cut, identity_vertices, rig, constants)
-    joints4, weights4 = transfer_weights(cut, rig, solid["outer_count"])
-    hidden = covered_body_faces(fields["values"], rig, fields["adjacency"],
+    solid = build_solid(cut, identity_vertices, surface, constants)
+    joints4, weights4 = transfer_weights(cut, surface, solid["outer_count"])
+    hidden = covered_body_faces(fields["values"], surface, fields["adjacency"],
                                 constants)
 
     return PreparedShell(
@@ -930,7 +930,8 @@ def evaluate_posed_skeleton(rig, identity, resting_expression, pose_vector,
 def pose_gate(rig, shell: PreparedShell, evaluation, identity,
               resting_expression, proportions=None,
               constants: ShellConstants | None = None,
-              poses: dict[str, np.ndarray] | None = None) -> dict:
+              poses: dict[str, np.ndarray] | None = None,
+              surface=None, body_rest=None) -> dict:
     """Certification: across the pose set, the LBS-posed shell must show
     zero visible body poke — measured against the *retained* body faces
     (covered faces are omitted at export) and confirmed by an ID-buffer
@@ -943,16 +944,19 @@ def pose_gate(rig, shell: PreparedShell, evaluation, identity,
     """
     constants = constants or ShellConstants()
     poses = poses or POSE_SET
+    # The body under test is whatever ships: the rig's own surface, or
+    # the render LOD it declares. The skeleton always comes from the rig.
+    surface = surface if surface is not None else rig
     rest_state = evaluation.skeleton
-    body_rest = evaluation.vertices
-    retained = np.ones(len(rig.faces), dtype=bool)
+    body_rest = body_rest if body_rest is not None else evaluation.vertices
+    retained = np.ones(len(surface.faces), dtype=bool)
     retained[shell.covered_body_faces] = False
     diagnostics = {}
     for name, vector in poses.items():
         posed_state = evaluate_posed_skeleton(
             rig, identity, resting_expression, vector, proportions)
         transforms = _joint_transforms(rest_state, posed_state, rig.parents)
-        body = _lbs(body_rest, rig.vertex_joints, rig.vertex_weights,
+        body = _lbs(body_rest, surface.vertex_joints, surface.vertex_weights,
                     transforms)
         posed = _lbs(shell.vertices, shell.joints4, shell.weights4,
                      transforms)
@@ -960,7 +964,7 @@ def pose_gate(rig, shell: PreparedShell, evaluation, identity,
             raise ShellRejected("pose-nonfinite", name)
         _audit_posed_sidewalls(posed, shell)
         outer = posed[:shell.outer_count]
-        visible_depth, hidden_depth = _poke_depths(outer, body, rig.faces,
+        visible_depth, hidden_depth = _poke_depths(outer, body, surface.faces,
                                                    retained)
         threshold_cm = constants.poke_mm / 10.0
         diagnostics[name] = {
@@ -975,8 +979,8 @@ def pose_gate(rig, shell: PreparedShell, evaluation, identity,
                 "pose-visible-poke",
                 f"{name}: {visible_depth.max() * 10.0:.3f} mm")
         render = _render_poke_check(posed, shell.faces, body,
-                                    rig.faces[retained],
-                                    rig.faces[~retained])
+                                    surface.faces[retained],
+                                    surface.faces[~retained])
         diagnostics[name]["render"] = render
         if render["skin_in_silhouette"] or render["body_holes"]:
             raise ShellRejected(
@@ -1169,11 +1173,11 @@ def configured_constants() -> ShellConstants:
 # atlas helpers
 # --------------------------------------------------------------------------
 
-def valid_atlas_mask(rig, resolution: int) -> np.ndarray:
+def valid_atlas_mask(surface, resolution: int) -> np.ndarray:
     """Rasterize the rig's UV triangles: the valid-atlas mask (True where
     a body face owns the texel). Deterministic per rig + resolution."""
     mask = np.full((resolution, resolution), -np.inf)
-    uv = rig.texcoords[rig.texcoord_faces]                 # (F, 3, 2)
+    uv = surface.texcoords[surface.texcoord_faces]                 # (F, 3, 2)
     xy = uv * (resolution - 1)
     for face in xy:
         _fill(mask, face[0], face[1], face[2], 1.0, 1.0, 1.0)

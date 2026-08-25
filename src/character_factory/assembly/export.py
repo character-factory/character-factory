@@ -37,8 +37,9 @@ SCALE = 0.01
 # = compatible, unknown fields tolerated, and any change to the shape or
 # meaning of an existing field bumps the minor. History: 0.1 shipped a
 # placeholder humanoid_map; 0.2 is the structured humanoid_map object;
-# 0.3 adds the per-slot `garments` render-mode block.
-MANIFEST_SCHEMA_VERSION = "0.3"
+# 0.3 adds the per-slot `garments` render-mode block; 0.4 adds the
+# measured `budget` triangle inventory.
+MANIFEST_SCHEMA_VERSION = "0.4"
 
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
@@ -543,6 +544,11 @@ def export_character_glb(
         body_mesh["weights"] = [0.0] * len(mouth.morph_names)
         body_mesh["extras"] = {"targetNames": list(mouth.morph_names)}
     meshes.append(body_mesh)
+    # Triangle inventory: what this deliverable actually costs, per mesh.
+    # Reported, never enforced — a budget is a product target, not a
+    # correctness invariant, so an elaborate character costs more rather
+    # than failing to build.
+    triangle_counts = {"body": len(indices)}
 
     # 7. Rigid attachments: each becomes a child node of its carrier joint,
     # re-expressed in that joint's local frame (the IBMs are exactly the
@@ -611,6 +617,7 @@ def export_character_glb(
                 ],
             }
         )
+        triangle_counts[attachment.name] = len(att_faces)
         node_index = len(nodes)
         nodes.append({"name": attachment.name, "mesh": len(meshes) - 1})
         parent_node = nodes[attachment.parent_joint + 1]
@@ -661,6 +668,7 @@ def export_character_glb(
                 "material": len(materials) - 1,
             }],
         })
+        triangle_counts[skinned.name] = len(s_indices)
         node_index = len(nodes)
         nodes.append({"name": skinned.name, "mesh": len(meshes) - 1,
                       "skin": 0})
@@ -711,6 +719,14 @@ def export_character_glb(
             "renders additionally apply learned pose correctives.",
         ],
     }
+    manifest["budget"] = {
+        "triangles": dict(sorted(triangle_counts.items())),
+        "total_triangles": int(sum(triangle_counts.values())),
+        "note": "measured from the exported primitives; reported for "
+                "consumers that budget, never enforced here",
+    }
+    if rig.render is not None:
+        manifest["budget"]["render_lod"] = rig.render.lod
     manifest["topology"] = "closed" if mouth is None else "mouth-interior"
     if manifest_extra:
         manifest.update(manifest_extra)

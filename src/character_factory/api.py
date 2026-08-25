@@ -286,15 +286,32 @@ def assemble(
     attachments: list[Attachment] = []
     remove_faces = None
 
+    # The surface everything downstream is placed against: the rig's own
+    # topology, or the coarser tessellation its component declares. Face
+    # indices (eye apertures, mouth portals, covered-garment sets) always
+    # belong to whichever surface is being built.
+    surface_vertices = evaluation.vertices
+    surface_faces = rig.faces
+    if rig.render is not None:
+        surface_vertices = rig.render.vertices_from(evaluation.vertices, rig.faces)
+        surface_faces = rig.render.faces
+
     # Eyes: socket faces removed, eyeballs fitted to the rims, each parented
     # to its eye joint, textured with the slot's albedo.
     if assets_component is not None and (assets_component / "eye_placement.json").is_file():
+        import dataclasses
+
         from character_factory.assembly.eyes import socket_backing
 
         eye_assets = EyeAssets.load(assets_component)
         eye_png = _load_asset(assets_dir, "eye", character).read_bytes()
+        if rig.render is not None:
+            # A render LOD carries its own hand-authored aperture: the
+            # selection cannot be transferred by mapping the source one.
+            eye_assets = dataclasses.replace(
+                eye_assets, socket_faces=rig.render.eye_faces)
         remove_faces = eye_assets.socket_faces
-        for placed in place_eyes(evaluation.vertices, rig.faces, eye_assets):
+        for placed in place_eyes(surface_vertices, surface_faces, eye_assets):
             attachments.append(
                 Attachment(
                     name=f"eye_{placed.side}",
@@ -396,7 +413,8 @@ def assemble(
                    else garment_shells)
         if enabled:
             shell, rejection = _prepare_garment_shell(
-                rig, character, evaluation, garment, atlas)
+                rig, character, evaluation, garment, atlas,
+                surface_vertices, surface_faces)
             if shell is not None:
                 # The shell's texture is the baked garment with its
                 # boundary colors bled outward (atlas hygiene): boundary
@@ -460,19 +478,31 @@ def assemble(
     return result.glb_path
 
 
-def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas):
+def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas,
+                           surface_vertices=None, surface_faces=None):
     """Run the full extraction + certification ladder for one character.
-    Returns (shell, None) on success, (None, reason-code) on any gate."""
+    Returns (shell, None) on success, (None, reason-code) on any gate.
+
+    Extraction runs natively on the surface that ships — a declared
+    render LOD is cut, skinned and certified on its own buffers, never
+    extracted at a finer topology and reduced afterwards.
+    """
     import numpy as np
 
     from character_factory.assembly import garment_shell as shell_module
 
+    surface = rig.render if rig.render is not None else rig
     constants = shell_module.configured_constants()
     canonical = rig.evaluate(
         [0.0] * len(character.identity),
         [0.0] * len(character.resting_expression))
+    canonical_vertices = canonical.vertices
+    if rig.render is not None:
+        canonical_vertices = rig.render.vertices_from(canonical.vertices, rig.faces)
+    if surface_vertices is None:
+        surface_vertices = evaluation.vertices
     resolution = garment_rgb.shape[0]
-    atlas_valid = shell_module.valid_atlas_mask(rig, resolution)
+    atlas_valid = shell_module.valid_atlas_mask(surface, resolution)
     # The region contract mirrors the compositor exactly: the head mask
     # (garment never paints there) subtracts from the key. The feet mask
     # is a shoe-side constraint — a broad lower-body region where the
@@ -481,13 +511,13 @@ def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas):
     excluded = atlas.at_resolution(resolution).head_mask
     try:
         shell = shell_module.prepare_shell(
-            rig, garment_rgb, evaluation.vertices, canonical.vertices,
+            surface, garment_rgb, surface_vertices, canonical_vertices,
             atlas_valid, excluded_regions=excluded, constants=constants)
         shell.audit["pose_gate"] = shell_module.pose_gate(
             rig, shell, evaluation, character.identity,
             character.resting_expression,
             proportions=character.proportions or None,
-            constants=constants)
+            constants=constants, surface=surface, body_rest=surface_vertices)
     except shell_module.ShellRejected as error:
         return None, error.reason
     return shell, None

@@ -40,7 +40,7 @@ def test_export_passes_validation(rig, tmp_path):
     # The manifest's own shape is versioned like character.json: a shape
     # change to any field bumps this, so consumers detect it instead of
     # silently falling back.
-    assert result.manifest["schema_version"] == "0.3"
+    assert result.manifest["schema_version"] == "0.4"
     assert result.manifest["idle_clip"]["starts_at_rest"] is True
 
 

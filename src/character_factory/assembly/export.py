@@ -188,10 +188,13 @@ class SkinnedAttachment:
     roughness: float = 0.8
 
 
-def _unweld(rig: RigDefinition, vertices: np.ndarray,
+def _unweld(surface, vertices: np.ndarray,
             faces: np.ndarray, texcoord_faces: np.ndarray):
     """Split UV-seam vertices: one output vertex per distinct
     (position-index, texcoord-index) corner pair, skin weights copied through.
+
+    `surface` supplies texcoords/vertex_joints/vertex_weights — the rig
+    itself, or its declared render topology.
     """
     pairs = np.stack(
         [faces.reshape(-1), texcoord_faces.reshape(-1)], axis=1
@@ -199,9 +202,9 @@ def _unweld(rig: RigDefinition, vertices: np.ndarray,
     unique_pairs, inverse = np.unique(pairs, axis=0, return_inverse=True)
     position_index = unique_pairs[:, 0]
     positions = vertices[position_index]
-    uvs = rig.texcoords[unique_pairs[:, 1]]
-    joints = rig.vertex_joints[position_index]
-    weights = rig.vertex_weights[position_index]
+    uvs = surface.texcoords[unique_pairs[:, 1]]
+    joints = surface.vertex_joints[position_index]
+    weights = surface.vertex_weights[position_index]
     indices = inverse.reshape(-1, 3).astype(np.uint32)
     return positions, uvs, joints, weights, indices, position_index
 
@@ -302,9 +305,19 @@ def export_character_glb(
             scratch, np.asarray(skinned.vertices, dtype=np.float64),
             skinned.joints4, skinned.weights4, knees, knee_subtrees,
         ))
+    # The render surface: the rig itself, or a coarser tessellation the
+    # component declares. Evaluation always happens at the rig's own
+    # topology (identity, expression, proportions, articulation are
+    # defined there); a declared render LOD carries that result through
+    # the component's pinned barycentric map, with its own transferred
+    # weights. Everything downstream is buffer-driven and unchanged.
+    surface = rig.render if rig.render is not None else rig
+    source_vertices = evaluation.vertices
+    if rig.render is not None:
+        source_vertices = rig.render.vertices_from(source_vertices, rig.faces)
     vertices_cm = restpose.bake_knee_flexion(
-        skeleton, evaluation.vertices, rig.vertex_joints, rig.vertex_weights,
-        knees, knee_subtrees,
+        skeleton, source_vertices, surface.vertex_joints,
+        surface.vertex_weights, knees, knee_subtrees,
     )
     restpose.reauthor_orientations(skeleton)
     ibms = restpose.inverse_binds(skeleton, SCALE)          # after ALL rest edits
@@ -312,13 +325,13 @@ def export_character_glb(
 
     # 2. Mesh: optional face removal (eye sockets), unweld seams, scale to
     # meters, normals, winding.
-    faces, texcoord_faces = rig.faces, rig.texcoord_faces
+    faces, texcoord_faces = surface.faces, surface.texcoord_faces
     if remove_faces is not None and len(remove_faces):
         keep = np.ones(len(faces), dtype=bool)
         keep[np.asarray(remove_faces, dtype=np.int64)] = False
         faces, texcoord_faces = faces[keep], texcoord_faces[keep]
     positions_cm, uvs, joints4, weights4, indices, position_index = _unweld(
-        rig, vertices_cm, faces, texcoord_faces
+        surface, vertices_cm, faces, texcoord_faces
     )
     positions = (positions_cm * SCALE).astype(np.float32)
     normals64 = _vertex_normals(positions.astype(np.float64), indices)

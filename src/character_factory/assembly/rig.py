@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["RigDefinition", "RigEvaluation", "load_rig"]
+__all__ = ["RenderTopology", "RigDefinition", "RigEvaluation", "load_rig"]
 
 _BUFFERS = {
     "faces": "character_torch.mesh.faces",
@@ -28,6 +28,52 @@ _BUFFERS = {
     "skin_weights": "character_torch.linear_blend_skinning.skin_weights_flattened",
     "skin_vertices": "character_torch.linear_blend_skinning.vert_indices_flattened",
 }
+
+
+@dataclass
+class RenderTopology:
+    """A coarser tessellation the component declares for rendering.
+
+    The rig always *evaluates* at its source topology — identity, the
+    expression basis, the proportion controls, and articulation are all
+    defined there. A component may additionally declare a render LOD:
+    the supplied barycentric map carries each render vertex as a fixed
+    combination of one source triangle's corners, so evaluated geometry
+    flows through unchanged and nothing is re-solved per character.
+
+    Skin weights and the expression morphs are transferred through the
+    same correspondence at authoring time and pinned in the component;
+    aperture face lists are exact per-LOD authored data (transferring a
+    selection by thresholding a mapped field over-removes — that failure
+    is a permanent guard in the authoring tool, never a fallback).
+    """
+
+    lod: int
+    faces: "np.ndarray"           # (F, 3) int64 — render position indices
+    texcoords: "np.ndarray"       # (T, 2) float32, image-convention V
+    texcoord_faces: "np.ndarray"  # (F, 3) int64
+    vertex_joints: "np.ndarray"   # (V, 4) uint16 — transferred
+    vertex_weights: "np.ndarray"  # (V, 4) float32 — transferred, sums to 1
+    map_triangles: "np.ndarray"   # (V,) int64 — source triangle per vertex
+    map_barycentric: "np.ndarray" # (V, 3) float64
+    eye_faces: "np.ndarray"       # authored aperture (render indices)
+    mouth_faces: "np.ndarray"     # authored aperture (render indices)
+    morph_indices: list           # per unit: moved render-vertex indices
+    morph_deltas: list            # per unit: (n, 3) float32 cm
+
+    def vertices_from(self, source_vertices, source_faces):
+        """Carry evaluated source geometry to the render tessellation."""
+        import numpy as np
+
+        corners = source_vertices[source_faces[self.map_triangles]]
+        return np.einsum("nk,nkd->nd", self.map_barycentric, corners)
+
+    def morph_dense(self, unit: int) -> "np.ndarray":
+        import numpy as np
+
+        dense = np.zeros((len(self.map_triangles), 3), dtype=np.float64)
+        dense[self.morph_indices[unit]] = self.morph_deltas[unit]
+        return dense
 
 
 @dataclass
@@ -47,6 +93,7 @@ class RigDefinition:
     vertex_joints: "np.ndarray"  # (V, 4) uint16 — LBS joints (rig native ≤ 4)
     vertex_weights: "np.ndarray" # (V, 4) float32 — sums to 1
     component_dir: "Path | None" = None  # where the component was loaded from
+    render: "RenderTopology | None" = None  # declared render LOD, if any
 
     @property
     def joint_names(self) -> list[str]:
@@ -160,6 +207,60 @@ def _dense_weights(entries, vertex_count: int, joint_count: int):
     return joints, weights
 
 
+def _load_render_topology(component_dir: "Path", metadata: dict):
+    """The component's declared render LOD, hash-verified before use.
+
+    Absent declaration means the source topology is the render topology
+    (every component before this capability existed).
+    """
+    import hashlib
+
+    import numpy as np
+
+    block = metadata.get("render")
+    if not block:
+        return None
+    path = component_dir / block["artifact"]
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{component_dir} declares render LOD {block.get('lod')} but "
+            f"{block['artifact']} is missing")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != block["sha256"]:
+        raise ValueError(
+            f"{path} does not match its pinned hash — refusing to render "
+            f"from unverified topology")
+    data = np.load(path)
+    faces = data["faces"].astype(np.int64)
+    checks = {
+        "triangles": len(faces),
+        "vertices": len(data["map_triangles"]),
+        "texcoords": len(data["texcoords"]),
+    }
+    for key, actual in checks.items():
+        if block[key] != actual:
+            raise ValueError(
+                f"render topology mismatch: metadata says {block[key]} {key}, "
+                f"the artifact has {actual}")
+    units = int(data["unit_count"][0]) if "unit_count" in data else 0
+    return RenderTopology(
+        lod=int(block["lod"]),
+        faces=faces,
+        texcoords=data["texcoords"].astype(np.float32),
+        texcoord_faces=data["texcoord_faces"].astype(np.int64),
+        vertex_joints=data["vertex_joints"].astype(np.uint16),
+        vertex_weights=data["vertex_weights"].astype(np.float32),
+        map_triangles=data["map_triangles"].astype(np.int64),
+        map_barycentric=data["map_barycentric"].astype(np.float64),
+        eye_faces=data["eye_faces"].astype(np.int64),
+        mouth_faces=data["mouth_faces"].astype(np.int64),
+        morph_indices=[data[f"indices_{i:02d}"].astype(np.int64)
+                       for i in range(units)],
+        morph_deltas=[data[f"deltas_{i:02d}"].astype(np.float32)
+                      for i in range(units)],
+    )
+
+
 def load_rig(component_dir: str | Path, device: str = "cpu") -> RigDefinition:
     import numpy as np
     import torch
@@ -213,6 +314,7 @@ def load_rig(component_dir: str | Path, device: str = "cpu") -> RigDefinition:
     return RigDefinition(
         model=model,
         metadata=metadata,
+        render=_load_render_topology(component_dir, metadata),
         faces=arrays["faces"].astype(np.int64),
         texcoords=arrays["texcoords"].astype(np.float32),
         texcoord_faces=arrays["texcoord_faces"].astype(np.int64),

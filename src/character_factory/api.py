@@ -187,6 +187,7 @@ def assemble(
     *,
     registry=None,
     device: str = "cpu",
+    garment_shells: bool | None = None,
 ) -> Path:
     """Build the rigged .glb for a character from its baked assets.
 
@@ -194,6 +195,12 @@ def assemble(
     (`skin.png`, `eye.png`, `garment.png`, optional `shoe.png`). When the
     character carries an `assets` block, every file is verified against its
     pinned hash before use; a mismatch is a hard error.
+
+    `garment_shells` overrides the configured feature gate for this call
+    (None = the gate; assembly behavior like turbo, never recorded in the
+    character document). With the feature on, a character whose garment
+    extraction fails any gate silently keeps the painted composite — the
+    manifest's `garments` block records which mode shipped.
     """
     import numpy as np
     from PIL import Image
@@ -371,6 +378,56 @@ def assemble(
                                  mouth_removal])
         )
 
+    # Garment shells (feature-gated assembly behavior, never recipe): the
+    # baked garment texture may become a skinned, body-following closed
+    # solid over the painted composite. Every failed gate falls back to
+    # paint for this character, silently; the manifest's `garments` block
+    # records the shipped mode per slot so consumers never sniff.
+    from character_factory.assembly import garment_shell as shell_module
+    from character_factory.assembly.export import SkinnedAttachment
+
+    skinned_attachments: list[SkinnedAttachment] = []
+    garments_manifest: dict = {}
+    if "shoe" in character.textures:
+        garments_manifest["shoe"] = {"render_mode": "painted"}
+    if "garment" in character.textures:
+        garments_manifest["garment"] = {"render_mode": "painted"}
+        enabled = (shell_module.shells_enabled() if garment_shells is None
+                   else garment_shells)
+        if enabled:
+            shell, rejection = _prepare_garment_shell(
+                rig, character, evaluation, garment, atlas)
+            if shell is not None:
+                shell_png = _load_asset(
+                    assets_dir, "garment", character).read_bytes()
+                skinned_attachments.append(SkinnedAttachment(
+                    name="garment",
+                    vertices=shell.vertices,
+                    faces=shell.faces,
+                    corner_uv=shell.corner_uv,
+                    joints4=shell.joints4,
+                    weights4=shell.weights4,
+                    albedo_png=shell_png,
+                ))
+                remove_faces = (
+                    shell.covered_body_faces if remove_faces is None
+                    else np.concatenate([
+                        np.asarray(remove_faces, dtype=np.int64),
+                        shell.covered_body_faces]))
+                garments_manifest["garment"] = {
+                    "render_mode": "shell",
+                    "shell": {
+                        "constants_version": shell.audit["constants_version"],
+                        "components": shell.audit["components"],
+                        "solid_vertices": int(len(shell.vertices)),
+                        "solid_faces": int(len(shell.faces)),
+                        "hidden_body_faces": int(len(shell.covered_body_faces)),
+                    },
+                }
+            else:
+                garments_manifest["garment"] = {
+                    "render_mode": "painted", "reason": rejection}
+
     result = export_character_glb(
         rig,
         character.identity,
@@ -381,10 +438,46 @@ def assemble(
         generator=f"character-factory/{__import__('character_factory').__version__}",
         remove_faces=remove_faces,
         attachments=attachments,
+        skinned_attachments=skinned_attachments,
         evaluation=evaluation,
         mouth=mouth_glb,
+        manifest_extra={"garments": garments_manifest} if garments_manifest
+        else None,
     )
     return result.glb_path
+
+
+def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas):
+    """Run the full extraction + certification ladder for one character.
+    Returns (shell, None) on success, (None, reason-code) on any gate."""
+    import numpy as np
+
+    from character_factory.assembly import garment_shell as shell_module
+
+    constants = shell_module.configured_constants()
+    canonical = rig.evaluate(
+        [0.0] * len(character.identity),
+        [0.0] * len(character.resting_expression))
+    resolution = garment_rgb.shape[0]
+    atlas_valid = shell_module.valid_atlas_mask(rig, resolution)
+    at_resolution = atlas.at_resolution(resolution)
+    excluded_masks = [mask for mask in (at_resolution.head_mask,
+                                        at_resolution.feet_mask)
+                      if mask is not None]
+    excluded = (np.logical_or.reduce(excluded_masks)
+                if excluded_masks else None)
+    try:
+        shell = shell_module.prepare_shell(
+            rig, garment_rgb, evaluation.vertices, canonical.vertices,
+            atlas_valid, excluded_regions=excluded, constants=constants)
+        shell.audit["pose_gate"] = shell_module.pose_gate(
+            rig, shell, evaluation, character.identity,
+            character.resting_expression,
+            proportions=character.proportions or None,
+            constants=constants)
+    except shell_module.ShellRejected as error:
+        return None, error.reason
+    return shell, None
 
 
 def _prepare_mouth(rig, assets_component, evaluation, character):

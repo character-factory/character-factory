@@ -364,9 +364,12 @@ class CharacterService:
             )
         return path
 
-    def assemble(self, character_id: str) -> CharacterRecord:
+    def assemble(self, character_id: str,
+                 garment_shells: bool | None = None) -> CharacterRecord:
         """Build the rigged scene from stored assets. Single-flight; the scene
-        file is replaced atomically and the revision bumped on success."""
+        file is replaced atomically and the revision bumped on success.
+        `garment_shells` overrides the configured feature gate for this
+        build only (the review app's shell-vs-painted comparison)."""
         from character_factory.api import AssetError, assemble
 
         directory = self._dir(character_id)
@@ -381,6 +384,7 @@ class CharacterService:
                         directory / "assets",
                         Path(tmp) / "scene.glb",
                         registry=self.registry,
+                        garment_shells=garment_shells,
                     )
                     os.replace(built, directory / "scene.glb")
             except (AssetError, FileNotFoundError, ValueError) as error:

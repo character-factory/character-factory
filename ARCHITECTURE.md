@@ -358,6 +358,26 @@ system and deliberately boring:
    height), and the resulting RGBA overlay composites above the garment
    layer — the normative order is skin, then garment, then shoe
    (SPEC.md §9). Result: one albedo atlas on one body mesh.
+
+   **Garment shells (feature-gated).** With the `assembly.garment_shells`
+   gate on (config or the rebuild request's `shells` override — assembly
+   behavior like turbo, never recorded in the character document), the
+   baked garment texture can additionally become geometry: its own keyed
+   coverage — never a canonical or per-style cut — is marched through the
+   body triangles, reconstructed on the character's identity, lifted and
+   faired under clamps, closed into a watertight solid, and exported as a
+   skinned mesh riding the body's own skin, with a conservatively eroded
+   set of covered body faces omitted underneath. Extraction is a pure
+   function of the published baked asset bytes; certification is a
+   fail-closed ladder (alpha quality, seam-crack detection, topology and
+   weight audits, then a pose-envelope gate requiring zero visible
+   body-through-shell poke across rest/walk/arms-raised/crouch, measured
+   geometrically and by ID/depth renders). A character that fails any
+   gate keeps the painted composite — identically to the gate being off —
+   and the manifest's `garments` block records the shipped `render_mode`
+   per slot (with the rejection reason when an extraction was attempted),
+   so consumers never sniff. Validators validate; nothing repairs a
+   nonconforming mask.
 3. **Eyes.** A small patch of faces over each eye socket is removed; a
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
    is placed by a similarity fit of its lid margin to the socket rim, and
@@ -461,7 +481,9 @@ of conventions chosen so the artifact imports and retargets correctly:
   character file: same major = compatible, unknown fields must be
   tolerated, and any change to the shape or meaning of an existing field
   bumps the minor version — consumers check `format` + `schema_version`
-  rather than sniffing field shapes. On mouth-interior exports the jaw
+  rather than sniffing field shapes (0.3 added the per-slot `garments`
+  block: `render_mode: "shell" | "painted"` for each garment-class slot,
+  with the shell's inventory or the rejection reason). On mouth-interior exports the jaw
   block states its contract explicitly: rotation sign (positive about the
   local axis opens, in the file's right-handed glTF frame — handedness
   conversion at import flips it) and the two jaw compositions

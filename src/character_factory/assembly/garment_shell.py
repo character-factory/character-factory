@@ -965,10 +965,14 @@ _VIEWS = {"front": 0.0, "three_quarter": 35.0, "side": 90.0, "back": 180.0}
 
 
 # A pixel counts as skin-through-cloth only when the visible body surface
-# sits just in front of the shell (within this window). Body parts
-# legitimately passing in front of the garment (an arm before the torso)
-# are far in front and are occlusion, not poke.
-_POKE_DEPTH_WINDOW_CM = 1.0
+# sits just in front of the shell (within this window). A true poke
+# renders skin within roughly the lift distance of the pierced cloth;
+# body parts legitimately passing in front (a raised wrist before the
+# torso, measured at ~9.5 mm in the R&D-pose sweep) sit farther out and
+# are occlusion, not poke. This is a measurement-classification constant
+# of the render check, not a clearance: the geometric 0.5 mm gate against
+# retained faces is unaffected by it.
+_POKE_DEPTH_WINDOW_CM = 0.3
 
 
 def _render_poke_check(shell_vertices: np.ndarray, shell_faces: np.ndarray,
@@ -1042,6 +1046,61 @@ def _fill(depth: np.ndarray, p0, p1, p2, z0, z1, z2) -> None:
     region = depth[minimum[1]:maximum[1] + 1, minimum[0]:maximum[0] + 1]
     update = inside & (z > region)
     region[update] = z[update]
+
+
+# --------------------------------------------------------------------------
+# the feature gate and data-supplied constants
+# --------------------------------------------------------------------------
+
+ENV_GATE = "CHARACTER_FACTORY_GARMENT_SHELLS"
+ENV_SEAM_BUDGET = "CHARACTER_FACTORY_GARMENT_SEAM_BUDGET"
+
+
+def _config_section() -> dict:
+    import json
+    import os  # noqa: F401 — parallel shape with the env readers
+
+    from character_factory.registry.store import cache_dir
+
+    path = cache_dir() / "config.json"
+    if not path.is_file():
+        return {}
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    section = document.get("assembly")
+    return section if isinstance(section, dict) else {}
+
+
+def shells_enabled() -> bool:
+    """The feature gate — configuration, never code, never recipe (the
+    turbo/quantization pattern): `CHARACTER_FACTORY_GARMENT_SHELLS` in the
+    environment, else `assembly.garment_shells` in the cache config.
+    Ships default OFF."""
+    import os
+
+    value = os.environ.get(ENV_GATE)
+    if value is not None:
+        return value.strip().lower() in ("1", "true", "on", "yes")
+    return bool(_config_section().get("garment_shells", False))
+
+
+def configured_constants() -> ShellConstants:
+    """Extraction constants with their data-supplied overrides. The seam-
+    disagreement budget arrives as data (environment or
+    `assembly.garment_shell_seam_budget`) once its derivation evidence
+    lands — until then the seam detector reports and never rejects."""
+    import os
+
+    budget = os.environ.get(ENV_SEAM_BUDGET)
+    if budget is None:
+        budget = _config_section().get("garment_shell_seam_budget")
+    if budget is None:
+        return ShellConstants()
+    return ShellConstants(seam_disagreement_budget=float(budget))
 
 
 # --------------------------------------------------------------------------

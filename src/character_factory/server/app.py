@@ -269,6 +269,11 @@ def create_app(service: CharacterService):
                     "type": "boolean", "default": False,
                     "description": "For \"bake\": use the fast distilled "
                                    "base variant.",
+                }, "shells": {
+                    "type": "boolean",
+                    "description": "For \"assemble\": override the "
+                                   "configured garment-shell gate for this "
+                                   "build only (omit = the gate).",
                 }},
             }}}}},
     )
@@ -277,8 +282,11 @@ def create_app(service: CharacterService):
         if stage == "assemble":
             import anyio
 
+            shells = payload.get("shells")
+            if shells is not None:
+                shells = bool(shells)
             record = await anyio.to_thread.run_sync(
-                service.assemble, character_id
+                service.assemble, character_id, shells
             )
             return record_json(record)
         if stage == "bake":

@@ -36,8 +36,9 @@ SCALE = 0.01
 # character schema version). Same discipline as character.json: same major
 # = compatible, unknown fields tolerated, and any change to the shape or
 # meaning of an existing field bumps the minor. History: 0.1 shipped a
-# placeholder humanoid_map; 0.2 is the structured humanoid_map object.
-MANIFEST_SCHEMA_VERSION = "0.2"
+# placeholder humanoid_map; 0.2 is the structured humanoid_map object;
+# 0.3 adds the per-slot `garments` render-mode block.
+MANIFEST_SCHEMA_VERSION = "0.3"
 
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
@@ -167,6 +168,26 @@ class Attachment:
     roughness: float = 0.5
 
 
+@dataclass
+class SkinnedAttachment:
+    """A fully skinned extra mesh (a garment shell): rides the body's own
+    skin, its own primitive and material. Vertices arrive in rig-native
+    rest coordinates (cm) with per-corner UVs (a corner may sample a
+    different UV than another corner sharing its vertex — the exporter
+    performs the UV-seam split glTF requires). Winding is authored
+    (closed solids arrive coherent) and is exported as-is."""
+
+    name: str
+    vertices: "np.ndarray"          # (V, 3) rest, cm
+    faces: "np.ndarray"             # (F, 3) — position indices
+    corner_uv: "np.ndarray"         # (F, 3, 2)
+    joints4: "np.ndarray"           # (V, 4)
+    weights4: "np.ndarray"          # (V, 4) float32
+    albedo_png: bytes | None = None
+    double_sided: bool = True
+    roughness: float = 0.8
+
+
 def _unweld(rig: RigDefinition, vertices: np.ndarray,
             faces: np.ndarray, texcoord_faces: np.ndarray):
     """Split UV-seam vertices: one output vertex per distinct
@@ -183,6 +204,22 @@ def _unweld(rig: RigDefinition, vertices: np.ndarray,
     weights = rig.vertex_weights[position_index]
     indices = inverse.reshape(-1, 3).astype(np.uint32)
     return positions, uvs, joints, weights, indices, position_index
+
+
+def _split_corner_uv(vertices: np.ndarray, faces: np.ndarray,
+                     corner_uv: np.ndarray, joints4: np.ndarray,
+                     weights4: np.ndarray):
+    """Per-corner UVs → glTF's single-index form: one output vertex per
+    distinct (position index, uv) corner; positions and skin influences
+    copy through. Corners whose UVs agree bit-for-bit stay welded."""
+    flat_vertex = faces.reshape(-1)
+    flat_uv = corner_uv.reshape(-1, 2)
+    keys = np.concatenate(
+        [flat_vertex[:, None].astype(np.float64), flat_uv], axis=1)
+    unique, inverse = np.unique(keys, axis=0, return_inverse=True)
+    source = unique[:, 0].astype(np.int64)
+    return (vertices[source], unique[:, 1:3], joints4[source],
+            weights4[source], inverse.reshape(-1, 3).astype(np.int64))
 
 
 def _vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
@@ -240,8 +277,10 @@ def export_character_glb(
     generator: str = "character-factory",
     remove_faces: "np.ndarray | None" = None,
     attachments: list[Attachment] = (),
+    skinned_attachments: "list[SkinnedAttachment]" = (),
     evaluation=None,
     mouth: "MouthGlb | None" = None,
+    manifest_extra: dict | None = None,
 ) -> ExportResult:
     out_path = Path(out_path)
 
@@ -250,9 +289,22 @@ def export_character_glb(
         evaluation = rig.evaluate(identity, resting_expression)
     skeleton = restpose.Skeleton.from_rig_state(evaluation.skeleton, rig.parents)
     knees = [rig.role_index("left_knee"), rig.role_index("right_knee")]
+    knee_subtrees = [rig.subtree(k) for k in knees]
+    # Skinned attachments must receive the identical rest-pose authoring
+    # the body gets; the bake edits the skeleton in place, so their pass
+    # runs on a throwaway copy before the body's authoritative pass.
+    baked_skinned: list[np.ndarray] = []
+    for skinned in skinned_attachments:
+        scratch = restpose.Skeleton(
+            skeleton.positions.copy(), skeleton.rotations.copy(),
+            skeleton.scales.copy(), rig.parents)
+        baked_skinned.append(restpose.bake_knee_flexion(
+            scratch, np.asarray(skinned.vertices, dtype=np.float64),
+            skinned.joints4, skinned.weights4, knees, knee_subtrees,
+        ))
     vertices_cm = restpose.bake_knee_flexion(
         skeleton, evaluation.vertices, rig.vertex_joints, rig.vertex_weights,
-        knees, [rig.subtree(k) for k in knees],
+        knees, knee_subtrees,
     )
     restpose.reauthor_orientations(skeleton)
     ibms = restpose.inverse_binds(skeleton, SCALE)          # after ALL rest edits
@@ -551,6 +603,56 @@ def export_character_glb(
         parent_node = nodes[attachment.parent_joint + 1]
         parent_node.setdefault("children", []).append(node_index)
 
+    # 7b. Skinned attachments: full-skin extra meshes (garment shells).
+    # Their winding is authored (closed solids arrive coherent) and their
+    # per-corner UVs get the same UV-seam split glTF forces on the body.
+    for skinned, rest_cm in zip(skinned_attachments, baked_skinned):
+        s_pos, s_uv, s_joints, s_weights, s_indices = _split_corner_uv(
+            rest_cm, np.asarray(skinned.faces, dtype=np.int64),
+            np.asarray(skinned.corner_uv, dtype=np.float64),
+            np.asarray(skinned.joints4), np.asarray(skinned.weights4))
+        s_positions = (s_pos * SCALE).astype(np.float32)
+        s_normals = _vertex_normals(
+            s_positions.astype(np.float64), s_indices).astype(np.float32)
+        attributes = {
+            "POSITION": writer.add_accessor(
+                s_positions, "VEC3", target=ARRAY_BUFFER, minmax=True),
+            "NORMAL": writer.add_accessor(
+                s_normals, "VEC3", target=ARRAY_BUFFER),
+            "TEXCOORD_0": writer.add_accessor(
+                s_uv.astype(np.float32), "VEC2", target=ARRAY_BUFFER),
+            "JOINTS_0": writer.add_accessor(
+                s_joints.astype(np.uint16), "VEC4", target=ARRAY_BUFFER),
+            "WEIGHTS_0": writer.add_accessor(
+                s_weights.astype(np.float32), "VEC4", target=ARRAY_BUFFER),
+        }
+        s_index_accessor = writer.add_accessor(
+            s_indices.astype(np.uint32).reshape(-1), "SCALAR",
+            target=ELEMENT_ARRAY_BUFFER)
+        pbr: dict = {"metallicFactor": 0.0,
+                     "roughnessFactor": float(skinned.roughness)}
+        if skinned.albedo_png is not None:
+            pbr["baseColorTexture"] = {"index": add_texture(skinned.albedo_png)}
+        else:
+            pbr["baseColorFactor"] = [0.6, 0.6, 0.6, 1.0]
+        materials.append({
+            "name": skinned.name,
+            "pbrMetallicRoughness": pbr,
+            "doubleSided": bool(skinned.double_sided),
+        })
+        meshes.append({
+            "name": skinned.name,
+            "primitives": [{
+                "attributes": attributes,
+                "indices": s_index_accessor,
+                "material": len(materials) - 1,
+            }],
+        })
+        node_index = len(nodes)
+        nodes.append({"name": skinned.name, "mesh": len(meshes) - 1,
+                      "skin": 0})
+        nodes[0].setdefault("children", []).append(node_index)
+
     # The export manifest: facts about the GLB as an engine deliverable —
     # a pure function of rig version, exporter constants, and the
     # character's skeletal proportions (stature is measured from the
@@ -597,6 +699,8 @@ def export_character_glb(
         ],
     }
     manifest["topology"] = "closed" if mouth is None else "mouth-interior"
+    if manifest_extra:
+        manifest.update(manifest_extra)
     if mouth is not None:
         manifest.update(mouth.manifest)
         jaw = manifest.get("jaw")

@@ -347,9 +347,9 @@ def test_cut_follows_the_mask_curve_not_edge_midpoints():
 
 
 def test_gate_default_off_and_one_line_config_flip(tmp_path, monkeypatch):
-    """The feature gate ships OFF; the blessing sitting's verdict is a
-    one-line config flip (`assembly.garment_shells: true` in the cache
-    config), never a code change."""
+    """The feature gate ships OFF; turning it on is a one-line config
+    flip (`assembly.garment_shells: true` in the cache config), never a
+    code change."""
     import json
 
     monkeypatch.delenv(gs.ENV_GATE, raising=False)

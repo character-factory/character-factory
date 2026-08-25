@@ -392,7 +392,8 @@ def assemble(
     mouth_glb = None
     if character.topology == "mouth-interior":
         mouth_glb, mouth_attachments, mouth_removal = _prepare_mouth(
-            rig, assets_component, evaluation, character
+            rig, assets_component, evaluation, character,
+            surface=rig.render, surface_vertices=surface_vertices
         )
         attachments.extend(mouth_attachments)
         remove_faces = (
@@ -529,9 +530,12 @@ def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas,
     return shell, None
 
 
-def _prepare_mouth(rig, assets_component, evaluation, character):
+def _prepare_mouth(rig, assets_component, evaluation, character,
+                   surface=None, surface_vertices=None):
     """Build the MouthGlb bundle, anatomy attachments, and the portal
-    removal set for a mouth-interior character."""
+    removal set for a mouth-interior character. The mouth data belongs to
+    the surface being built — a render LOD carries its own portal, lip
+    paths and morph basis."""
     from character_factory.assembly import mouth as mouth_assembly
     from character_factory.assembly.export import Attachment, MouthGlb
 
@@ -539,11 +543,13 @@ def _prepare_mouth(rig, assets_component, evaluation, character):
         raise ValueError(
             "mouth-interior assembly requires the assembly-assets component"
         )
+    surface = surface if surface is not None else rig
     data = mouth_assembly.MouthData.load(
         rig_component_dir(rig), rig.metadata
     )
-    rest = evaluation.vertices
-    strip = mouth_assembly.export_strip(rig, data, evaluation)
+    rest = surface_vertices if surface_vertices is not None else evaluation.vertices
+    strip = mouth_assembly.export_strip(rig, data, evaluation, surface=surface,
+                                        rest_vertices=rest)
     body_dense = [data.morph_dense(unit, len(rest))
                   for unit in range(len(data.morph_names))]
 

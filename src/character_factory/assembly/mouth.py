@@ -42,7 +42,7 @@ __all__ = [
 class MouthData:
     """The rig version's mouth constants, loaded and verified."""
 
-    portal_faces: np.ndarray        # (288,) int64 — rig face indices to remove
+    portal_faces: np.ndarray        # (P,) int64 — face indices to remove
     lip_upper: np.ndarray           # (U,) int64 — position-vertex path
     lip_lower: np.ndarray           # (L,) int64
     upper_portal: np.ndarray        # (U+2,) int64 — incl. seam duplicates
@@ -67,11 +67,16 @@ class MouthData:
             raise ValueError(
                 "this body-rig component version declares no mouth data"
             )
+        # The portal is exact per-LOD authored data: its size belongs to
+        # the component version (a coarser render topology needs far
+        # fewer faces to open the same mouth), so the only invariants
+        # here are non-empty and duplicate-free.
         portal = np.asarray(block["portal_faces"], dtype=np.int64)
-        if len(portal) != 288 or len(np.unique(portal)) != 288:
+        if not len(portal) or len(np.unique(portal)) != len(portal):
             raise ValueError(
-                f"mouth portal removal set must be 288 unique faces, got "
-                f"{len(portal)}"
+                f"mouth portal removal set must be a non-empty set of "
+                f"unique faces, got {len(portal)} "
+                f"({len(np.unique(portal))} unique)"
             )
         morphs_path = Path(component_dir) / block["expression_morphs"]["artifact"]
         data = morphs_path.read_bytes()
@@ -297,7 +302,8 @@ def _patch_texcoord_for(position_ids: np.ndarray, faces: np.ndarray,
         ) from None
 
 
-def socket_uvs(rig, data: MouthData, socket: SocketBuild, ring: RingParam) -> np.ndarray:
+def socket_uvs(surface, data: MouthData, socket: SocketBuild,
+               ring: RingParam) -> np.ndarray:
     """UVs for the socket strip, inside the removed patch's own atlas region.
 
     The seam ring lands exactly on the patch's UV boundary (resampled through
@@ -306,11 +312,11 @@ def socket_uvs(rig, data: MouthData, socket: SocketBuild, ring: RingParam) -> np
     density stays even along the interior — and the cap takes the centroid.
     No other chart is touched: the region belonged to the removed faces.
     """
-    upper_t = _patch_texcoord_for(data.lip_upper, rig.faces, rig.texcoord_faces,
+    upper_t = _patch_texcoord_for(data.lip_upper, surface.faces, surface.texcoord_faces,
                                   data.portal_faces)
-    lower_t = _patch_texcoord_for(data.lip_lower, rig.faces, rig.texcoord_faces,
+    lower_t = _patch_texcoord_for(data.lip_lower, surface.faces, surface.texcoord_faces,
                                   data.portal_faces)
-    ring_uv = ring.interpolate(rig.texcoords[upper_t], rig.texcoords[lower_t])
+    ring_uv = ring.interpolate(surface.texcoords[upper_t], surface.texcoords[lower_t])
 
     # Inset the base ring a hair along its local inward normal: resampled
     # ring edges are chords of the patch's boundary polygon, and at concave
@@ -328,8 +334,8 @@ def socket_uvs(rig, data: MouthData, socket: SocketBuild, ring: RingParam) -> np
         normals = -normals
     ring_uv = ring_uv + normals * 0.002
 
-    patch_t = np.unique(rig.texcoord_faces[data.portal_faces])
-    centroid = rig.texcoords[patch_t].astype(np.float64).mean(axis=0)
+    patch_t = np.unique(surface.texcoord_faces[data.portal_faces])
+    centroid = surface.texcoords[patch_t].astype(np.float64).mean(axis=0)
 
     # Radial ring scales chosen so each band's UV area is proportional to
     # its 3D area (an annulus between scales a and b covers a²−b² of the
@@ -358,18 +364,18 @@ def socket_uvs(rig, data: MouthData, socket: SocketBuild, ring: RingParam) -> np
 
 # -- skinning for the strip ---------------------------------------------------
 
-def socket_skin(rig, data: MouthData, socket: SocketBuild, ring: RingParam):
+def socket_skin(surface, data: MouthData, socket: SocketBuild, ring: RingParam):
     """Skin weights for the strip: each ring point interpolates its source
     lip vertices' influences (so the floor follows the jaw and the roof the
     skull, exactly like the lips it extends), every deeper ring inherits its
     ring point's weights, and the cap averages the last ring."""
-    joint_ids = np.unique(rig.vertex_joints[np.r_[data.lip_upper, data.lip_lower]])
+    joint_ids = np.unique(surface.vertex_joints[np.r_[data.lip_upper, data.lip_lower]])
     dense_upper = np.zeros((len(data.lip_upper), len(joint_ids)))
     dense_lower = np.zeros((len(data.lip_lower), len(joint_ids)))
     column = {int(j): c for c, j in enumerate(joint_ids)}
     for dense, path in ((dense_upper, data.lip_upper), (dense_lower, data.lip_lower)):
         for row, vertex in enumerate(path):
-            for j, w in zip(rig.vertex_joints[vertex], rig.vertex_weights[vertex]):
+            for j, w in zip(surface.vertex_joints[vertex], surface.vertex_weights[vertex]):
                 if w > 0:
                     dense[row, column[int(j)]] += float(w)
     ring_dense = ring.interpolate(dense_upper, dense_lower)
@@ -382,7 +388,7 @@ def socket_skin(rig, data: MouthData, socket: SocketBuild, ring: RingParam):
         strip = np.hstack([strip, np.zeros((len(strip), pad))])
         joint_ids = np.concatenate([joint_ids, np.zeros(pad, joint_ids.dtype)])
     order = np.argsort(-strip, axis=1)[:, :4]
-    joints4 = joint_ids[order].astype(rig.vertex_joints.dtype)
+    joints4 = joint_ids[order].astype(surface.vertex_joints.dtype)
     weights4 = np.take_along_axis(strip, order, axis=1).astype(np.float32)
     sums = weights4.sum(axis=1, keepdims=True)
     weights4 = weights4 / np.maximum(sums, 1e-12)
@@ -446,17 +452,23 @@ def skin_jaw(points, jaw_weight, rotation, pivot):
     return points * (1.0 - jaw_weight[:, None]) + moved * jaw_weight[:, None]
 
 
-def export_strip(rig, data: MouthData, evaluation) -> ExportStrip:
-    rest = evaluation.vertices
+def export_strip(rig, data: MouthData, evaluation, surface=None,
+                 rest_vertices=None) -> ExportStrip:
+    """`surface` supplies the mesh buffers (the rig itself, or the render
+    LOD it declares); `rig` always supplies the skeleton. `rest_vertices`
+    is the evaluated geometry on that surface."""
+    surface = surface if surface is not None else rig
+    rest = rest_vertices if rest_vertices is not None else evaluation.vertices
     pivot = evaluation.skeleton[rig.joint_index("c_jaw"), :3]
     rotation, pivot = _jaw_rotation(data, pivot, 1.0)
 
-    body_jaw = jaw_subtree_weights(rig, rig.vertex_joints, rig.vertex_weights)
+    body_jaw = jaw_subtree_weights(rig, surface.vertex_joints,
+                                   surface.vertex_weights)
     posed = skin_jaw(rest, body_jaw, rotation, pivot)
 
     rest_build, ring = build_socket(rest, data)
     target, target_ring = build_socket(posed, data)
-    joints4, weights4 = socket_skin(rig, data, rest_build, ring)
+    joints4, weights4 = socket_skin(surface, data, rest_build, ring)
 
     # MHR's inner-lip seam has near-coincident duplicate vertices at each
     # mouth corner with slightly different skin weights; with the portal
@@ -465,15 +477,22 @@ def export_strip(rig, data: MouthData, evaluation) -> ExportStrip:
     # at export, and the strip's corner columns here, so every party at
     # each corner shares one set of weights.
     weld_pairs = []
-    for pair, ring_position in (
+    # A surface whose inner-lip seam carries no coincident duplicates (the
+    # LOD3 tier) needs no weld at all: `upper_portal` is then the lip path
+    # itself and the pairs collapse to a single vertex.
+    seam_has_duplicates = not (
+        data.upper_portal.shape == data.lip_upper.shape
+        and np.array_equal(data.upper_portal, data.lip_upper))
+    corner_pairs = (
         ((int(data.lip_upper[0]), int(data.upper_portal[1])), 0),
         ((int(data.lip_upper[-1]), int(data.upper_portal[-2])),
          data.samples_per_lip - 1),
-    ):
+    ) if seam_has_duplicates else ()
+    for pair, ring_position in corner_pairs:
         merged: dict[int, float] = {}
         for vertex in pair:
-            for joint, weight in zip(rig.vertex_joints[vertex],
-                                     rig.vertex_weights[vertex]):
+            for joint, weight in zip(surface.vertex_joints[vertex],
+                                     surface.vertex_weights[vertex]):
                 if weight > 0:
                     merged[int(joint)] = merged.get(int(joint), 0.0) + 0.5 * float(weight)
         top = sorted(merged.items(), key=lambda kv: -kv[1])[:4]
@@ -514,7 +533,7 @@ def export_strip(rig, data: MouthData, evaluation) -> ExportStrip:
                 + inverse_skinned * ramp[:, None])
     vertices[:n] = ring.points        # the seam ring is the rest lips, exactly
 
-    uv = socket_uvs(rig, data, target, ring)
+    uv = socket_uvs(surface, data, target, ring)
 
     morph_deltas = []
     for unit in range(len(data.morph_names)):

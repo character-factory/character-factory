@@ -132,13 +132,29 @@ def test_cutoff_instability_fails_closed():
     assert excinfo.value.reason == "alpha-cutoff-unstable"
 
 
-def test_excluded_region_component_fails_closed():
+def test_garment_living_in_excluded_regions_fails_closed():
+    # The whole band sits inside the excluded (head/feet) regions: the
+    # region contract removes essentially all of the key -> reject.
     rgb = band_texture()
     excluded = np.zeros((TEXTURE, TEXTURE), dtype=bool)
     excluded[int(0.3 * TEXTURE):int(0.75 * TEXTURE), :] = True
     with pytest.raises(gs.ShellRejected) as excinfo:
         prepare(rgb, excluded_regions=excluded)
     assert excinfo.value.reason == "alpha-excluded-region"
+
+
+def test_excluded_region_splash_is_masked_not_fatal():
+    # A small splash in an excluded region (the live adapter leaves such
+    # fragments on head/feet islands) is subtracted by the same region
+    # contract the compositor applies to paint; the garment still ships.
+    rgb = band_texture()
+    rgb[2:10, 2:40] = 150                        # splash outside the band
+    excluded = np.zeros((TEXTURE, TEXTURE), dtype=bool)
+    excluded[0:14, :] = True                     # the splash's region
+    shell = prepare(rgb, excluded_regions=excluded)
+    assert 0.0 < shell.audit["excluded_removed"] < 0.25
+    clean = prepare(band_texture())
+    assert shell.outer_face_count == clean.outer_face_count
 
 
 def test_seam_detector_is_report_only_without_budget():

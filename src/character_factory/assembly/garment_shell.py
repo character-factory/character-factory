@@ -84,7 +84,9 @@ class ShellConstants:
     coverage_min: float = 0.005       # keyed fraction of the valid atlas
     coverage_max: float = 0.90
     cutoff_stability_iou: float = 0.99      # measured 0.9977+ across seeds
-    excluded_component_overlap: float = 0.5  # head/feet-region component reject
+    excluded_removed_max: float = 0.25  # keyed fraction the excluded-region
+                                        # masking may remove before the mask
+                                        # itself is judged untrustworthy
     poke_mm: float = 0.5              # pose-gate visible-intersection threshold
     # Seam-disagreement budget: D5 ruling — the value arrives as config/
     # registry data once its derivation evidence lands. None = the
@@ -144,10 +146,16 @@ def _hard_key(rgb: np.ndarray, atlas_valid: np.ndarray, cutoff: int,
 
 
 def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
-                  constants: ShellConstants) -> dict:
+                  constants: ShellConstants,
+                  excluded_regions: np.ndarray | None = None) -> dict:
     """The normative key: hard cutoff over the valid atlas, opened, then
-    gaussian-feathered. Returns hard/soft masks plus audit metrics; raises
-    ShellRejected on any alpha-quality gate."""
+    gaussian-feathered. `excluded_regions` (the atlas's declared head and
+    feet regions) subtract from the key exactly as the compositor's
+    region contract does for paint — the shell keys the same effective
+    garment the painted path composites, and foot geometry stays with the
+    shoe stack. Region masking is atlas contract, never content repair.
+    Returns hard/soft masks plus audit metrics; raises ShellRejected on
+    any alpha-quality gate."""
     from scipy import ndimage
 
     if rgb.ndim != 3 or rgb.shape[2] < 3:
@@ -159,8 +167,22 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
     rgb = rgb[:, :, :3]
     hard = _hard_key(rgb, atlas_valid, constants.key_cutoff,
                      constants.opening_size)
+    excluded_removed = 0.0
+    if excluded_regions is not None:
+        keyed_total = int(hard.sum())
+        hard = hard & ~excluded_regions
+        if keyed_total:
+            excluded_removed = 1.0 - hard.sum() / keyed_total
+        if excluded_removed > constants.excluded_removed_max:
+            # The garment substantially lives in the head/feet regions:
+            # the mask is not trustworthy as a garment.
+            raise ShellRejected("alpha-excluded-region",
+                                f"{excluded_removed:.3f} of the key removed")
+        atlas_valid = atlas_valid & ~excluded_regions
     check = _hard_key(rgb, atlas_valid, constants.key_cutoff_check,
                       constants.opening_size)
+    if excluded_regions is not None:
+        check = check & ~excluded_regions
     valid_area = int(atlas_valid.sum())
     coverage = float(hard.sum()) / max(valid_area, 1)
     if coverage < constants.coverage_min:
@@ -180,23 +202,8 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
         "soft": soft,
         "coverage": coverage,
         "cutoff_stability_iou": stability,
+        "excluded_removed": excluded_removed,
     }
-
-
-def _component_excluded(hard: np.ndarray, excluded: np.ndarray,
-                        overlap: float) -> bool:
-    """True when any connected keyed component lies mostly inside an
-    excluded atlas region (head; feet belong to the shoe slot)."""
-    from scipy import ndimage
-
-    labels, count = ndimage.label(hard)
-    if not count:
-        return False
-    totals = np.bincount(labels.ravel(), minlength=count + 1)
-    inside = np.bincount(labels.ravel(), weights=excluded.ravel().astype(float),
-                         minlength=count + 1)
-    fractions = inside[1:] / np.maximum(totals[1:], 1)
-    return bool((fractions >= overlap).any())
 
 
 # --------------------------------------------------------------------------
@@ -725,13 +732,8 @@ def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
     caller falls back to the painted composite for this character.
     """
     constants = constants or ShellConstants()
-    alpha = prepare_alpha(garment_rgb, atlas_valid, constants)
-    if excluded_regions is not None and _component_excluded(
-            alpha["hard"], excluded_regions,
-            constants.excluded_component_overlap):
-        raise ShellRejected("alpha-excluded-region",
-                            "keyed component in head/feet region")
-
+    alpha = prepare_alpha(garment_rgb, atlas_valid, constants,
+                          excluded_regions=excluded_regions)
     fields = welded_field(alpha["soft"], rig, canonical_vertices, constants)
     seam = _seam_diagnostic(fields, constants)
     cut = march_cut(fields["values"], rig, canonical_vertices, constants)
@@ -755,6 +757,7 @@ def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
             "constants_version": constants.version,
             "coverage": alpha["coverage"],
             "cutoff_stability_iou": alpha["cutoff_stability_iou"],
+            "excluded_removed": alpha["excluded_removed"],
             "components": _component_count(cut),
             "boundary_loops": _loop_count(cut["boundary"]),
             "seam_disagreement": seam,

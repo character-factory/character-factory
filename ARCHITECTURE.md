@@ -377,7 +377,12 @@ system and deliberately boring:
    and the manifest's `garments` block records the shipped `render_mode`
    per slot (with the rejection reason when an extraction was attempted),
    so consumers never sniff. Validators validate; nothing repairs a
-   nonconforming mask.
+   nonconforming mask. The v0.1 boundary treatment is the feathered
+   soft-threshold cut (crossings refined against the texture's own alpha)
+   with the garment's boundary colors dilated outward so edge faces
+   always sample cloth; a re-triangulated cut-line boundary is a planned
+   post-v0.1 refinement, held to the same watertightness and
+   weight-transfer invariants.
 3. **Eyes.** A small patch of faces over each eye socket is removed; a
    stock eyeball mesh (permissively licensed, bundled as a registry asset)
    is placed by a similarity fit of its lid margin to the socket rim, and

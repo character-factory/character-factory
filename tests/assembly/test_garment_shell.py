@@ -344,3 +344,23 @@ def test_cut_follows_the_mask_curve_not_edge_midpoints():
     midpoint = HEIGHT * 5.5 / 15
     assert abs(lower_rows.mean() - target) < 0.25 * row_gap
     assert abs(lower_rows.mean() - target) < abs(lower_rows.mean() - midpoint)
+
+
+def test_gate_default_off_and_one_line_config_flip(tmp_path, monkeypatch):
+    """The feature gate ships OFF; the blessing sitting's verdict is a
+    one-line config flip (`assembly.garment_shells: true` in the cache
+    config), never a code change."""
+    import json
+
+    monkeypatch.delenv(gs.ENV_GATE, raising=False)
+    monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
+    assert gs.shells_enabled() is False
+    (tmp_path / "config.json").write_text(
+        json.dumps({"assembly": {"garment_shells": True}}))
+    assert gs.shells_enabled() is True
+    (tmp_path / "config.json").write_text(
+        json.dumps({"assembly": {"garment_shells": False}}))
+    assert gs.shells_enabled() is False
+    # The environment overrides the file in either direction.
+    monkeypatch.setenv(gs.ENV_GATE, "1")
+    assert gs.shells_enabled() is True

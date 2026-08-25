@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 import trimesh
 
+from .density import FULL
 from .head import Head
 from .primitives import _mesh
 
@@ -159,7 +160,8 @@ class BraidFieldSpec:
     seed: int = 0
 
 
-def generate_braid_field(head: Head, spec: BraidFieldSpec, hairline_v) -> trimesh.Trimesh:
+def generate_braid_field(head: Head, spec: BraidFieldSpec, hairline_v,
+                         density=FULL) -> trimesh.Trimesh:
     s = head.scale
     rng = np.random.default_rng(spec.seed)
     # roots: sunflower spiral over the chart, kept inside the hairline
@@ -181,7 +183,7 @@ def generate_braid_field(head: Head, spec: BraidFieldSpec, hairline_v) -> trimes
     down = np.array([0.0, -1.0, 0.0])
 
     L = spec.length * s * (1 + spec.length_jitter * rng.standard_normal(n_b))
-    n_pts = 16
+    n_pts = max(4, round(16 * density.braid_spine_scale))
     tt = np.linspace(0, 1, n_pts)
     fwd = head.forward
     parts = []
@@ -224,7 +226,7 @@ def generate_braid_field(head: Head, spec: BraidFieldSpec, hairline_v) -> trimes
             taper=spec.taper,
             seed=spec.seed + i,
             ref=head.forward,
-            n_seg=6 if spec.mode != "loc" else 7,
+            n_seg=density.braid_radial_segments or (6 if spec.mode != "loc" else 7),
         )
         if spec.beads > 0 and rng.random() < spec.beads:
             # bead cuff: short fat tube around the braid near the tip
@@ -234,7 +236,9 @@ def generate_braid_field(head: Head, spec: BraidFieldSpec, hairline_v) -> trimes
                 seg = np.vstack([seg[0], seg.mean(0), seg[1]])
                 br = (spec.width + spec.strand_radius) * s * 1.15
                 parts.append(
-                    _tube_along(seg, np.array([br, br * 1.08, br]), n_seg=8, uv_u0=0.93, ref=head.forward)
+                    _tube_along(seg, np.array([br, br * 1.08, br]),
+                                n_seg=density.braid_radial_segments or 8,
+                                uv_u0=0.93, ref=head.forward)
                 )
     return _concat(parts)
 
@@ -250,7 +254,8 @@ class CornrowSpec:
     seed: int = 0
 
 
-def generate_cornrows(head: Head, spec: CornrowSpec, hairline_v) -> trimesh.Trimesh:
+def generate_cornrows(head: Head, spec: CornrowSpec, hairline_v,
+                      density=FULL) -> trimesh.Trimesh:
     """Braids lying ON the scalp, front hairline to nape, scalp-normal frames.
 
     Row paths are front-to-back arcs in laterally offset sagittal planes:
@@ -261,7 +266,7 @@ def generate_cornrows(head: Head, spec: CornrowSpec, hairline_v) -> trimesh.Trim
     fwd = head.forward
     left = np.cross(up, fwd)
     parts = []
-    n_pts = 26
+    n_pts = max(6, round(26 * density.braid_spine_scale))
     ks = np.linspace(-0.85, 0.85, spec.rows)
     for i, k in enumerate(ks):
         v_front = min(hairline_v(np.array([abs(k) * 0.7]))[0] - 0.04, 0.86)
@@ -286,7 +291,7 @@ def generate_cornrows(head: Head, spec: CornrowSpec, hairline_v) -> trimesh.Trim
             seed=spec.seed + i,
             ref=head.forward,
             scalp_normals=normals,
-            n_seg=6,
+            n_seg=density.braid_radial_segments or 6,
         )
         if spec.tail_length > 0:
             end = spine[-1]
@@ -306,7 +311,7 @@ def generate_cornrows(head: Head, spec: CornrowSpec, hairline_v) -> trimesh.Trim
             parts += braided_strands(
                 tail, spec.width * s, spec.width * 0.8 * s, spec.knot_freq * 0.5,
                 spec.strand_radius * s, mode="braid", seed=spec.seed + 100 + i,
-                ref=head.forward, n_seg=6,
+                ref=head.forward, n_seg=density.braid_radial_segments or 6,
             )
     return _concat(parts)
 
@@ -326,7 +331,8 @@ class BraidTailSpec:
     seed: int = 0
 
 
-def generate_braid_tail(head: Head, spec: BraidTailSpec) -> trimesh.Trimesh:
+def generate_braid_tail(head: Head, spec: BraidTailSpec,
+                        density=FULL) -> trimesh.Trimesh:
     s = head.scale
     down = np.array([0.0, -1.0, 0.0])
     anchors = [(0.62, spec.pos_v * 0.85), (-0.62, spec.pos_v * 0.85)] if spec.twin else [(1.0, spec.pos_v)]
@@ -351,6 +357,6 @@ def generate_braid_tail(head: Head, spec: BraidTailSpec) -> trimesh.Trimesh:
         parts += braided_strands(
             spine, spec.width * s, spec.width * 0.8 * s, spec.knot_freq,
             spec.strand_radius * s, mode="braid", seed=spec.seed + k,
-            ref=head.forward, n_seg=8,
+            ref=head.forward, n_seg=density.braid_radial_segments or 8,
         )
     return _concat(parts)

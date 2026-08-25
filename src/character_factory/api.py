@@ -347,11 +347,17 @@ def assemble(
 
         eye_joints = [rig.role_index("left_eye"), rig.role_index("right_eye")]
         eye_level = float(evaluation.skeleton[eye_joints, 1].mean())
-        result = WigProvider().synthesize(
+        # Density presets are the provider component's data: hair
+        # generates at the target density rather than being decimated
+        # afterwards. An entry that declares none generates full density.
+        wig_entry = registry.get("make-wig")
+        provider = WigProvider(
+            density_presets=wig_entry.document.get("density_presets"))
+        result = provider.synthesize(
             character.hair,
             HeadGeometry(
-                vertices=evaluation.vertices,
-                faces=rig.faces,
+                vertices=surface_vertices,
+                faces=surface_faces,
                 eye_level=eye_level,
             ),
         )

@@ -45,10 +45,41 @@ class HairProvider(Protocol):
 
 
 class WigProvider:
-    """The default provider: the vendored make-wig engine."""
+    """The default provider: the vendored make-wig engine.
+
+    `density_presets` is component data — the make-wig registry entry's
+    `density_presets` block, `{preset_name: {control: value}}` plus an
+    optional `families` map naming which preset each hair family uses.
+    Passing none generates at full density, exactly as before. Presets
+    are data because a density is a tuning decision per engine version,
+    like a conditioning template.
+    """
 
     name = "make-wig"
     version = WIG_PROVIDER_VERSION
+
+    def __init__(self, density_presets: dict | None = None,
+                 preset: str | None = None):
+        self.density_presets = dict(density_presets or {})
+        self.preset = preset
+
+    def density_for(self, family: str):
+        """The density this provider generates `family` at."""
+        from character_factory.hair.wig.density import FULL, Density
+
+        table = self.density_presets
+        name = self.preset
+        if name is None:
+            name = (table.get("families") or {}).get(family)
+        if name is None:
+            return FULL, None
+        controls = table.get(name)
+        if controls is None:
+            raise ValueError(
+                f"hair density preset {name!r} is not declared by the "
+                f"component (declared: "
+                f"{', '.join(sorted(k for k in table if k != 'families'))})")
+        return Density.from_mapping(controls), name
 
     def synthesize(self, intent: dict, head: HeadGeometry) -> HairResult:
         import numpy as np
@@ -75,7 +106,9 @@ class WigProvider:
                 eye_level=head.eye_level,
             )
 
-        mesh = wig_style.generate(fitted, plan.style)
+        density, density_preset = self.density_for(
+            intent.get("family", "loose_long"))
+        mesh = wig_style.generate(fitted, plan.style, density=density)
         albedo, normal = wig_texture.strand_maps(plan.texture)
         mesh = wig_texture.apply_material(mesh, albedo, normal)
         return HairResult(
@@ -85,5 +118,7 @@ class WigProvider:
                 "provider_version": self.version,
                 "compiler_version": plan.compiler_version,
                 "base_preset": plan.base_preset,
+                "density_preset": density_preset,
+                "triangles": int(len(mesh.faces)),
             },
         )

@@ -14,6 +14,7 @@ from .braids import (
     generate_cornrows,
 )
 from .clumps import ClumpFieldSpec, generate_clump_field
+from .density import FULL, Density
 from .head import Head
 from .primitives import BangsSpec, BunSpec, MohawkSpec, TailSpec, generate_bangs, generate_bun, generate_mohawk, generate_tail
 from .shell import CapSpec, HairlineSpec, generate_cap, generate_wisps
@@ -34,19 +35,26 @@ class Style:
     braid_tail: BraidTailSpec | None = None
 
 
-def generate(head: Head, style: Style) -> trimesh.Trimesh:
+def generate(head: Head, style: Style,
+             density: Density = FULL) -> trimesh.Trimesh:
+    """Build the style's mesh. `density` selects how finely the generator
+    tessellates; its default reproduces full density exactly."""
     parts = []
     if style.cap is not None:
-        parts.append(generate_cap(head, style.cap))
-        w = generate_wisps(head, style.cap)
+        parts.append(generate_cap(head, style.cap,
+                                  n_u=density.cap_u, n_v=density.cap_v))
+        w = generate_wisps(head, style.cap,
+                           n=density.scaled_wisps(style.cap.wisps))
         if w is not None:
             parts.append(w)
     if style.clump_field is not None:
         hl = style.cap.hairline if style.cap else HairlineSpec()
-        parts.append(generate_clump_field(head, style.clump_field, hl))
+        parts.append(generate_clump_field(
+            head, density.apply_to_clump(style.clump_field), hl))
     if style.clump_fields:
         hl = style.cap.hairline if style.cap else HairlineSpec()
-        parts.extend(generate_clump_field(head, spec, hl) for spec in style.clump_fields)
+        parts.extend(generate_clump_field(head, density.apply_to_clump(spec), hl)
+                     for spec in style.clump_fields)
     if style.bangs is not None:
         hl = style.cap.hairline if style.cap else None
         v_of_u = hl.v_of_u if hl else (lambda u: np.full_like(np.asarray(u, dtype=float), 0.68))
@@ -61,11 +69,14 @@ def generate(head: Head, style: Style) -> trimesh.Trimesh:
     if style.braid_field is not None or style.cornrows is not None:
         hl = style.cap.hairline if style.cap else HairlineSpec()
         if style.braid_field is not None:
-            parts.append(generate_braid_field(head, style.braid_field, hl.v_of_u))
+            parts.append(generate_braid_field(head, style.braid_field,
+                                              hl.v_of_u, density=density))
         if style.cornrows is not None:
-            parts.append(generate_cornrows(head, style.cornrows, hl.v_of_u))
+            parts.append(generate_cornrows(head, style.cornrows, hl.v_of_u,
+                                           density=density))
     if style.braid_tail is not None:
-        parts.append(generate_braid_tail(head, style.braid_tail))
+        parts.append(generate_braid_tail(head, style.braid_tail,
+                                         density=density))
     if not parts:
         raise ValueError("empty style")
     if len(parts) == 1:

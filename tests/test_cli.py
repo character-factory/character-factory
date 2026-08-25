@@ -65,3 +65,26 @@ def test_interpret_rules_prints_decomposition_json_with_metrics(capsys):
     assert "flip" not in payload["textures"]["eye"]["prompt"]
     assert payload["hair"]["family"]
     assert payload["metrics"]["wall_seconds"] >= 0
+
+
+def test_preflight_reports_named_causes(capsys, monkeypatch):
+    import character_factory.preflight as preflight_module
+
+    monkeypatch.setattr(
+        preflight_module, "GENERATION_IMPORTS",
+        (("json", "json"), ("cf_absent_module", "cf-absent-dist")),
+    )
+    assert main(["preflight", "--device", "cpu"]) == 1
+    out = capsys.readouterr().out
+    assert "ok   [import:json]" in out
+    assert "FAIL [missing-dependency]" in out
+    assert "cf-absent-dist" in out
+
+
+def test_preflight_passes_on_a_working_stack(capsys, monkeypatch):
+    import character_factory.preflight as preflight_module
+
+    monkeypatch.setattr(
+        preflight_module, "GENERATION_IMPORTS", (("json", "json"),))
+    assert main(["preflight", "--device", "cpu"]) == 0
+    assert "ok  " in capsys.readouterr().out

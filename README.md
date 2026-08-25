@@ -61,6 +61,11 @@ Measured numbers, not aspirations (details in
 - **Assembly without generation runs anywhere** — including CPU-only
   machines and macOS: validate, assemble, and serve existing character
   files with no GPU at all.
+- **`character-factory preflight` checks the generation stack in
+  seconds** — the `[generation]` import set, the torch CUDA build, and
+  the driver (via a real CUDA call) — and names what is broken, instead
+  of letting it surface minutes into the first model load. `create` and
+  `bake` run the same check before touching any weights.
 
 One honest scope note: in v0.1, identity drives the face, build, and
 surface form, and **skeletal proportions vary within six semantic

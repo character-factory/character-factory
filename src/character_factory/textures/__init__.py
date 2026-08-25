@@ -151,6 +151,13 @@ def bake(
     recorded in the character document — recipes stay the recipes."""
     out_dir = Path(out_dir)
     registry = registry or Registry.default()
+    if pipeline_factory is None:
+        # Fail in seconds with a named cause (missing dependency, CPU-only
+        # torch, dead or too-old driver) before any pipeline loads. An
+        # injected factory owns its own stack and is exempt (tests).
+        from character_factory.preflight import require_generation_stack
+
+        require_generation_stack(device)
     baker = TextureBaker(registry, device=device,
                          pipeline_factory=pipeline_factory, turbo=turbo)
 

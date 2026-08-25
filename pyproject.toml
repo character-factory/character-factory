@@ -46,6 +46,10 @@ generation = [
   "diffusers>=0.35",
   "safetensors>=0.4",
   "lm-format-enforcer>=0.10",
+  # diffusers' LoRA load/unload path imports both at adapter time — they
+  # are required, not optional, for every bake.
+  "peft>=0.15",
+  "accelerate>=1.0",
 ]
 server = ["fastapi>=0.111", "uvicorn>=0.30", "anyio>=4"]
 mcp = ["mcp>=1.2"]

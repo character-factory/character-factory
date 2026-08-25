@@ -156,6 +156,7 @@ class CharacterService:
         so it takes the same job lock as bake/assemble: one GPU stage at a
         time, ever — concurrent requests queue."""
         from character_factory.api import create
+        from character_factory.preflight import PreflightError
         from character_factory.registry import ComponentNotPublished
 
         if interpreter is not None:
@@ -173,7 +174,10 @@ class CharacterService:
                     prompt, registry=self.registry, device=self.device,
                     interpreter=interpreter,
                 )
-        except (ComponentNotPublished, FileNotFoundError) as error:
+        except (ComponentNotPublished, FileNotFoundError, PreflightError) as error:
+            # Missing components and a failed generation preflight are the
+            # same class for a caller: generation is not available here,
+            # and the message names why.
             raise NotAvailable(
                 f"text-to-character needs generation components that are not "
                 f"available here yet: {error}"

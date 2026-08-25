@@ -101,6 +101,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     interpret.set_defaults(func=_cmd_interpret)
 
+    preflight = commands.add_parser(
+        "preflight",
+        help="check the generation stack (imports, CUDA build, driver) "
+             "in seconds, with named causes — before any model loads",
+    )
+    preflight.add_argument("--device", default="cuda")
+    preflight.set_defaults(func=_cmd_preflight)
+
     serve = commands.add_parser(
         "serve", help="run the local /v0 HTTP server (install extra [server])"
     )
@@ -151,6 +159,16 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
         indent=2,
     ))
     return 0
+
+
+def _cmd_preflight(args: argparse.Namespace) -> int:
+    from character_factory.preflight import check_generation_stack
+
+    checks = check_generation_stack(device=args.device)
+    for check in checks:
+        status = "ok  " if check.ok else "FAIL"
+        print(f"{status} [{check.name}] {check.detail}")
+    return 0 if all(check.ok for check in checks) else 1
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:

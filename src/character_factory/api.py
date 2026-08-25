@@ -36,8 +36,12 @@ def create(
     (deterministic, no seed — the seed governs texture recipes only)."""
     from character_factory.identity import IdentityComponent, IdentityGenerator
     from character_factory.interpreter import INTERPRETER_VERSION, interpret
+    from character_factory.preflight import require_generation_stack
     from character_factory.registry import Registry
 
+    # Fail in seconds with a named cause (missing dependency, CPU-only
+    # torch, dead or too-old driver) instead of minutes into a model load.
+    require_generation_stack(device)
     registry = registry or Registry.default()
     # The interpreter model (if configured) loads, runs, and releases here —
     # before the identity encoder or any diffusion pipeline loads (§2.2).

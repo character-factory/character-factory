@@ -134,7 +134,7 @@
   "textures": {
     "skin": {
       "component": "make-skin",
-      "component_version": "0.1.0",
+      "component_version": "0.0.3",
       "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
       "seed": 41002
     },
@@ -152,7 +152,7 @@
     },
     "shoe": {
       "component": "make-shoe",
-      "component_version": "0.1.0",
+      "component_version": "0.0.2",
       "prompt": "low white running shoes with a teal stripe",
       "seed": 41005
     }
@@ -206,10 +206,10 @@
         "version": "0.1.0"
       },
       "make-figure": {
-        "version": "0.1.0"
+        "version": "0.0.2"
       },
       "make-skin": {
-        "version": "0.1.0"
+        "version": "0.0.3"
       },
       "make-eye": {
         "version": "0.1.0"
@@ -218,7 +218,7 @@
         "version": "0.1.0"
       },
       "make-shoe": {
-        "version": "0.1.0"
+        "version": "0.0.2"
       },
       "make-wig": {
         "version": "0.1.0"

@@ -1,7 +1,7 @@
 {
  "format": "character-factory/registry",
  "registry_version": "0.1",
- "generated": "2026-08-19T00:00:00Z",
+ "generated": "2026-08-24T00:00:00Z",
  "note": "Pre-release snapshot. Entries whose source is null are declared but not yet published; fetching them fails with a clear error. Sources, artifact lists, and inference metadata are completed as components publish.",
  "components": [
   {
@@ -17,7 +17,7 @@
   },
   {
    "name": "make-figure",
-   "version": "0.1.0",
+   "version": "0.0.2",
    "kind": "identity",
    "requires": {
     "base_model": "flux2-klein-4b",
@@ -29,7 +29,7 @@
   },
   {
    "name": "make-skin",
-   "version": "0.1.0",
+   "version": "0.0.3",
    "kind": "texture-adapter",
    "slot": "skin",
    "requires": {
@@ -86,7 +86,7 @@
   },
   {
    "name": "make-shoe",
-   "version": "0.1.0",
+   "version": "0.0.2",
    "kind": "texture-adapter",
    "slot": "shoe",
    "requires": {
@@ -94,20 +94,24 @@
     "schema": ">=0.1 <1.0"
    },
    "inference": {
-    "steps": 20,
+    "steps": 25,
     "guidance": 4.0,
     "resolution": 1024
    },
    "constraints": {
     "vocabulary": {
      "styles": [
-      "below_ankle"
+      "below_ankle",
+      "high_top",
+      "ankle_boot",
+      "mid_boot",
+      "tall_boot"
      ]
     }
    },
    "artifacts": [],
    "source": null,
-   "description": "Footwear on the foot ('shoe') regions of the body's canonical UV atlas, composited above garments. The launch component supports below-ankle styles only, declared here so the interpreter clamps footwear prompts accordingly.",
+   "description": "Footwear on the foot ('shoe') regions of the body's canonical UV atlas, composited above garments. Supported styles range from below-ankle shoes to tall boots (the shaft is cut to each style's declared height), declared here so the interpreter clamps footwear prompts accordingly.",
    "map": "albedo"
   },
   {
@@ -144,6 +148,28 @@
    "description": "The pinned MHR rig (TorchScript forward + LOD1 topology/UVs), mirrored with attribution, plus rig metadata: topology checksum and the authoritative 127-joint name table (added at publish)."
   },
   {
+   "name": "body-rig",
+   "version": "1.1.0",
+   "kind": "body-rig",
+   "requires": {
+    "schema": ">=0.1 <1.0"
+   },
+   "artifacts": [],
+   "source": null,
+   "upstream": {
+    "project": "Momentum Human Rig (MHR), Meta Platforms",
+    "url": "https://github.com/facebookresearch/MHR",
+    "license": "Apache-2.0",
+    "release": "v1.0.1",
+    "release_archive": {
+     "path": "assets.zip",
+     "sha256": "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94",
+     "bytes": 198943157
+    }
+   },
+   "description": "The rig of 1.0.1 (same pinned MHR release) plus the data behind the 'mouth-interior' topology (SPEC.md §4.2): mouth portal and socket metadata, the exact expression morph basis and its provisional semantic table, jaw articulation guidance, and the machine-readable animation-limitations list. Characters with 'closed' topology build identically on this version."
+  },
+  {
    "name": "flux2-klein-4b",
    "version": "1.0.0",
    "kind": "base-model",
@@ -168,6 +194,17 @@
    "artifacts": [],
    "source": null,
    "description": "Static assembly assets: eyeball and lash meshes/textures (MIT, attributed in NOTICE), UV coverage templates, atlas metadata."
+  },
+  {
+   "name": "assembly-assets",
+   "version": "0.2.0",
+   "kind": "assets",
+   "requires": {
+    "schema": ">=0.1 <1.0"
+   },
+   "artifacts": [],
+   "source": null,
+   "description": "Everything in 0.1.0 plus the mouth-interior anatomy attachments: teeth, gum, and tongue meshes with their placement metadata (geometry from the Google Neutral Model, attributed in NOTICE), used when a character's topology is 'mouth-interior'."
   },
   {
    "name": "make-wig",

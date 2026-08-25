@@ -90,13 +90,18 @@ def test_snapshot_shoe_maker_declares_vocabulary():
     from character_factory.registry import RegistryIndex, _snapshot_document
 
     registry = Registry(RegistryIndex(_snapshot_document()))
-    assert registry.vocabulary_for("make-shoe") == {"styles": ["below_ankle"]}
+    assert registry.vocabulary_for("make-shoe") == {
+        "styles": ["below_ankle", "high_top", "ankle_boot", "mid_boot",
+                   "tall_boot"]
+    }
     assert registry.vocabulary_for("make-skin") == {}
     assert registry.get("make-shoe").map == "albedo"
 
 
 def test_snapshot_body_rig_is_hash_pinned():
-    entry = Registry.default().get("body-rig")
+    # 1.0.1 specifically: 1.1.0 is declared but its artifact list is
+    # completed at publish (the snapshot's stated pattern).
+    entry = Registry.default().get("body-rig", "1.0.1")
     paths = {a["path"]: a for a in entry.artifacts}
     assert paths["mhr_model.pt"]["bytes"] == 696110248
     assert len(paths["mhr_model.pt"]["sha256"]) == 64
@@ -104,8 +109,12 @@ def test_snapshot_body_rig_is_hash_pinned():
 
 def test_unpublished_component_fails_clearly(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
-    with pytest.raises(ComponentNotPublished):
+    # body-rig resolves 1.1.0: declared, artifact list completed at publish.
+    with pytest.raises(ComponentNotPublished, match="declares no artifacts"):
         Registry.default().ensure("body-rig")
+    # 1.0.1 pins its artifacts but has no source repository yet.
+    with pytest.raises(ComponentNotPublished, match="no source repository"):
+        Registry.default().ensure("body-rig", "1.0.1")
 
 
 # --- resolution -----------------------------------------------------------------
@@ -129,9 +138,15 @@ def test_resolution_prefers_newest_compatible():
 
 def test_resolution_errors():
     registry = Registry(RegistryIndex(make_index([adapter("skin", "0.1.0", "skin")])))
-    with pytest.raises(RegistryError):
+    # An unknown name lists what the index does know.
+    with pytest.raises(RegistryError, match="known components: skin"):
         registry.get("nonexistent")
-    with pytest.raises(RegistryError):
+    # An unknown version of a known name lists the available versions —
+    # distinct from the not-published-yet error, and it names the fix for
+    # a stale pin (e.g. from before a version renumbering).
+    with pytest.raises(
+        RegistryError, match=r"skin@9\.9\.9 not found; available: 0\.1\.0"
+    ):
         registry.get("skin@9.9.9")
 
 

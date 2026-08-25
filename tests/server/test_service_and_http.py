@@ -82,7 +82,10 @@ def test_delete(service, stored):
 
 def test_components_view(service):
     rows = {row["name"]: row for row in service.components()}
-    assert rows["make-shoe"]["vocabulary"] == {"styles": ["below_ankle"]}
+    assert rows["make-shoe"]["vocabulary"] == {
+        "styles": ["below_ankle", "high_top", "ankle_boot", "mid_boot",
+                   "tall_boot"]
+    }
     assert rows["body-rig"]["published"] is False
 
 

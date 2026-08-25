@@ -133,7 +133,7 @@
   "textures": {
     "skin": {
       "component": "make-skin",
-      "component_version": "0.1.0",
+      "component_version": "0.0.3",
       "prompt": "medium warm-toned skin, late-50s masculine-presenting adult, laugh lines, weathered friendly face",
       "seed": 61001
     },
@@ -159,10 +159,10 @@
         "version": "0.1.0"
       },
       "make-figure": {
-        "version": "0.1.0"
+        "version": "0.0.2"
       },
       "make-skin": {
-        "version": "0.1.0"
+        "version": "0.0.3"
       },
       "make-eye": {
         "version": "0.1.0"

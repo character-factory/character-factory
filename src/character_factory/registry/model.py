@@ -199,13 +199,24 @@ class RegistryIndex:
         """Resolve a component: exact version if given, else the newest one
         compatible with the running character schema version."""
         candidates = self.versions_of(name)
-        _require(bool(candidates), f"unknown component {name!r}")
+        _require(
+            bool(candidates),
+            f"unknown component {name!r}; known components: "
+            + ", ".join(sorted({e.name for e in self.entries})),
+        )
         if version is not None:
             wanted = Version(version)
             for entry in candidates:
                 if entry.version == wanted:
                     return entry
-            raise RegistryError(f"component {name}@{version} is not in the registry")
+            # Distinct from the not-published-yet error (the store's, raised
+            # when a known version has no fetchable source): this version is
+            # not in the index at all — say what is, so a stale pin (e.g.
+            # from before a version renumbering) explains itself.
+            raise RegistryError(
+                f"component {name}@{version} not found; available: "
+                + ", ".join(str(e.version) for e in candidates)
+            )
         compatible = [e for e in candidates if e.compatible_with_schema(schema_version)]
         _require(
             bool(compatible),

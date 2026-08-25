@@ -122,6 +122,16 @@ def ensure_component(
         def fetch(url: str, target: Path, expected: int) -> None:  # noqa: E731
             _download(url, target, expected, headers)
     target_dir = component_dir(entry)
+    # An empty artifact list must not "succeed" into a directory that does
+    # not exist: unless the component is already provisioned locally, a
+    # declared-but-unpublished entry (artifact lists are completed at
+    # publish) fails here with the same clear error a source-less fetch
+    # would give, instead of somewhere downstream.
+    if not entry.artifacts and not target_dir.is_dir():
+        raise ComponentNotPublished(
+            f"component {entry.ref} is not published yet: its registry "
+            f"entry declares no artifacts and it is not provisioned locally"
+        )
     for artifact in entry.artifacts:
         path = target_dir / artifact["path"]
         if path.is_file():

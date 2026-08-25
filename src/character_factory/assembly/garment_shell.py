@@ -149,11 +149,11 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
                   constants: ShellConstants,
                   excluded_regions: np.ndarray | None = None) -> dict:
     """The normative key: hard cutoff over the valid atlas, opened, then
-    gaussian-feathered. `excluded_regions` (the atlas's declared head and
-    feet regions) subtract from the key exactly as the compositor's
-    region contract does for paint — the shell keys the same effective
-    garment the painted path composites, and foot geometry stays with the
-    shoe stack. Region masking is atlas contract, never content repair.
+    gaussian-feathered. `excluded_regions` (the atlas's declared
+    garment-never-paints-here region — the head mask) subtracts from the
+    key exactly as the compositor's region contract does for paint, so
+    the shell keys the same effective garment the painted path
+    composites. Region masking is atlas contract, never content repair.
     Returns hard/soft masks plus audit metrics; raises ShellRejected on
     any alpha-quality gate."""
     from scipy import ndimage

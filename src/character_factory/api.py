@@ -460,12 +460,12 @@ def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas):
         [0.0] * len(character.resting_expression))
     resolution = garment_rgb.shape[0]
     atlas_valid = shell_module.valid_atlas_mask(rig, resolution)
-    at_resolution = atlas.at_resolution(resolution)
-    excluded_masks = [mask for mask in (at_resolution.head_mask,
-                                        at_resolution.feet_mask)
-                      if mask is not None]
-    excluded = (np.logical_or.reduce(excluded_masks)
-                if excluded_masks else None)
+    # The region contract mirrors the compositor exactly: the head mask
+    # (garment never paints there) subtracts from the key. The feet mask
+    # is a shoe-side constraint — a broad lower-body region where the
+    # shoe may paint — and does NOT remove garment (trouser legs live
+    # there in paint and in shell alike).
+    excluded = atlas.at_resolution(resolution).head_mask
     try:
         shell = shell_module.prepare_shell(
             rig, garment_rgb, evaluation.vertices, canonical.vertices,

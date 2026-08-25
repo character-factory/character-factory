@@ -411,6 +411,9 @@ def _prepare_mouth(rig, assets_component, evaluation, character):
             "count": len(data.morph_names),
             "encoding": "sparse POSITION+NORMAL deltas; exact (the rig's "
                         "expression is a linear vertex basis)",
+            "weights": "unit weights are 0..1 in glTF morph-target "
+                       "convention; engines with a rescaled blend-shape "
+                       "range (e.g. Unity's 0..100) normalize at import",
             "semantics": data.semantics,
         },
         "jaw": data.jaw,

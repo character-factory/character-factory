@@ -456,7 +456,18 @@ of conventions chosen so the artifact imports and retargets correctly:
   skeletal proportions (stature is measured from the exported geometry;
   byte-identical across re-exports of the same character); a sidecar
   `manifest.json` exists only on request, as a projection of the same
-  bytes (`GET /v0/characters/{id}/manifest.json`). Boundary: the manifest
+  bytes (`GET /v0/characters/{id}/manifest.json`). The manifest carries
+  its own `schema_version`, versioned with the same discipline as the
+  character file: same major = compatible, unknown fields must be
+  tolerated, and any change to the shape or meaning of an existing field
+  bumps the minor version — consumers check `format` + `schema_version`
+  rather than sniffing field shapes. On mouth-interior exports the jaw
+  block states its contract explicitly: rotation sign (positive about the
+  local axis opens, in the file's right-handed glTF frame — handedness
+  conversion at import flips it) and the two jaw compositions
+  (joint-only with `full_open_degrees`, or expression playback pairing
+  `facs_24` with `expression_fit_angle_degrees`), which are alternatives
+  and never summed. Boundary: the manifest
   is **export metadata** — facts about the GLB as an engine deliverable.
   Character identity, textures, hair, and provenance live in the character
   document exclusively; nothing from it is ever duplicated into GLB

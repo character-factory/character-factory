@@ -37,6 +37,10 @@ def test_export_passes_validation(rig, tmp_path):
     # The clip is a real (if subtle) motion loop, not a statue hold.
     assert report["idle_clip_peak_deviation_mm"] > 0.05
     assert result.manifest["format"] == "character-factory/export-manifest"
+    # The manifest's own shape is versioned like character.json: a shape
+    # change to any field bumps this, so consumers detect it instead of
+    # silently falling back.
+    assert result.manifest["schema_version"] == "0.2"
     assert result.manifest["idle_clip"]["starts_at_rest"] is True
 
 
@@ -276,6 +280,11 @@ def test_real_rig_export_passes_acceptance(tmp_path):
     assert humanoid["map"]["Hips"] == "root"
     assert humanoid["map"]["LeftHand"] == "l_wrist"
     assert len(humanoid["map"]) == 54
+    # The convention label is made true: role keys are HumanBodyBones enum
+    # member names, and the spaced HumanTrait normalization is documented
+    # in the map itself.
+    assert humanoid["convention"] == "unity-humanoid"
+    assert "Left Thumb Proximal" in humanoid["naming"]
     assert humanoid["jaw"]["mappable"] and not humanoid["jaw"]["default_mapped"]
     assert humanoid["fingers"]["mapped"] and humanoid["fingers"]["verify_in_engine"]
     joint_names = set(rig.joint_names)

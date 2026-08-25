@@ -32,6 +32,13 @@ __all__ = ["ExportResult", "MouthGlb", "SCALE", "export_character_glb"]
 # +Z-forward).
 SCALE = 0.01
 
+# Version of the embedded export manifest's own shape (independent of the
+# character schema version). Same discipline as character.json: same major
+# = compatible, unknown fields tolerated, and any change to the shape or
+# meaning of an existing field bumps the minor. History: 0.1 shipped a
+# placeholder humanoid_map; 0.2 is the structured humanoid_map object.
+MANIFEST_SCHEMA_VERSION = "0.2"
+
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
 # --- the baked idle clip's motion ------------------------------------------
@@ -200,6 +207,26 @@ def _ensure_ccw(positions, indices, normals):
         indices = indices[:, ::-1].copy()
         normals = -normals
     return indices, normals
+
+
+def _humanoid_map(rig: RigDefinition) -> dict:
+    """The rig's engine-role map, with its naming convention made
+    explicit: the role keys are Unity's ``HumanBodyBones`` enum member
+    names (CamelCase). Unity's ``HumanTrait`` bone-name *strings* are the
+    same words separated by spaces — a consumer building a
+    ``HumanDescription`` inserts a space before each interior capital
+    (``LeftThumbProximal`` → ``"Left Thumb Proximal"``)."""
+    humanoid = rig.metadata.get("humanoid_map", {})
+    if not humanoid:
+        return {}
+    humanoid = dict(humanoid)
+    humanoid["naming"] = (
+        "role keys are Unity HumanBodyBones enum member names (CamelCase); "
+        "Unity's HumanTrait bone-name strings are the same words separated "
+        "by spaces — insert a space before each interior capital letter "
+        "(LeftThumbProximal -> 'Left Thumb Proximal')"
+    )
+    return humanoid
 
 
 def export_character_glb(
@@ -533,8 +560,15 @@ def export_character_glb(
     # from the mesh it describes. Character identity, textures, hair, and
     # provenance live in the character document exclusively; nothing from
     # it is ever duplicated here — one source of truth per fact.
+    # The manifest is versioned with the same discipline as the character
+    # file: same major = compatible, unknown fields must be tolerated, and
+    # any change to the shape or meaning of an existing field bumps the
+    # minor version (0.2: humanoid_map grew from a placeholder into the
+    # structured object). Consumers should check format + schema_version
+    # rather than sniffing field shapes.
     manifest = {
         "format": "character-factory/export-manifest",
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "generator": generator,
         "units": "meters",
         "up_axis": "+Y",
@@ -545,7 +579,7 @@ def export_character_glb(
         "stature_m": round(
             float(positions[:, 1].max() - positions[:, 1].min()), 4
         ),
-        "humanoid_map": rig.metadata.get("humanoid_map", {}),
+        "humanoid_map": _humanoid_map(rig),
         "idle_clip": {
             "name": "idle",
             "seconds": IDLE_SECONDS,
@@ -575,6 +609,40 @@ def export_character_glb(
             local_axis = skeleton.rotations[rig.joint_index("c_jaw")].T @ world_axis
             local_axis /= np.linalg.norm(local_axis)
             jaw["rotation_axis_local"] = [round(float(x), 6) for x in local_axis]
+            # Sign and composition are contract, not consumer inference.
+            jaw["rotation_sign"] = (
+                "positive rotation about rotation_axis_local opens the "
+                "mouth in this file's right-handed glTF frame; an importer "
+                "that converts handedness (e.g. glTF to Unity) will observe "
+                "the opening sign flipped by that conversion"
+            )
+            jaw["composition"] = {
+                "joint_only": (
+                    "the certified jaw control: jaw level w in [0, 1] "
+                    "rotates c_jaw by w * full_open_degrees about "
+                    "rotation_axis_local with every expression morph at 0. "
+                    "full_open_degrees is aperture-matched: at w = 1 the "
+                    "skinned lip aperture equals the facs_24 = 1 expression "
+                    "pose. The interior socket is built pose-correct for "
+                    "exactly this trajectory, and the dental anatomy "
+                    "follows the joint."
+                ),
+                "expression_playback": (
+                    "when driving facs_24 = w instead (FACS-space "
+                    "animation; the parameterization of the "
+                    "animation_limitations table), rotate c_jaw by "
+                    "w * expression_fit_angle_degrees so the dental "
+                    "anatomy tracks the morphed exterior — facs_24 moves "
+                    "the exterior only."
+                ),
+                "rule": (
+                    "use one mapping or the other, never their sum: the "
+                    "two angle constants describe the same opening in "
+                    "different control spaces, so adding a facs_24 weight "
+                    "on top of the joint_only mapping (or vice versa) "
+                    "over-opens the mouth"
+                ),
+            }
             manifest["jaw"] = jaw
 
     gltf = {

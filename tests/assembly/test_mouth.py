@@ -404,11 +404,32 @@ def test_manifest_carries_tables_and_jaw_guidance(exported):
     manifest = gltf["asset"]["extras"]
     assert manifest["expression_morphs"]["count"] == E
     assert manifest["expression_morphs"]["semantics"]["semantic_source"] == "provisional-measured"
-    entries = manifest["animation_limitations"]["entries"]
+    assert "0..1" in manifest["expression_morphs"]["weights"]
+    limitations = manifest["animation_limitations"]
+    entries = limitations["entries"]
     assert any(e["kind"] == "neutral-seating" for e in entries)
     assert any(e["kind"] == "socket-clearance" for e in entries)
+    # Structured params beside every case string, and a table-level
+    # statement of the parameterization — consumers never parse the case
+    # strings by inference.
+    assert "expression_playback" in limitations["parameterization"]
+    for entry in entries:
+        assert "facs_24" in entry["params"]
+    compound = next(e for e in entries if "expr" in e["case"])
+    parts = compound["case"].split("_")
+    assert compound["params"] == {
+        "facs_24": float(parts[1]), "unit": int(parts[3]),
+        "weight": float(parts[4]),
+    }
     jaw = manifest["jaw"]
     assert "rotation_axis_local" in jaw and "full_open_degrees" in jaw
+    # Sign and composition are contract, not consumer inference (the jaw
+    # opens under POSITIVE rotation in the file's own right-handed frame;
+    # joint_only and expression_playback are alternatives, never summed).
+    assert "positive rotation" in jaw["rotation_sign"]
+    assert set(jaw["composition"]) == {
+        "joint_only", "expression_playback", "rule"}
+    assert "never their sum" in jaw["composition"]["rule"]
     closed_manifest = _body_prim(exported["closed"])[0]["asset"]["extras"]
     assert closed_manifest["topology"] == "closed"
     assert "expression_morphs" not in closed_manifest

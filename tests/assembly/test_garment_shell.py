@@ -304,3 +304,43 @@ def test_valid_atlas_mask_covers_the_unwrap():
     rig, _ = cylinder_rig()
     mask = gs.valid_atlas_mask(rig, 64)
     assert mask.mean() > 0.9   # the cylinder unwraps to the full atlas
+
+
+def test_dilation_bleeds_cloth_color_never_coverage():
+    rgb = band_texture()
+    keyed = rgb.max(axis=2) > 20
+    dilated = gs.dilate_garment_colors(rgb, keyed)
+    # Every texel now carries cloth color; the keyed region is untouched.
+    assert (dilated.max(axis=2) > 0).all()
+    assert (dilated[keyed] == rgb[keyed]).all()
+    # Re-keying the dilated image would grow coverage — which is why the
+    # key must always come from the original bytes (asserted here as the
+    # documented hazard, not a behavior).
+    assert (dilated.max(axis=2) > 20).sum() > keyed.sum()
+
+
+def test_cut_follows_the_mask_curve_not_edge_midpoints():
+    """The band's lower edge is placed well off the midpoint of a vertex
+    row gap; refined crossings must land on the mask line, where the
+    linear field estimate would quantize to the gap midpoint."""
+    rig, vertices = cylinder_rig()
+    # Rows sit at v = k/15; put the boundary 20% into the gap between
+    # rows 5 (v=0.3333) and 6 (v=0.4).
+    v_edge = 5 / 15 + 0.2 * (1 / 15)
+    shell = prepare(band_texture(v_low=v_edge, v_high=0.72),
+                    rig=rig, vertices=vertices)
+    outer = shell.vertices[:shell.outer_count]
+    # The rest positions of the boundary ring sit at y ≈ HEIGHT * v_edge
+    # (lift is radial on a cylinder, so y is untouched). Off-lattice cut
+    # vertices live strictly between the two rows.
+    row_gap = HEIGHT / 15
+    # Select only off-lattice (cut) vertices: fairing shifts body-row
+    # vertices a fraction of a millimetre, so keep 3 mm clear of both
+    # lattice rows.
+    lower_rows = outer[(outer[:, 1] > HEIGHT * 5 / 15 + 0.3)
+                       & (outer[:, 1] < HEIGHT * 6 / 15 - 0.3), 1]
+    assert len(lower_rows), "no cut vertices between the boundary rows"
+    target = HEIGHT * v_edge
+    midpoint = HEIGHT * 5.5 / 15
+    assert abs(lower_rows.mean() - target) < 0.25 * row_gap
+    assert abs(lower_rows.mean() - target) < abs(lower_rows.mean() - midpoint)

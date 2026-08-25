@@ -398,8 +398,21 @@ def assemble(
             shell, rejection = _prepare_garment_shell(
                 rig, character, evaluation, garment, atlas)
             if shell is not None:
-                shell_png = _load_asset(
-                    assets_dir, "garment", character).read_bytes()
+                # The shell's texture is the baked garment with its
+                # boundary colors bled outward (atlas hygiene): boundary
+                # faces and rim insets sample cloth, never the keyed-out
+                # background. The key itself always comes from the
+                # original bytes — dilation cannot grow coverage.
+                import io as _io
+
+                from character_factory.assembly.garment_shell import (
+                    dilate_garment_colors,
+                )
+
+                dilated = dilate_garment_colors(garment, shell.hard_key)
+                shell_buffer = _io.BytesIO()
+                Image.fromarray(dilated).save(shell_buffer, format="PNG")
+                shell_png = shell_buffer.getvalue()
                 skinned_attachments.append(SkinnedAttachment(
                     name="garment",
                     vertices=shell.vertices,

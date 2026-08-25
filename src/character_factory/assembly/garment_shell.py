@@ -77,6 +77,9 @@ class ShellConstants:
     fair_boundary_tether: float = 0.58
     normal_clamp_extra_cm: float = 0.32
     tangent_clamp_cm: float = 0.12
+    cut_t_clamp: float = 0.02         # keep refined crossings off the exact
+                                      # corners: no sliver faces, no
+                                      # degenerate sidewalls
     inner_min_cm: float = 0.12        # inner = max(min, outer_offset - backoff)
     inner_backoff_cm: float = 0.12
     rim_uv_inset: float = 0.35        # sidewall UVs pulled toward face centroid
@@ -206,6 +209,22 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
     }
 
 
+def dilate_garment_colors(rgb: np.ndarray, keyed: np.ndarray) -> np.ndarray:
+    """Atlas hygiene for the shell's texture: every non-keyed texel takes
+    the color of its nearest keyed texel (Voronoi bleed), so boundary
+    faces and rim insets sample cloth color instead of the keyed-out
+    background. Deterministic; the keyed region itself is untouched, and
+    the *key* is always derived from the original image — dilation can
+    never grow coverage."""
+    from scipy import ndimage
+
+    if not keyed.any():
+        return rgb
+    nearest = ndimage.distance_transform_edt(
+        ~keyed, return_distances=False, return_indices=True)
+    return rgb[nearest[0], nearest[1]]
+
+
 # --------------------------------------------------------------------------
 # welded scalar field
 # --------------------------------------------------------------------------
@@ -277,10 +296,41 @@ def welded_field(soft: np.ndarray, rig, canonical_vertices: np.ndarray,
 # marching the per-character cut
 # --------------------------------------------------------------------------
 
-def march_cut(values: np.ndarray, rig, canonical_vertices: np.ndarray,
+def _refine_crossing(soft: np.ndarray, uv_a: np.ndarray, uv_b: np.ndarray,
+                     t_linear: float, constants: ShellConstants) -> float:
+    """Slide a cut vertex onto the mask curve: bisect the feathered alpha
+    along the edge's UV segment for its 0.5 crossing. The welded field
+    decides *whether* an edge is crossed (topology); this decides *where*
+    — at texture resolution, so the cut follows the learned contour
+    instead of quantizing to edge midpoints. Falls back to the linear
+    field estimate when the alpha does not straddle 0.5 along this edge
+    (the band smoothing moved the decision)."""
+    def sample(t: float) -> float:
+        uv = (1.0 - t) * uv_a + t * uv_b
+        return float(_bilinear(soft, uv[None])[0])
+
+    low_t, high_t = 0.0, 1.0
+    low_value = sample(low_t) - 0.5
+    high_value = sample(high_t) - 0.5
+    clamp = constants.cut_t_clamp
+    if low_value * high_value >= 0.0:
+        return float(np.clip(t_linear, clamp, 1.0 - clamp))
+    for _ in range(24):
+        mid = 0.5 * (low_t + high_t)
+        value = sample(mid) - 0.5
+        if low_value * value <= 0.0:
+            high_t = mid
+        else:
+            low_t, low_value = mid, value
+    return float(np.clip(0.5 * (low_t + high_t), clamp, 1.0 - clamp))
+
+
+def march_cut(values: np.ndarray, soft: np.ndarray, rig,
+              canonical_vertices: np.ndarray,
               constants: ShellConstants) -> dict:
     """Clip the body surface at the 0.5 level set. Shared geometry at cut
-    edges, per-corner UVs interpolated in the owning source face, exact
+    edges (their crossing refined against the alpha in UV space),
+    per-corner UVs interpolated in the owning source face, exact
     source-face/barycentric correspondence for every shell vertex."""
     faces = rig.faces
     corner_uv = rig.texcoords[rig.texcoord_faces]
@@ -304,19 +354,27 @@ def march_cut(values: np.ndarray, rig, canonical_vertices: np.ndarray,
             source_bary.append(np.zeros(3))
         return shell
 
-    def cut_vertex(a: int, b: int) -> int:
+    def cut_vertex(a: int, b: int, uv_a: np.ndarray,
+                   uv_b: np.ndarray) -> tuple[int, float]:
+        """The shared cut vertex on undirected edge (a, b) and its
+        crossing parameter in a→b order. The first face to reach the
+        edge fixes the refined crossing; adjacent faces reuse it, so
+        both sides share one vertex at one position."""
         key = (a, b) if a < b else (b, a)
-        shell = edge_cut.get(key)
-        if shell is None:
-            t = (0.5 - values[key[0]]) / (values[key[1]] - values[key[0]])
-            t = float(np.clip(t, 0.0, 1.0))
-            shell = len(positions)
-            edge_cut[key] = shell
-            positions.append((1 - t) * canonical_vertices[key[0]]
-                             + t * canonical_vertices[key[1]])
-            source_face.append(-1)
-            source_bary.append(np.zeros(3))
-        return shell
+        cached = edge_cut.get(key)
+        if cached is not None:
+            shell, t_key = cached
+            return shell, (t_key if key == (a, b) else 1.0 - t_key)
+        t_linear = float(np.clip(
+            (0.5 - values[a]) / (values[b] - values[a]), 0.0, 1.0))
+        t = _refine_crossing(soft, uv_a, uv_b, t_linear, constants)
+        shell = len(positions)
+        positions.append((1 - t) * canonical_vertices[a]
+                         + t * canonical_vertices[b])
+        source_face.append(-1)
+        source_bary.append(np.zeros(3))
+        edge_cut[key] = (shell, t if key == (a, b) else 1.0 - t)
+        return shell, t
 
     for face_index in range(len(faces)):
         corners = faces[face_index]
@@ -335,9 +393,7 @@ def march_cut(values: np.ndarray, rig, canonical_vertices: np.ndarray,
                 if states[c]:
                     polygon.append((body_vertex(a), uvs[c], _one_hot(c)))
                 if states[c] != states[nxt]:
-                    shell = cut_vertex(a, b)
-                    t = (0.5 - values[a]) / (values[b] - values[a])
-                    t = float(np.clip(t, 0.0, 1.0))
+                    shell, t = cut_vertex(a, b, uvs[c], uvs[nxt])
                     uv_point = (1 - t) * uvs[c] + t * uvs[nxt]
                     bary = (1 - t) * _one_hot(c) + t * _one_hot(nxt)
                     polygon.append((shell, uv_point, bary))
@@ -719,6 +775,7 @@ class PreparedShell:
     outer_face_count: int
     source_face: np.ndarray
     source_bary: np.ndarray
+    hard_key: np.ndarray | None = None   # (H, W) bool — for color dilation
     audit: dict = field(default_factory=dict)
 
 
@@ -736,7 +793,8 @@ def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
                           excluded_regions=excluded_regions)
     fields = welded_field(alpha["soft"], rig, canonical_vertices, constants)
     seam = _seam_diagnostic(fields, constants)
-    cut = march_cut(fields["values"], rig, canonical_vertices, constants)
+    cut = march_cut(fields["values"], alpha["soft"], rig,
+                    canonical_vertices, constants)
     solid = build_solid(cut, identity_vertices, rig, constants)
     joints4, weights4 = transfer_weights(cut, rig, solid["outer_count"])
     hidden = covered_body_faces(fields["values"], rig, fields["adjacency"],
@@ -753,6 +811,7 @@ def prepare_shell(rig, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
         outer_face_count=solid["outer_face_count"],
         source_face=cut["source_face"],
         source_bary=cut["source_bary"],
+        hard_key=alpha["hard"],
         audit={
             "constants_version": constants.version,
             "coverage": alpha["coverage"],

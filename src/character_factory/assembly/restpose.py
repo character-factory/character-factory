@@ -108,6 +108,18 @@ class Skeleton:
         return m
 
 
+# |w| of a local rest rotation below this is treated as "near 180°" and
+# rolled away. 0.25 is a rotation of about 151°, comfortably clear of the
+# w = 0 singularity while leaving ordinary frames untouched.
+_ROLL_LIMIT = 0.25
+
+
+def _local_w(parent_rotation: np.ndarray, frame: np.ndarray) -> float:
+    """|w| of the local rotation `parent⁻¹ · frame`, from its trace."""
+    local = parent_rotation.T @ frame
+    return float(np.sqrt(max(0.0, 1.0 + np.trace(local))) / 2.0)
+
+
 def reauthor_orientations(skeleton: Skeleton) -> None:
     """Replace every joint's rest rotation with a geometry-derived frame.
 
@@ -119,6 +131,17 @@ def reauthor_orientations(skeleton: Skeleton) -> None:
     and right frames come out as exact reflections of each other. Positions
     are untouched; the IBMs cancel any orientation choice, so the bound mesh
     is unchanged.
+
+    Because that choice is free, it is also made *well-conditioned*: a
+    frame whose local rotation would land near 180° is rolled 180° about
+    its own bone axis (negating the two non-axis columns, which keeps the
+    axis and the determinant). A 180° local is a quaternion with w = 0 —
+    the degenerate case for handedness conversion and for sign
+    normalization, where `q` and `-q` are equally valid and importers
+    disagree. Bones that carry it are the ones consumers deform wrongly,
+    so we do not emit it. The mirror still holds: mirroring conjugates a
+    rotation and preserves its angle, so the roll triggers on a left/right
+    pair identically.
     """
     children: dict[int, list[int]] = {}
     for index, parent in enumerate(skeleton.parents):
@@ -139,6 +162,8 @@ def reauthor_orientations(skeleton: Skeleton) -> None:
             else bone_axes[int(skeleton.parents[joint])]
         )
 
+    # Parents are ordered before their children, so each local rotation is
+    # measured against a frame that has already been decided.
     for joint in range(len(skeleton.parents)):
         bone = bone_axes[joint]
         reference = _REFERENCE
@@ -146,7 +171,11 @@ def reauthor_orientations(skeleton: Skeleton) -> None:
             reference = _FALLBACK
         side = reference - bone * float(bone @ reference)
         side /= np.linalg.norm(side)
-        skeleton.rotations[joint] = np.column_stack([bone, side, np.cross(bone, side)])
+        frame = np.column_stack([bone, side, np.cross(bone, side)])
+        parent = int(skeleton.parents[joint])
+        if parent >= 0 and _local_w(skeleton.rotations[parent], frame) < _ROLL_LIMIT:
+            frame = np.column_stack([bone, -side, -np.cross(bone, side)])
+        skeleton.rotations[joint] = frame
 
 
 def bake_knee_flexion(

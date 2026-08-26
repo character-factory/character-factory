@@ -10,7 +10,7 @@ from character_factory import Character
 from character_factory.assembly.gltf import parse_glb
 from character_factory.assembly.validate import validate_glb
 
-from tests.assembly.test_export import _real_rig_dir
+from tests.assembly.test_export import _real_rig_dir, source_topology_registry
 
 pytestmark = pytest.mark.skipif(
     _real_rig_dir() is None,
@@ -50,7 +50,8 @@ def test_assemble_end_to_end(tmp_path):
         recipe["component_version"] = str(resolved[slot].version)
     character_path = tmp_path / "runner.char.json"
     Character.from_document(document).save(character_path)
-    out = assemble(character_path, assets, tmp_path / "runner.glb")
+    out = assemble(character_path, assets, tmp_path / "runner.glb",
+                   registry=source_topology_registry())
     data = out.read_bytes()
     report = validate_glb(data, expected_joints=127)
     assert report["reparse_max_error_mm"] < 1e-2
@@ -175,9 +176,10 @@ def test_garment_shell_gate_fails_closed_to_the_painted_build(tmp_path):
     solid_png(assets / "shoe.png", (0, 0, 0))
     character_path = _repinned_character(tmp_path)
 
-    off = assemble(character_path, assets, tmp_path / "off.glb")
+    registry = source_topology_registry()
+    off = assemble(character_path, assets, tmp_path / "off.glb", registry=registry)
     on = assemble(character_path, assets, tmp_path / "on.glb",
-                  garment_shells=True)
+                  garment_shells=True, registry=registry)
     gltf_off, binary_off = parse_glb(off.read_bytes())
     gltf_on, binary_on = parse_glb(on.read_bytes())
     # Identical scene: same meshes, same binary payload — the fallback IS
@@ -224,7 +226,7 @@ def test_garment_shell_ships_when_every_gate_passes(tmp_path):
     character_path = _repinned_character(tmp_path)
 
     out = assemble(character_path, assets, tmp_path / "shelled.glb",
-                   garment_shells=True)
+                   garment_shells=True, registry=source_topology_registry())
     data = out.read_bytes()
     report = validate_glb(data, expected_joints=127)
     assert report["reparse_max_error_mm"] < 1e-2

@@ -40,7 +40,7 @@ def test_export_passes_validation(rig, tmp_path):
     # The manifest's own shape is versioned like character.json: a shape
     # change to any field bumps this, so consumers detect it instead of
     # silently falling back.
-    assert result.manifest["schema_version"] == "0.4"
+    assert result.manifest["schema_version"] == "0.5"
     assert result.manifest["idle_clip"]["starts_at_rest"] is True
 
 
@@ -238,15 +238,57 @@ def test_buffer_views_are_aligned(rig, tmp_path):
 # --- integration against the real rig component -------------------------------
 
 
-def _real_rig_dir():
+def source_topology_registry():
+    """A registry pinned to the tier these batteries assert against.
+
+    The live index serves the newest compatible component, which is the
+    right behaviour for the product and the wrong behaviour for a test
+    that hard-codes a surface's triangle counts or vertex indices. This
+    resolves the newest body-rig whose render topology IS its source
+    topology, and the assembly-assets that pairs with it.
+    """
+    import json
+
+    from character_factory.registry import Registry, RegistryIndex
+    from character_factory.registry.store import component_dir
+
+    index = Registry.default().index
+    keep = []
+    for entry in index.entries:
+        if entry.name == "body-rig":
+            directory = component_dir(entry)
+            if not (directory / "rig.json").is_file():
+                continue
+            if json.loads((directory / "rig.json").read_text()).get("render"):
+                continue          # a declared render LOD is a different tier
+        keep.append(entry.document)
+    document = dict(index.document, components=keep)
+    return Registry(RegistryIndex(document))
+
+
+def _real_rig_dir(render_lod=None):
+    """A cached body-rig component directory.
+
+    `render_lod=None` (the default) asks for one whose render topology is
+    its source topology — the surface these tests were written against.
+    Face-index data (mouth portals, eye apertures) belongs to whichever
+    surface a component renders, so a battery has to say which it means
+    rather than taking whatever resolution happens to serve today.
+    """
+    import json
+
     from character_factory.registry import Registry
     from character_factory.registry.store import component_dir
 
-    entry = Registry.default().get("body-rig")
-    directory = component_dir(entry)
-    if not (directory / "mhr_model.pt").is_file() or not (directory / "rig.json").is_file():
-        return None
-    return directory
+    for entry in reversed(Registry.default().index.versions_of("body-rig")):
+        directory = component_dir(entry)
+        if not (directory / "mhr_model.pt").is_file() \
+                or not (directory / "rig.json").is_file():
+            continue
+        declared = json.loads((directory / "rig.json").read_text()).get("render")
+        if (declared or {}).get("lod") == render_lod:
+            return directory
+    return None
 
 
 real_rig = pytest.mark.skipif(

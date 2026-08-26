@@ -565,7 +565,19 @@ def _prepare_mouth(rig, assets_component, evaluation, character,
             "semantics": data.semantics,
         },
         "jaw": data.jaw,
-        "animation_limitations": data.limitations,
+        "animation_limitations": {
+            **data.limitations,
+            # Dispatch contract, stated so consumers stop parsing prose:
+            # `kind` selects the entry type and `params` is the
+            # authoritative machine-readable description of the pose.
+            # `case` is a human-readable label — its grammar is not
+            # stable and entries exist (neutral-seating) that match no
+            # case pattern at all.
+            "reading": "dispatch on `kind`; read the pose from `params`. "
+                       "`case` is a human-readable label only — do not "
+                       "parse it: entry kinds without a morph unit carry "
+                       "no unit/weight and match no case grammar.",
+        },
     }
     mouth_glb = MouthGlb(
         socket_vertices_cm=strip.vertices,

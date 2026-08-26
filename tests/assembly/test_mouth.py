@@ -294,8 +294,14 @@ def _assemble_example(tmp_path, topology):
     from PIL import Image
 
     from character_factory.api import assemble
-    from character_factory.registry import Registry
     from character_factory.schema import Character
+
+    from tests.assembly.test_export import source_topology_registry
+
+    # This battery asserts source-topology facts (portal size, the corner
+    # seam duplicates, exact vertex indices), so it pins the tier it was
+    # written against rather than following what the index serves today.
+    registry = source_topology_registry()
 
     assets = tmp_path / f"assets-{topology}"
     assets.mkdir(exist_ok=True)
@@ -304,11 +310,11 @@ def _assemble_example(tmp_path, topology):
         Image.new("RGB", (64, 64), color).save(assets / f"{slot}.png")
     document = jsonlib.loads((EXAMPLES / "storyteller.char.json").read_text())
     document["body"]["topology"] = topology
-    resolved = Registry.default().resolve_slots(sorted(document["textures"]))
+    resolved = registry.resolve_slots(sorted(document["textures"]))
     for slot, recipe in document["textures"].items():
         recipe["component_version"] = str(resolved[slot].version)
     out = tmp_path / f"{topology}.glb"
-    assemble(Character.from_document(document), assets, out)
+    assemble(Character.from_document(document), assets, out, registry=registry)
     return out.read_bytes()
 
 

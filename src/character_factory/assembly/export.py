@@ -38,8 +38,9 @@ SCALE = 0.01
 # meaning of an existing field bumps the minor. History: 0.1 shipped a
 # placeholder humanoid_map; 0.2 is the structured humanoid_map object;
 # 0.3 adds the per-slot `garments` render-mode block; 0.4 adds the
-# measured `budget` triangle inventory.
-MANIFEST_SCHEMA_VERSION = "0.4"
+# measured `budget` triangle inventory; 0.5 states the schema_version
+# contract and the animation-limitation reading rule.
+MANIFEST_SCHEMA_VERSION = "0.5"
 
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
@@ -711,6 +712,16 @@ def export_character_glb(
             "content": "subtle breathing and weight sway; every joint fully "
                        "driven (complete local TRS)",
         },
+        "schema_version_contract": (
+            "Check `format` first, then `schema_version`. Same major means "
+            "compatible: fields you know keep their shape and meaning, and "
+            "unknown fields must be ignored rather than treated as errors. "
+            "A minor bump may add fields or change the shape of an existing "
+            "one, so a consumer that depends on a field should verify the "
+            "minor it was written against and fail loudly — not silently "
+            "fall back — when it reads a higher one it has not been "
+            "updated for."
+        ),
         "notes": [
             "Proportions vary within six semantic controls; detailed "
             "segment scales are uniform in v0.1. Ground contact needs "

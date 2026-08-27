@@ -41,8 +41,22 @@ def test_export_passes_validation(rig, tmp_path):
     # The manifest's own shape is versioned like character.json: a shape
     # change to any field bumps this, so consumers detect it instead of
     # silently falling back.
-    assert result.manifest["schema_version"] == "0.5"
+    assert result.manifest["schema_version"] == "0.6"
+    assert result.manifest["$schema"] == "/v0/schemas/export-manifest-0.6.json"
     assert result.manifest["idle_clip"]["starts_at_rest"] is True
+    assert result.manifest["idle_clip"]["intended_playback"] == "native-skeleton"
+    assert result.manifest["idle_clip"]["humanoid_retargeting"] == "not-certified"
+    assert result.manifest["idle_clip"]["drives"] == {
+        "joint_local_trs": "all", "morph_targets": []
+    }
+    assert result.manifest["grounding"]["contact_frames_certified"] is False
+    assert report["rest_ground_error_mm"] < 1e-3
+    assert report["idle_ground_drift_mm"] <= 10.0
+
+    from jsonschema import validate
+    from character_factory.assembly import export_manifest_schema
+
+    validate(result.manifest, export_manifest_schema())
 
 
 def test_character_export_requires_the_facial_surface(rig, tmp_path):
@@ -344,6 +358,12 @@ def test_real_rig_export_passes_acceptance(tmp_path):
     covered = mapped | {humanoid["jaw"]["joint"]} | unmapped
     assert covered == joint_names
     assert len(mapped) + 1 + len(unmapped) == len(joint_names)
+    grounding = result.manifest["grounding"]
+    assert grounding["root_joint"] == "root"
+    assert grounding["sole_markers"]["kind"] == "foot-joint-offset"
+    assert grounding["sole_markers"]["left"]["joint"] == "l_foot"
+    assert grounding["sole_markers"]["right"]["joint"] == "r_foot"
+    assert grounding["root_offset_to_ground_m"] > 0.5
 
 
 def test_proportion_pose_resolves_named_channels(rig):
@@ -396,6 +416,7 @@ def test_real_rig_proportioned_export_passes_acceptance(tmp_path):
         assert report["mirror_worst_deviation_degrees"] < 0.1  # the bone floor
         assert report["idle_clip_rest_error_mm"] < 1e-3
         assert report["rest_local_rotation_min_abs_w"] >= 0.25
+        assert report["idle_ground_drift_mm"] <= 10.0
         statures[label] = result.manifest["stature_m"]
 
     # Proportions moved the skeleton: legs+spine at +0.4 ≈ +8 cm; legs at

@@ -17,6 +17,11 @@ from character_factory.assembly.export import (
 )
 from character_factory.assembly.eyes import EyeAssets, place_eyes
 from character_factory.assembly.footwear import FootChart, bake_shoe_overlay
+from character_factory.assembly.manifest import (
+    ManifestVersionError,
+    export_manifest_schema,
+    require_supported_manifest,
+)
 from character_factory.assembly.rig import RigDefinition, load_rig
 from character_factory.assembly.validate import validate_glb
 
@@ -25,10 +30,13 @@ __all__ = [
     "ExportResult",
     "EyeAssets",
     "FootChart",
+    "ManifestVersionError",
     "RigDefinition",
     "SCALE",
     "bake_shoe_overlay",
     "export_character_glb",
+    "export_manifest_schema",
+    "require_supported_manifest",
     "load_rig",
     "place_eyes",
     "validate_glb",

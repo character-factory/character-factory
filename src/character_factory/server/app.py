@@ -24,6 +24,10 @@ __all__ = ["create_app"]
 def create_app(
     service: CharacterService, *, cors_origins: list[str] | None = None
 ):
+    from character_factory.assembly.manifest import (
+        MANIFEST_SCHEMA_PATH,
+        export_manifest_schema,
+    )
     from fastapi import Body, FastAPI, HTTPException, Request, Response
     from fastapi.responses import FileResponse, JSONResponse
 
@@ -174,11 +178,10 @@ def create_app(
             "required": ["alias", "kind"],
         },
         "ExportManifest": {
-            "type": "object",
-            "description": "The export manifest embedded in the GLB's asset "
-                           "extras; this route serves the same bytes as a "
-                           "convenience projection.",
-            "additionalProperties": True,
+            **export_manifest_schema(),
+            "description": "The versioned export manifest embedded in the "
+                           "GLB's asset extras; the character route is a "
+                           "convenience projection of those same bytes.",
         },
         "Health": {
             "type": "object",
@@ -271,6 +274,10 @@ def create_app(
     async def api_index():
         return {"service": app.title, "version": app.version,
                 "docs": "/v0/docs", "openapi": "/v0/openapi.json"}
+
+    @app.get(MANIFEST_SCHEMA_PATH, include_in_schema=False)
+    async def manifest_schema():
+        return export_manifest_schema()
 
     @app.post(
         "/v0/characters", status_code=202,

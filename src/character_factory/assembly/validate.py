@@ -74,6 +74,16 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
     joints4 = read_accessor(gltf, binary, attributes["JOINTS_0"]).astype(np.int64)
     weights4 = read_accessor(gltf, binary, attributes["WEIGHTS_0"]).astype(np.float64)
 
+    manifest = gltf.get("asset", {}).get("extras", {})
+    grounding = manifest.get("grounding")
+    if grounding:
+        declared_ground = float(grounding["plane_height_m"])
+        rest_ground = float(positions[:, 1].min())
+        assert abs(rest_ground - declared_ground) < 1e-6, (
+            "declared ground plane does not match the exported rest mesh"
+        )
+        report["rest_ground_error_mm"] = abs(rest_ground - declared_ground) * 1000
+
     # -- weights: sum to 1, and the skeleton root deforms nothing ------------
     sums = weights4.sum(axis=1)
     assert np.allclose(sums, 1.0, atol=1e-5), "skin weights do not sum to 1"
@@ -237,9 +247,16 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
     # 3b. Mesh-level: at every key time, the substituted mesh stays near the
     # rest pose, and at some time it measurably departs from it.
     peak_m = 0.0
+    ground_drift_m = 0.0
     for at in sorted(key_times):
-        deviation = float(np.abs(substituted_skin(at) - positions).max())
+        posed = substituted_skin(at)
+        deviation = float(np.abs(posed - positions).max())
         peak_m = max(peak_m, deviation)
+        if grounding:
+            ground_drift_m = max(
+                ground_drift_m,
+                abs(float(posed[:, 1].min()) - float(grounding["plane_height_m"])),
+            )
     report["idle_clip_peak_deviation_mm"] = peak_m * 1000.0
     assert peak_m < 0.05, (
         f"the idle clip displaces the mesh by {peak_m * 1000.0:.1f} mm — "
@@ -249,6 +266,13 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
         f"the idle clip never displaces the mesh beyond "
         f"{peak_m * 1000.0:.4f} mm — a statue in all but channel count"
     )
+    if grounding:
+        tolerance = float(grounding["idle_ground_tolerance_m"])
+        report["idle_ground_drift_mm"] = ground_drift_m * 1000.0
+        assert ground_drift_m <= tolerance + 1e-9, (
+            f"idle ground drift {ground_drift_m * 1000.0:.3f} mm exceeds "
+            f"the declared {tolerance * 1000.0:.3f} mm tolerance"
+        )
     report["idle_channels"] = len(idle["channels"])
 
     return report

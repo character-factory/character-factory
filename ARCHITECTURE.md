@@ -491,13 +491,13 @@ of conventions chosen so the artifact imports and retargets correctly:
   byte-identical across re-exports of the same character); a sidecar
   `manifest.json` exists only on request, as a projection of the same
   bytes (`GET /v0/characters/{id}/manifest.json`). The manifest carries
-  its own `schema_version`, versioned with the same discipline as the
-  character file: same major = compatible, unknown fields must be
-  tolerated, and any change to the shape or meaning of an existing field
-  bumps the minor version — consumers check `format` + `schema_version`
-  rather than sniffing field shapes (0.3 added the per-slot `garments`
-  block: `render_mode: "shell" | "painted"` for each garment-class slot,
-  with the shell's inventory or the rejection reason). On mouth-interior exports the jaw
+  its own `schema_version` and `$schema`; the machine-readable schema is
+  served at the declared same-origin path and packaged with the library.
+  Minor versions are additive, while a field-shape or meaning change bumps
+  the major. A consumer that pins a tested contract rejects any other
+  version loudly instead of inferring from field shapes. The per-slot
+  `garments` block declares `render_mode: "shell" | "painted"` for each
+  garment-class slot, with the shell inventory or rejection reason. The jaw
   block states its contract explicitly: rotation sign (positive about the
   local axis opens, in the file's right-handed glTF frame — handedness
   conversion at import flips it) and the two jaw compositions
@@ -508,12 +508,17 @@ of conventions chosen so the artifact imports and retargets correctly:
   Character identity, textures, hair, and provenance live in the character
   document exclusively; nothing from it is ever duplicated into GLB
   `extras` — one source of truth per fact. A **baked idle clip** ships
-  inside the GLB: a few seconds of subtle breathing and weight sway, with
+  inside the GLB as a **Generic, native-skeleton clip that is not certified
+  for Humanoid retargeting**: a few seconds of subtle breathing and weight sway, with
   the complete local TRS baked for every joint — animation channels
   replace node transforms in a conforming player, so the clip leaves
   nothing to engine defaults. Frame 0 is exactly the rest pose and the
-  clip loops seamlessly, so "does this character stand — and move —
-  correctly in-engine?" is answerable without any external animation.
+  clip loops seamlessly. The `grounding` block measures the body ground
+  plane in scene space, gives the root and left/right foot-joint offsets for
+  this character's proportions, declares the idle's tested ground-drift
+  tolerance, and states that there are no certified contact frames and
+  runtime foot IK is recommended. A consumer never has to guess whether to
+  play the embedded clip as Generic or convert it to Humanoid.
 
 One honest documentation line, twice over: the exported rig animates as
 clean linear-blend skinning — the generator's own renders additionally apply

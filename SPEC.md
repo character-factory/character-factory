@@ -522,7 +522,8 @@ artifact, without prescribing an implementation.
    per-vertex skinning weights, so the result is animatable, not a statue.
    For `"mouth-interior"` documents it also carries the rig's 72 expression
    coefficients as morph targets (§4.2) and, in its manifest, the measured
-   animation-limitation table and jaw guidance for consumers.
+   animation-limitation table, jaw guidance, native-skeleton playback mode,
+   and proportion-aware ground/foot reference data for consumers.
 
 Assembly is deterministic: the same character file, the same pinned assets
 (or byte-identical regenerated ones), and the same assembler version MUST

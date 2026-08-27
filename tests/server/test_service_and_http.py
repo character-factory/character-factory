@@ -387,6 +387,13 @@ def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
     assert "model/gltf-binary" in scene["responses"]["200"]["content"]
     upload = spec["paths"]["/v0/characters/{character_id}/assets/{slot}"]["put"]
     assert "image/png" in upload["requestBody"]["content"]
+    manifest_schema = client.get(
+        "/v0/schemas/export-manifest-0.6.json"
+    ).json()
+    assert manifest_schema["properties"]["schema_version"]["const"] == "0.6"
+    assert spec["components"]["schemas"]["ExportManifest"]["$id"] == (
+        "/v0/schemas/export-manifest-0.6.json"
+    )
 
     response = client.put(
         f"/v0/characters/{stored.id}/assets/skin",

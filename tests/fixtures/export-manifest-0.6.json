@@ -1,0 +1,81 @@
+{
+  "format": "character-factory/export-manifest",
+  "schema_version": "0.6",
+  "$schema": "/v0/schemas/export-manifest-0.6.json",
+  "generator": "character-factory/fixture",
+  "units": "meters",
+  "up_axis": "+Y",
+  "forward_axis": "+Z",
+  "joint_count": 127,
+  "rest_knee_flexion_degrees": 2.0,
+  "skeleton_root": "body_world",
+  "stature_m": 1.75,
+  "topology": "mouth-interior",
+  "humanoid_map": {
+    "convention": "unity-humanoid",
+    "map": {
+      "Hips": "root",
+      "LeftFoot": "l_foot",
+      "RightFoot": "r_foot"
+    }
+  },
+  "idle_clip": {
+    "name": "idle",
+    "seconds": 4.0,
+    "loops": true,
+    "starts_at_rest": true,
+    "content": "Subtle native-skeleton idle.",
+    "rig_type": "generic",
+    "intended_playback": "native-skeleton",
+    "humanoid_retargeting": "not-certified",
+    "reference_pose": "exported-rest",
+    "drives": {"joint_local_trs": "all", "morph_targets": []},
+    "contact_frames": []
+  },
+  "grounding": {
+    "coordinate_space": "scene",
+    "up_axis": "+Y",
+    "plane_height_m": 0.0,
+    "root_joint": "root",
+    "root_offset_to_ground_m": 0.91,
+    "sole_markers": {
+      "kind": "foot-joint-offset",
+      "left": {
+        "joint": "l_foot",
+        "joint_scene_y_m": 0.08,
+        "offset_to_ground_m": 0.08
+      },
+      "right": {
+        "joint": "r_foot",
+        "joint_scene_y_m": 0.08,
+        "offset_to_ground_m": 0.08
+      }
+    },
+    "idle_ground_tolerance_m": 0.01,
+    "contact_frames_certified": false,
+    "runtime_foot_ik_recommended": true
+  },
+  "expression_morphs": {
+    "count": 72,
+    "names": [
+      "facs_00", "facs_01", "facs_02", "facs_03", "facs_04", "facs_05",
+      "facs_06", "facs_07", "facs_08", "facs_09", "facs_10", "facs_11",
+      "facs_12", "facs_13", "facs_14", "facs_15", "facs_16", "facs_17",
+      "facs_18", "facs_19", "facs_20", "facs_21", "facs_22", "facs_23",
+      "facs_24", "facs_25", "facs_26", "facs_27", "facs_28", "facs_29",
+      "facs_30", "facs_31", "facs_32", "facs_33", "facs_34", "facs_35",
+      "facs_36", "facs_37", "facs_38", "facs_39", "facs_40", "facs_41",
+      "facs_42", "facs_43", "facs_44", "facs_45", "facs_46", "facs_47",
+      "facs_48", "facs_49", "facs_50", "facs_51", "facs_52", "facs_53",
+      "facs_54", "facs_55", "facs_56", "facs_57", "facs_58", "facs_59",
+      "facs_60", "facs_61", "facs_62", "facs_63", "facs_64", "facs_65",
+      "facs_66", "facs_67", "facs_68", "facs_69", "facs_70", "facs_71"
+    ]
+  },
+  "budget": {
+    "triangles": {"body": 37000},
+    "total_triangles": 37000
+  },
+  "schema_version_contract": "Check format and schema_version; reject unsupported field shapes loudly.",
+  "notes": []
+}

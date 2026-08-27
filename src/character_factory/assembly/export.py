@@ -23,6 +23,10 @@ from character_factory.assembly.gltf import (
     ELEMENT_ARRAY_BUFFER,
     GlbWriter,
 )
+from character_factory.assembly.manifest import (
+    MANIFEST_SCHEMA_PATH,
+    MANIFEST_SCHEMA_VERSION,
+)
 from character_factory.assembly.rig import RigDefinition
 
 __all__ = ["ExportResult", "MouthGlb", "SCALE", "export_character_glb"]
@@ -31,16 +35,6 @@ __all__ = ["ExportResult", "MouthGlb", "SCALE", "export_character_glb"]
 # glTF meters. There is deliberately no axis flip anywhere (both are Y-up,
 # +Z-forward).
 SCALE = 0.01
-
-# Version of the embedded export manifest's own shape (independent of the
-# character schema version). Same discipline as character.json: same major
-# = compatible, unknown fields tolerated, and any change to the shape or
-# meaning of an existing field bumps the minor. History: 0.1 shipped a
-# placeholder humanoid_map; 0.2 is the structured humanoid_map object;
-# 0.3 adds the per-slot `garments` render-mode block; 0.4 adds the
-# measured `budget` triangle inventory; 0.5 states the schema_version
-# contract and the animation-limitation reading rule.
-MANIFEST_SCHEMA_VERSION = "0.5"
 
 _SAMPLER = {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
 
@@ -269,6 +263,48 @@ def _humanoid_map(rig: RigDefinition) -> dict:
         "(LeftThumbProximal -> 'Left Thumb Proximal')"
     )
     return humanoid
+
+
+def _grounding_contract(
+    rig: RigDefinition, skeleton, positions: np.ndarray, humanoid: dict
+) -> dict:
+    """Ground plane and stable foot-joint offsets in scene space.
+
+    The foot joint is not mislabeled as the anatomical sole. Its explicit
+    offset to the measured body ground plane gives importers a
+    proportion-aware baseline without inventing contact frames.
+    """
+    ground_y = float(positions[:, 1].min())
+    root_name = rig.metadata["roles"]["root"]
+    root_y = float(skeleton.positions[rig.joint_index(root_name), 1] * SCALE)
+    mapping = humanoid.get("map", {})
+
+    def marker(role: str):
+        name = mapping.get(role)
+        if not name:
+            return None
+        joint_y = float(skeleton.positions[rig.joint_index(name), 1] * SCALE)
+        return {
+            "joint": name,
+            "joint_scene_y_m": round(joint_y, 6),
+            "offset_to_ground_m": round(max(0.0, joint_y - ground_y), 6),
+        }
+
+    return {
+        "coordinate_space": "scene",
+        "up_axis": "+Y",
+        "plane_height_m": round(ground_y, 6),
+        "root_joint": root_name,
+        "root_offset_to_ground_m": round(max(0.0, root_y - ground_y), 6),
+        "sole_markers": {
+            "kind": "foot-joint-offset",
+            "left": marker("LeftFoot"),
+            "right": marker("RightFoot"),
+        },
+        "idle_ground_tolerance_m": 0.01,
+        "contact_frames_certified": False,
+        "runtime_foot_ik_recommended": True,
+    }
 
 
 def export_character_glb(
@@ -693,12 +729,14 @@ def export_character_glb(
     # The manifest is versioned with the same discipline as the character
     # file: same major = compatible, unknown fields must be tolerated, and
     # any change to the shape or meaning of an existing field bumps the
-    # minor version (0.2: humanoid_map grew from a placeholder into the
-    # structured object). Consumers should check format + schema_version
-    # rather than sniffing field shapes.
+    # minor version. 0.6 adds explicit clip-interoperability and grounding
+    # contracts. Consumers should check format + schema_version rather than
+    # sniffing field shapes.
+    humanoid = _humanoid_map(rig)
     manifest = {
         "format": "character-factory/export-manifest",
         "schema_version": MANIFEST_SCHEMA_VERSION,
+        "$schema": MANIFEST_SCHEMA_PATH,
         "generator": generator,
         "units": "meters",
         "up_axis": "+Y",
@@ -709,7 +747,7 @@ def export_character_glb(
         "stature_m": round(
             float(positions[:, 1].max() - positions[:, 1].min()), 4
         ),
-        "humanoid_map": _humanoid_map(rig),
+        "humanoid_map": humanoid,
         "idle_clip": {
             "name": "idle",
             "seconds": IDLE_SECONDS,
@@ -717,16 +755,20 @@ def export_character_glb(
             "starts_at_rest": True,
             "content": "subtle breathing and weight sway; every joint fully "
                        "driven (complete local TRS)",
+            "rig_type": "generic",
+            "intended_playback": "native-skeleton",
+            "humanoid_retargeting": "not-certified",
+            "reference_pose": "exported-rest",
+            "drives": {"joint_local_trs": "all", "morph_targets": []},
+            "contact_frames": [],
         },
+        "grounding": _grounding_contract(rig, skeleton, positions, humanoid),
         "schema_version_contract": (
-            "Check `format` first, then `schema_version`. Same major means "
-            "compatible: fields you know keep their shape and meaning, and "
-            "unknown fields must be ignored rather than treated as errors. "
-            "A minor bump may add fields or change the shape of an existing "
-            "one, so a consumer that depends on a field should verify the "
-            "minor it was written against and fail loudly — not silently "
-            "fall back — when it reads a higher one it has not been "
-            "updated for."
+            "Check `format` first, then `schema_version`. A minor bump is "
+            "additive: known fields keep their shape and meaning, and "
+            "unknown fields may be ignored. A shape or meaning change "
+            "requires a major bump. Consumers that pin a tested schema "
+            "must reject any other version loudly rather than guessing."
         ),
         "notes": [
             "Proportions vary within six semantic controls; detailed "

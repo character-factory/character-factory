@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "/v0/schemas/export-manifest-0.6.json",
+  "title": "Character Factory export manifest 0.6",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "format",
+    "schema_version",
+    "$schema",
+    "generator",
+    "units",
+    "up_axis",
+    "forward_axis",
+    "joint_count",
+    "skeleton_root",
+    "stature_m",
+    "topology",
+    "humanoid_map",
+    "idle_clip",
+    "grounding",
+    "budget",
+    "schema_version_contract"
+  ],
+  "properties": {
+    "format": {"const": "character-factory/export-manifest"},
+    "schema_version": {"const": "0.6"},
+    "$schema": {"const": "/v0/schemas/export-manifest-0.6.json"},
+    "generator": {"type": "string"},
+    "units": {"const": "meters"},
+    "up_axis": {"const": "+Y"},
+    "forward_axis": {"const": "+Z"},
+    "joint_count": {"type": "integer", "minimum": 1},
+    "skeleton_root": {"type": "string"},
+    "stature_m": {"type": "number", "exclusiveMinimum": 0},
+    "topology": {"enum": ["mouth-interior", "body-only-test"]},
+    "humanoid_map": {"type": "object"},
+    "idle_clip": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "name",
+        "seconds",
+        "loops",
+        "starts_at_rest",
+        "rig_type",
+        "intended_playback",
+        "humanoid_retargeting",
+        "reference_pose",
+        "drives",
+        "contact_frames"
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "seconds": {"type": "number", "exclusiveMinimum": 0},
+        "loops": {"type": "boolean"},
+        "starts_at_rest": {"type": "boolean"},
+        "rig_type": {"const": "generic"},
+        "intended_playback": {"const": "native-skeleton"},
+        "humanoid_retargeting": {"const": "not-certified"},
+        "reference_pose": {"const": "exported-rest"},
+        "drives": {
+          "type": "object",
+          "required": ["joint_local_trs", "morph_targets"],
+          "properties": {
+            "joint_local_trs": {"const": "all"},
+            "morph_targets": {"type": "array", "maxItems": 0}
+          }
+        },
+        "contact_frames": {"type": "array", "maxItems": 0}
+      }
+    },
+    "grounding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinate_space",
+        "up_axis",
+        "plane_height_m",
+        "root_joint",
+        "root_offset_to_ground_m",
+        "sole_markers",
+        "idle_ground_tolerance_m",
+        "contact_frames_certified",
+        "runtime_foot_ik_recommended"
+      ],
+      "properties": {
+        "coordinate_space": {"const": "scene"},
+        "up_axis": {"const": "+Y"},
+        "plane_height_m": {"type": "number"},
+        "root_joint": {"type": "string"},
+        "root_offset_to_ground_m": {"type": "number", "minimum": 0},
+        "sole_markers": {
+          "type": "object",
+          "required": ["kind", "left", "right"],
+          "properties": {
+            "kind": {"const": "foot-joint-offset"},
+            "left": {"$ref": "#/$defs/soleMarker"},
+            "right": {"$ref": "#/$defs/soleMarker"}
+          }
+        },
+        "idle_ground_tolerance_m": {"type": "number", "exclusiveMinimum": 0},
+        "contact_frames_certified": {"const": false},
+        "runtime_foot_ik_recommended": {"const": true}
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["triangles", "total_triangles"],
+      "properties": {
+        "triangles": {"type": "object"},
+        "total_triangles": {"type": "integer", "minimum": 0}
+      }
+    },
+    "schema_version_contract": {"type": "string"}
+  },
+  "$defs": {
+    "soleMarker": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["joint", "joint_scene_y_m", "offset_to_ground_m"],
+          "properties": {
+            "joint": {"type": "string"},
+            "joint_scene_y_m": {"type": "number"},
+            "offset_to_ground_m": {"type": "number", "minimum": 0}
+          }
+        }
+      ]
+    }
+  }
+}

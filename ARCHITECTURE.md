@@ -292,7 +292,7 @@ GET    /v0/jobs                        lightweight job list
 GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error
 DELETE /v0/jobs/{id}                   cancel queued work or request cancellation
 POST   /v0/jobs/{id}/retry             explicit new attempt after failure/cancel
-GET    /v0/characters                  library records, newest first
+GET    /v0/characters                  bounded cursor page, newest first
 GET    /v0/characters/{id}             character + separate artifact/latest-job state
 GET    /v0/characters/{id}/scene.glb   current build artifact
 GET    /v0/characters/{id}/assets/{slot}.png
@@ -309,6 +309,12 @@ POST   /v0/validate                    character document in body → validation
 GET    /v0/components                  registry view: installed + available components
 GET    /v0/health                      GPU present, VRAM, component cache state
 ```
+
+List responses are `{items, next_cursor}`; `limit` is bounded to 1–100 and
+the cursor is opaque. Browser use is same-origin unless the operator supplies
+one or more explicit CORS origins. The bundled docs are self-contained, and
+the gallery retains a dependency-free create/list/download view if its 3D
+viewer modules are unavailable offline.
 
 Uploads of edited character files are just `POST /v0/characters` with a
 `character` body instead of a `prompt` — the server builds whatever valid

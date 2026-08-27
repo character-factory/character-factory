@@ -173,6 +173,49 @@ button:disabled { opacity: .45; cursor: default; }
   </aside>
 </div>
 
+<script>
+/* The orbit viewer is an enhancement loaded below. If its modules are not
+   reachable (for example on an offline private deployment), keep the
+   library and create workflow usable with this dependency-free fallback. */
+setTimeout(async () => {
+  if (window.characterFactoryUiReady) return;
+  const byId = id => document.getElementById(id);
+  byId('worker-status').textContent = 'basic offline view';
+  const page = await fetch('/v0/characters?limit=100').then(r => r.json())
+    .catch(() => ({items: []}));
+  const grid = byId('grid');
+  grid.replaceChildren(...page.items.map(row => {
+    const tile = document.createElement(row.artifact.available ? 'a' : 'div');
+    tile.className = 'tile pending';
+    tile.textContent = `${row.name || row.id} — ${row.artifact.available ? 'download GLB' : 'stored'}`;
+    if (row.artifact.available) tile.href = `/v0/characters/${row.id}/scene.glb`;
+    return tile;
+  }));
+  byId('empty').hidden = page.items.length > 0;
+  byId('library-count').textContent = `${page.items.length} characters`;
+  fetch('/v0/interpreters').then(r => r.json()).then(items => {
+    for (const item of items) {
+      const option = document.createElement('option');
+      option.value = item.alias; option.textContent = item.alias;
+      byId('interpreter').appendChild(option);
+    }
+  }).catch(() => {});
+  byId('create').onclick = async () => {
+    const prompt = byId('prompt').value.trim();
+    if (!prompt) return;
+    const body = {prompt};
+    if (byId('interpreter').value) body.interpreter = byId('interpreter').value;
+    if (byId('turbo').checked) body.turbo = true;
+    const response = await fetch('/v0/characters', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    byId('note').textContent = response.ok ? `queued job ${result.id}`
+      : (result.error || 'failed');
+  };
+}, 1500);
+</script>
 <script type="importmap">
 { "imports": {
     "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
@@ -180,6 +223,7 @@ button:disabled { opacity: .45; cursor: default; }
 } }
 </script>
 <script type="module">
+window.characterFactoryUiReady = true;
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -229,7 +273,7 @@ function tile(row) {
 async function refresh() {
   try {
     [rows, jobs] = await Promise.all([
-      fetch('/v0/characters').then(r => r.json()),
+      fetch('/v0/characters?limit=100').then(r => r.json()).then(p => p.items),
       fetch('/v0/jobs').then(r => r.json()),
     ]);
   }

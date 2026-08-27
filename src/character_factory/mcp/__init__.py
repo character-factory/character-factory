@@ -58,9 +58,13 @@ def build_mcp(service: CharacterService):
         return record
 
     @mcp.tool()
-    def list_characters() -> list[dict]:
-        """All stored characters."""
-        return [record.__dict__ for record in service.list()]
+    def list_characters(limit: int = 50, cursor: str | None = None) -> dict:
+        """One newest-first page of stored characters."""
+        page = service.list_page(limit=limit, cursor=cursor)
+        return {
+            "items": [record.__dict__ for record in page["items"]],
+            "next_cursor": page["next_cursor"],
+        }
 
     @mcp.tool()
     def assemble_character(character_id: str) -> dict:

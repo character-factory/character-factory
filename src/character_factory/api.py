@@ -160,7 +160,10 @@ def create(
                     "actual_interpreter"
                 ],
                 "fallback_reason": interpretation_metrics["fallback_reason"],
-                "warnings": list(interpretation.notes),
+                "warnings": [
+                    {"code": "interpretation_note", "message": note}
+                    for note in interpretation.notes
+                ],
             },
         )
     return character

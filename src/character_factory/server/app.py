@@ -34,7 +34,7 @@ def create_app(
     app = FastAPI(
         title="character-factory",
         version=__import__("character_factory").__version__,
-        docs_url="/v0/docs",
+        docs_url=None,
         openapi_url="/v0/openapi.json",
     )
     if cors_origins:
@@ -142,12 +142,21 @@ def create_app(
             },
             "required": ["slot", "sha256", "bytes"],
         },
+        "Warning": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string"},
+                "message": {"type": "string"},
+                "details": {"type": "object"},
+            },
+            "required": ["code", "message"],
+        },
         "ValidationReport": {
             "type": "object",
             "properties": {
                 "ok": {"type": "boolean"},
                 "errors": {"type": "array", "items": {"type": "string"}},
-                "warnings": {"type": "array", "items": {"type": "string"}},
+                "warnings": {"type": "array", "items": _ref("Warning")},
             },
             "required": ["ok", "errors", "warnings"],
         },
@@ -212,7 +221,7 @@ def create_app(
                 "requested_interpreter": {"type": ["string", "null"]},
                 "actual_interpreter": {"type": ["string", "null"]},
                 "fallback_reason": {"type": ["string", "null"]},
-                "warnings": {"type": "array", "items": {"type": "string"}},
+                    "warnings": {"type": "array", "items": _ref("Warning")},
                 "result": {"type": ["object", "null"]},
                 "error": {"type": ["object", "null"], "properties": {
                     "code": {"type": "string"},
@@ -229,6 +238,14 @@ def create_app(
                 "id", "operation", "status", "stage", "progress",
                 "warnings", "created_at", "updated_at",
             ],
+        },
+        "CharacterPage": {
+            "type": "object",
+            "properties": {
+                "items": {"type": "array", "items": _ref("CharacterRecord")},
+                "next_cursor": {"type": ["string", "null"]},
+            },
+            "required": ["items", "next_cursor"],
         },
     }
 
@@ -278,6 +295,16 @@ def create_app(
     @app.get(MANIFEST_SCHEMA_PATH, include_in_schema=False)
     async def manifest_schema():
         return export_manifest_schema()
+
+    @app.get("/v0/docs", include_in_schema=False)
+    async def docs():
+        from fastapi.responses import HTMLResponse
+        from importlib import resources
+
+        page = resources.files("character_factory.server").joinpath(
+            "static/docs.html"
+        )
+        return HTMLResponse(page.read_text(encoding="utf-8"))
 
     @app.post(
         "/v0/characters", status_code=202,
@@ -343,10 +370,14 @@ def create_app(
         raise ServiceError('the body must contain "character" or "prompt"')
 
     @app.get("/v0/characters", responses={
-        200: _json_response({"type": "array", "items": _ref("CharacterRecord")},
-                            "All library records, newest first")})
-    async def list_characters():
-        return [record_json(record) for record in service.list()]
+        200: _json_response(_ref("CharacterPage"),
+                            "One page of library records, newest first")})
+    async def list_characters(limit: int = 50, cursor: str | None = None):
+        page = service.list_page(limit=limit, cursor=cursor)
+        return {
+            "items": [record_json(record) for record in page["items"]],
+            "next_cursor": page["next_cursor"],
+        }
 
     @app.get("/v0/characters/{character_id}",
              responses={200: _json_response(_ref("CharacterRecord"),

@@ -14,6 +14,8 @@ retryable job errors — absent capability is reported, never stubbed.
 from __future__ import annotations
 
 import hashlib
+import base64
+import binascii
 import json
 import os
 import shutil
@@ -31,6 +33,29 @@ __all__ = [
 ]
 
 _ASSET_SLOTS_FILE_RE = None
+
+
+def _delivery_warnings(manifest: dict, request: dict) -> list[dict]:
+    warnings = []
+    if request.get("garment_shells") is True:
+        for slot, delivered in manifest.get("garments", {}).items():
+            if slot != "garment":
+                continue
+            if delivered.get("render_mode") != "shell":
+                warnings.append({
+                    "code": "requested_geometry_not_delivered",
+                    "message": (
+                        f"{slot} shell was requested but the artifact uses "
+                        "painted rendering"
+                    ),
+                    "details": {
+                        "slot": slot,
+                        "requested": "shell",
+                        "actual": delivered.get("render_mode"),
+                        "reason": delivered.get("reason"),
+                    },
+                })
+    return warnings
 
 
 class ServiceError(ValueError):
@@ -292,6 +317,11 @@ class CharacterService:
                 character_id,
                 garment_shells=request.get("garment_shells"),
             )
+            manifest = self.manifest(character_id)
+            job_state = self.jobs.internal(job_id)
+            warnings = list(job_state.get("warnings", []))
+            warnings.extend(_delivery_warnings(manifest, request))
+            self.jobs.update(job_id, warnings=warnings)
             state = self._state(self.library_dir / character_id)
             state.update(active_job_id=None, last_job_id=job_id)
             self._write_state(self.library_dir / character_id, state)
@@ -300,6 +330,14 @@ class CharacterService:
                 {
                     "character_id": character_id,
                     "revision": record.artifact["revision"],
+                    "actual_capabilities": {
+                        "topology": manifest["topology"],
+                        "humanoid": bool(manifest.get("humanoid_map", {}).get("map")),
+                        "facial_animation": {
+                            "morph_count": manifest["expression_morphs"]["count"],
+                            "morph_names": manifest["expression_morphs"]["names"],
+                        },
+                    },
                 },
             )
         except InterpreterError as error:
@@ -362,6 +400,37 @@ class CharacterService:
                 records.append(self.get(path.name))
         records.sort(key=lambda r: r.created_at or "", reverse=True)
         return records
+
+    def list_page(self, *, limit: int = 50, cursor: str | None = None) -> dict:
+        if not 1 <= limit <= 100:
+            raise ServiceError("limit must be in [1, 100]")
+        records = sorted(
+            self.list(), key=lambda record: (record.created_at or "", record.id),
+            reverse=True,
+        )
+        if cursor:
+            try:
+                padding = "=" * (-len(cursor) % 4)
+                decoded = json.loads(
+                    base64.urlsafe_b64decode(cursor + padding).decode("utf-8")
+                )
+                boundary = (decoded["created_at"], decoded["id"])
+            except (ValueError, KeyError, UnicodeDecodeError, binascii.Error) as error:
+                raise ServiceError("invalid character-list cursor") from error
+            records = [
+                record for record in records
+                if (record.created_at or "", record.id) < boundary
+            ]
+        page = records[:limit]
+        next_cursor = None
+        if len(records) > limit:
+            tail = page[-1]
+            payload = json.dumps(
+                {"created_at": tail.created_at or "", "id": tail.id},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            next_cursor = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        return {"items": page, "next_cursor": next_cursor}
 
     def get(self, character_id: str) -> CharacterRecord:
         directory = self._dir(character_id)

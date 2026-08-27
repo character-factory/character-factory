@@ -14,6 +14,7 @@ import pytest
 from character_factory.server.service import (
     CharacterService,
     ServiceError,
+    _delivery_warnings,
 )
 
 EXAMPLES = Path(__file__).parents[2] / "examples" / "characters"
@@ -133,7 +134,8 @@ def test_http_round_trip(client):
     character_id = created.json()["id"]
 
     listed = client.get("/v0/characters").json()
-    assert [row["id"] for row in listed] == [character_id]
+    assert [row["id"] for row in listed["items"]] == [character_id]
+    assert listed["next_cursor"] is None
 
     fetched = client.get(f"/v0/characters/{character_id}")
     assert fetched.json()["character"]["name"] == "freediver"
@@ -152,7 +154,9 @@ def test_http_round_trip(client):
     assert raw.json()["format"] == "character-factory/character"
 
     assert client.delete(f"/v0/characters/{character_id}").status_code == 204
-    assert client.get("/v0/characters").json() == []
+    assert client.get("/v0/characters").json() == {
+        "items": [], "next_cursor": None
+    }
 
 
 def test_http_prompt_returns_an_async_job(client):
@@ -185,7 +189,10 @@ def test_http_bearer_token_accepted_and_ignored(client):
 def test_http_components_and_health(client):
     components = client.get("/v0/components").json()
     assert any(row["name"] == "make-wig" for row in components)
-    assert client.get("/v0/health").status_code == 200
+    health = client.get("/v0/health")
+    assert health.status_code == 200
+    assert health.json()["status"] == "ok"
+    assert "library" not in health.json()  # never expose a server path
 
 
 def test_http_bad_input_is_400(client):
@@ -268,6 +275,27 @@ def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
     assert rows[0].created_at >= rows[-1].created_at
 
 
+def test_character_list_uses_bounded_opaque_cursor_pages(service, stored):
+    source = service.document(stored.id)
+    for index in (1, 2):
+        document = json.loads(json.dumps(source))
+        document["name"] = f"page-{index}"
+        document["body"]["identity"][0] += index * 0.1
+        service.store_character(document)
+
+    first = service.list_page(limit=2)
+    assert len(first["items"]) == 2
+    assert first["next_cursor"]
+    second = service.list_page(limit=2, cursor=first["next_cursor"])
+    assert len(second["items"]) == 1
+    assert second["next_cursor"] is None
+    assert {record.id for record in first["items"]}.isdisjoint(
+        {record.id for record in second["items"]}
+    )
+    with pytest.raises(ServiceError, match="cursor"):
+        service.list_page(cursor="not-a-cursor")
+
+
 def test_manifest_route_serves_the_embedded_extras(client, service, stored):
     # No scene yet: a resource-appropriate absence, not a 500.
     response = client.get(f"/v0/characters/{stored.id}/manifest.json")
@@ -299,13 +327,14 @@ def test_openapi_schemas_are_real(client):
     assert schemas["CharacterDocument"]["properties"]["format"]["const"] == (
         "character-factory/character"
     )
-    for name in ("CharacterRecord", "ValidationReport", "Component",
-                 "Interpreter", "Health", "Job", "AssetReceipt", "Error"):
+    for name in ("CharacterRecord", "CharacterPage", "ValidationReport",
+                 "Component", "Interpreter", "Health", "Job", "AssetReceipt",
+                 "Error"):
         assert name in schemas
     # Key routes reference real response schemas — no bare `{}` bodies.
     listing = spec["paths"]["/v0/characters"]["get"]["responses"]["200"]
-    assert listing["content"]["application/json"]["schema"]["items"]["$ref"] \
-        == "#/components/schemas/CharacterRecord"
+    assert listing["content"]["application/json"]["schema"]["$ref"] \
+        == "#/components/schemas/CharacterPage"
     create = spec["paths"]["/v0/characters"]["post"]
     body = create["requestBody"]["content"]["application/json"]["schema"]
     assert body["properties"]["character"]["$ref"] \
@@ -321,8 +350,18 @@ def test_v0_index_links_to_docs(client):
     index = client.get("/v0").json()
     assert index["docs"] == "/v0/docs"
     assert index["openapi"] == "/v0/openapi.json"
-    # And the interactive docs page itself serves.
-    assert client.get("/v0/docs").status_code == 200
+    # The dependency-free docs page serves without public-CDN references.
+    docs = client.get("/v0/docs")
+    assert docs.status_code == 200
+    assert "/v0/openapi.json" in docs.text
+    assert "https://unpkg.com" not in docs.text
+
+
+def test_gallery_has_a_dependency_free_offline_fallback(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "basic offline view" in page.text
+    assert "window.characterFactoryUiReady" in page.text
 
 
 def test_thumbnail_route_missing_is_400_then_serves(client, service, stored, tmp_path):
@@ -401,3 +440,23 @@ def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
     )
     assert response.status_code == 400
     assert "Content-Type" in response.json()["error"]
+
+
+def test_declined_geometry_override_is_a_structured_job_warning():
+    warnings = _delivery_warnings(
+        {"garments": {
+            "garment": {"render_mode": "painted", "reason": "pose-gate"},
+            "shoe": {"render_mode": "painted"},
+        }},
+        {"garment_shells": True},
+    )
+    assert warnings == [
+        {
+            "code": "requested_geometry_not_delivered",
+            "message": "garment shell was requested but the artifact uses painted rendering",
+            "details": {
+                "slot": "garment", "requested": "shell", "actual": "painted",
+                "reason": "pose-gate",
+            },
+        },
+    ]

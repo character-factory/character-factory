@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Factory API</title>
+<style>
+body { max-width: 1000px; margin: 0 auto; padding: 32px 20px 80px;
+  color: #e8efeb; background: #131512; font: 15px/1.5 system-ui, sans-serif; }
+a { color: #8dafff; } code, pre { font-family: ui-monospace, monospace; }
+.route { margin: 14px 0; padding: 14px; border: 1px solid #39403c;
+  border-radius: 8px; background: #1a1f1c; }
+.method { display: inline-block; min-width: 58px; color: #79c98c; font-weight: 700; }
+.dim { color: #a5ada8; } details { margin-top: 8px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<h1>Character Factory API</h1>
+<p class="dim">Self-contained documentation generated from the server's
+<a href="/v0/openapi.json">OpenAPI document</a>. No internet connection is required.</p>
+<main id="routes"><p>Loading API description…</p></main>
+<script>
+const esc = value => String(value ?? '').replace(/[&<>"']/g,
+  char => `&#${char.charCodeAt(0)};`);
+fetch('/v0/openapi.json').then(response => response.json()).then(spec => {
+  const routes = [];
+  for (const [path, operations] of Object.entries(spec.paths || {})) {
+    for (const [method, operation] of Object.entries(operations)) {
+      if (!['get', 'post', 'put', 'delete', 'patch'].includes(method)) continue;
+      routes.push(`<section class="route"><div><span class="method">${method.toUpperCase()}</span>` +
+        `<code>${esc(path)}</code></div><div>${esc(operation.summary || '')}</div>` +
+        `<details><summary class="dim">OpenAPI operation</summary><pre>${esc(JSON.stringify(operation, null, 2))}</pre></details></section>`);
+    }
+  }
+  document.getElementById('routes').innerHTML = routes.join('');
+}).catch(error => {
+  document.getElementById('routes').textContent = `Could not load OpenAPI: ${error}`;
+});
+</script>
+</body>
+</html>

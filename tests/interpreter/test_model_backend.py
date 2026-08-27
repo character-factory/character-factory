@@ -129,7 +129,7 @@ def test_unrepairable_hair_is_an_interpreter_error():
         backend_with(json.dumps(document)).interpret("someone")
 
 
-def test_interpret_falls_back_to_rules_when_the_model_fails(monkeypatch):
+def test_interpret_model_failure_fails_closed_by_default(monkeypatch):
     calls = {}
 
     def broken_interpret(self, prompt, guidance=None):
@@ -137,15 +137,31 @@ def test_interpret_falls_back_to_rules_when_the_model_fails(monkeypatch):
         raise InterpreterError("synthetic failure")
 
     monkeypatch.setattr(ModelInterpreter, "interpret", broken_interpret)
+    with pytest.raises(InterpreterError, match="synthetic failure"):
+        interpret(
+            "a tall dockworker wearing a wool coat",
+            config=InterpreterConfig(model="test"),
+            device="cpu",
+        )
+    assert calls["ran"]
+
+
+def test_interpret_fallback_requires_explicit_authorization(monkeypatch):
+    def broken_interpret(self, prompt, guidance=None):
+        raise InterpreterError("synthetic failure")
+
+    monkeypatch.setattr(ModelInterpreter, "interpret", broken_interpret)
     interpretation, metrics = interpret(
         "a tall dockworker wearing a wool coat",
         config=InterpreterConfig(model="test"),
         device="cpu",
+        allow_fallback=True,
     )
-    assert calls["ran"]
     assert interpretation.backend == "rules-fallback"
     assert any("rules fallback" in note for note in interpretation.notes)
-    assert metrics["error"] == "synthetic failure"
+    assert metrics["fallback_reason"] == "synthetic failure"
+    assert metrics["requested_interpreter"] == "default"
+    assert metrics["actual_interpreter"] == "rules"
 
 
 def test_interpret_without_configuration_uses_rules_mode():
@@ -153,6 +169,8 @@ def test_interpret_without_configuration_uses_rules_mode():
         "a lean runner", config=InterpreterConfig(), device="cpu"
     )
     assert interpretation.backend == "rules-fallback"
+    assert metrics["actual_interpreter"] == "rules"
+    assert metrics["fallback_reason"] is None
     assert "wall_seconds" in metrics
 
 

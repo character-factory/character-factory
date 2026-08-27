@@ -6,13 +6,13 @@ tool coverage.
 """
 
 import json
+import time
 from pathlib import Path
 
 import pytest
 
 from character_factory.server.service import (
     CharacterService,
-    NotAvailable,
     ServiceError,
 )
 
@@ -46,11 +46,24 @@ def test_store_rejects_invalid_documents(service):
         service.store_character({"format": "nope"})
 
 
-def test_create_from_prompt_reports_unavailable(service):
-    # The isolated cache has no generation components.
-    with pytest.raises(NotAvailable) as excinfo:
-        service.create_from_prompt("a tall person")
-    assert "not available" in str(excinfo.value)
+def _wait_for_job(service, job_id, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = service.get_job(job_id)
+        if job["status"] in {"succeeded", "failed", "cancelled"}:
+            return job
+        time.sleep(0.01)
+    raise AssertionError(f"job {job_id} did not become terminal")
+
+
+def test_create_from_prompt_reports_unavailable_as_a_job(service):
+    # Submission stays prompt even when the isolated cache has no generation
+    # components; capability failure belongs to the accepted job resource.
+    submitted = service.create_from_prompt("a tall person")
+    failed = _wait_for_job(service, submitted["id"])
+    assert failed["status"] == "failed"
+    assert failed["error"]["code"] == "generation_unavailable"
+    assert failed["error"]["retryable"] is True
 
 
 def test_get_unknown_character(service):
@@ -124,6 +137,16 @@ def test_http_round_trip(client):
 
     fetched = client.get(f"/v0/characters/{character_id}")
     assert fetched.json()["character"]["name"] == "freediver"
+    record = fetched.json()
+    assert "status" not in record and "has_scene" not in record
+    assert record["artifact"] == {
+        "available": False, "revision": 0, "bytes": None,
+        "sha256": None, "built_at": None,
+    }
+    assert record["latest_job"] is None
+    assert record["capabilities"]["topology"] == "mouth-interior"
+    assert record["capabilities"]["facial_animation"]["morph_count"] == 72
+    assert len(record["capabilities"]["facial_animation"]["morph_names"]) == 72
 
     raw = client.get(f"/v0/characters/{character_id}/character.json")
     assert raw.json()["format"] == "character-factory/character"
@@ -132,10 +155,14 @@ def test_http_round_trip(client):
     assert client.get("/v0/characters").json() == []
 
 
-def test_http_prompt_returns_501_not_available(client):
+def test_http_prompt_returns_an_async_job(client):
     response = client.post("/v0/characters", json={"prompt": "a tall person"})
-    assert response.status_code == 501
-    assert "not available" in response.json()["error"]
+    assert response.status_code == 202
+    assert response.headers["location"].startswith("/v0/jobs/")
+    assert response.headers["retry-after"] == "2"
+    job = client.get(response.headers["location"]).json()
+    assert job["operation"] == "create"
+    assert job["status"] in {"queued", "running", "failed"}
 
 
 def test_http_validate_endpoint(client):
@@ -163,7 +190,7 @@ def test_http_components_and_health(client):
 
 def test_http_bad_input_is_400(client):
     assert client.post("/v0/characters", json={}).status_code == 400
-    assert client.get("/v0/characters/unknown0000/scene.glb").status_code == 400
+    assert client.get("/v0/characters/unknown0000/scene.glb").status_code == 404
 
 
 def test_http_rebuild_bake_queues_regeneration(client):
@@ -174,8 +201,9 @@ def test_http_rebuild_bake_queues_regeneration(client):
     response = client.post(
         f"/v0/characters/{character_id}/rebuild", json={"from": "bake"}
     )
-    assert response.status_code == 200
-    assert response.json()["status"] in ("queued", "baking", "error")
+    assert response.status_code == 202
+    assert response.json()["operation"] == "bake"
+    assert response.json()["status"] in ("queued", "running", "failed")
 
 
 # --- MCP parity (tools delegate to the same service) --------------------------
@@ -241,9 +269,9 @@ def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
 
 
 def test_manifest_route_serves_the_embedded_extras(client, service, stored):
-    # No scene yet: a clean client error, not a 500.
+    # No scene yet: a resource-appropriate absence, not a 500.
     response = client.get(f"/v0/characters/{stored.id}/manifest.json")
-    assert response.status_code == 400
+    assert response.status_code == 404
     assert "no built scene" in response.json()["error"]
 
 
@@ -272,7 +300,7 @@ def test_openapi_schemas_are_real(client):
         "character-factory/character"
     )
     for name in ("CharacterRecord", "ValidationReport", "Component",
-                 "Interpreter", "Health", "Error"):
+                 "Interpreter", "Health", "Job", "AssetReceipt", "Error"):
         assert name in schemas
     # Key routes reference real response schemas — no bare `{}` bodies.
     listing = spec["paths"]["/v0/characters"]["get"]["responses"]["200"]
@@ -282,6 +310,8 @@ def test_openapi_schemas_are_real(client):
     body = create["requestBody"]["content"]["application/json"]["schema"]
     assert body["properties"]["character"]["$ref"] \
         == "#/components/schemas/CharacterDocument"
+    assert len(body["oneOf"]) == 2
+    assert body["properties"]["allow_fallback"]["default"] is False
     validate = spec["paths"]["/v0/validate"]["post"]["responses"]["200"]
     assert validate["content"]["application/json"]["schema"]["$ref"] \
         == "#/components/schemas/ValidationReport"
@@ -296,11 +326,71 @@ def test_v0_index_links_to_docs(client):
 
 
 def test_thumbnail_route_missing_is_400_then_serves(client, service, stored, tmp_path):
-    # No thumbnail yet: a clear 400, not a broken image.
-    assert client.get(f"/v0/characters/{stored.id}/thumbnail.png").status_code == 400
+    # No thumbnail yet: a resource-appropriate 404, not a broken image.
+    assert client.get(f"/v0/characters/{stored.id}/thumbnail.png").status_code == 404
     # Once one exists (assembly writes it best-effort), the route serves it.
     directory = service.library_dir / stored.id
     (directory / "thumb.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
     response = client.get(f"/v0/characters/{stored.id}/thumbnail.png")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
+    assert f"{stored.id}-thumbnail.png" in response.headers["content-disposition"]
+    cached = client.get(
+        f"/v0/characters/{stored.id}/thumbnail.png",
+        headers={"If-None-Match": response.headers["etag"]},
+    )
+    assert cached.status_code == 304
+    assert cached.content == b""
+
+
+def test_prompt_create_is_idempotent_by_default_and_by_header(client):
+    body = {"prompt": "the same person", "interpreter": "rules"}
+    first = client.post("/v0/characters", json=body)
+    replay = client.post("/v0/characters", json=body)
+    assert replay.json()["id"] == first.json()["id"]
+
+    keyed = client.post(
+        "/v0/characters", json={**body, "prompt": "another person"},
+        headers={"Idempotency-Key": "client-request-1"},
+    )
+    conflict = client.post(
+        "/v0/characters", json={**body, "prompt": "different person"},
+        headers={"Idempotency-Key": "client-request-1"},
+    )
+    assert keyed.status_code == 202
+    assert conflict.status_code == 400
+    assert "different request" in conflict.json()["error"]
+
+
+def test_cors_preflight_uses_an_explicit_allow_list(service):
+    from fastapi.testclient import TestClient
+
+    from character_factory.server.app import create_app
+
+    allowed = "https://viewer.example"
+    cors_client = TestClient(create_app(service, cors_origins=[allowed]))
+    response = cors_client.options(
+        "/v0/characters",
+        headers={
+            "Origin": allowed,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,idempotency-key",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == allowed
+
+
+def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
+    spec = client.get("/v0/openapi.json").json()
+    scene = spec["paths"]["/v0/characters/{character_id}/scene.glb"]["get"]
+    assert "model/gltf-binary" in scene["responses"]["200"]["content"]
+    upload = spec["paths"]["/v0/characters/{character_id}/assets/{slot}"]["put"]
+    assert "image/png" in upload["requestBody"]["content"]
+
+    response = client.put(
+        f"/v0/characters/{stored.id}/assets/skin",
+        content=b"not a png", headers={"Content-Type": "application/octet-stream"},
+    )
+    assert response.status_code == 400
+    assert "Content-Type" in response.json()["error"]

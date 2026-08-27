@@ -39,10 +39,16 @@ def build_mcp(service: CharacterService):
         return record.__dict__
 
     @mcp.tool()
-    def create_character(prompt: str) -> dict:
-        """Create a character from a text description (needs published
-        generation components; reports clearly when unavailable)."""
-        return service.create_from_prompt(prompt).__dict__
+    def create_character(
+        prompt: str, interpreter: str | None = None,
+        allow_fallback: bool = False, turbo: bool = False,
+    ) -> dict:
+        """Submit an idempotent character-creation job. Poll get_job until
+        it reaches succeeded, failed, or cancelled."""
+        return service.create_from_prompt(
+            prompt, interpreter=interpreter,
+            allow_fallback=allow_fallback, turbo=turbo,
+        )
 
     @mcp.tool()
     def get_character(character_id: str) -> dict:
@@ -58,8 +64,23 @@ def build_mcp(service: CharacterService):
 
     @mcp.tool()
     def assemble_character(character_id: str) -> dict:
-        """Build the rigged .glb from the character's stored assets."""
-        return service.assemble(character_id).__dict__
+        """Submit a job to build the rigged GLB from stored assets."""
+        return service.rebuild(character_id, stage="assemble")
+
+    @mcp.tool()
+    def get_job(job_id: str) -> dict:
+        """Get lightweight status, progress, outcome, and errors for a job."""
+        return service.get_job(job_id)
+
+    @mcp.tool()
+    def cancel_job(job_id: str) -> dict:
+        """Cancel queued work or request cancellation at the next stage boundary."""
+        return service.cancel_job(job_id)
+
+    @mcp.tool()
+    def retry_job(job_id: str) -> dict:
+        """Explicitly retry a failed or cancelled job as new work."""
+        return service.retry_job(job_id)
 
     @mcp.tool()
     def list_components() -> list[dict]:

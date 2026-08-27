@@ -189,7 +189,7 @@ const $ = id => document.getElementById(id);
 const esc = s => (s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const SLOTS = ['skin', 'garment', 'shoe', 'eye'];
 
-let rows = [], open = null, openRevision = -1;
+let rows = [], jobs = [], open = null, openRevision = -1;
 
 /* ------------------------------------------------------------- selector */
 fetch('/v0/interpreters').then(r => r.json()).then(list => {
@@ -204,20 +204,22 @@ fetch('/v0/interpreters').then(r => r.json()).then(list => {
 /* --------------------------------------------------------------- gallery */
 function tile(row) {
   const div = document.createElement('div');
-  const working = !['built', 'stored', 'error'].includes(row.status);
-  if (row.has_scene || row.status === 'built' || row.status === 'error' || working) {
+  const job = row.latest_job;
+  const working = job && ['queued', 'running', 'cancelling'].includes(job.status);
+  const failed = job?.status === 'failed';
+  if (row.artifact.available || failed || working) {
     div.className = 'tile';
     // The rendered portrait, written by the server when assembly completes
     // (a 404 for not-yet-thumbnailed characters just leaves the tile card).
     div.style.backgroundImage =
-      `url(/v0/characters/${row.id}/thumbnail.png?rev=${row.revision})`;
+      `url(/v0/characters/${row.id}/thumbnail.png?rev=${row.artifact.revision})`;
   } else {
     div.className = 'tile pending';
-    div.textContent = row.status;
+    div.textContent = 'stored';
   }
-  const badge = row.status === 'error'
-    ? `<span class="tile-badge error" title="${esc(row.detail)}">error</span>`
-    : working ? `<span class="tile-badge working">${esc(row.status)}</span>` : '';
+  const badge = failed
+    ? `<span class="tile-badge error" title="${esc(job.error?.message)}">error</span>`
+    : working ? `<span class="tile-badge working">${esc(job.stage)}</span>` : '';
   div.insertAdjacentHTML('beforeend',
     `${badge}<span class="tile-meta">${esc(row.name || row.id)}</span>`);
   div.onclick = () => openLightbox(row.id);
@@ -225,10 +227,16 @@ function tile(row) {
 }
 
 async function refresh() {
-  try { rows = await (await fetch('/v0/characters')).json(); }
+  try {
+    [rows, jobs] = await Promise.all([
+      fetch('/v0/characters').then(r => r.json()),
+      fetch('/v0/jobs').then(r => r.json()),
+    ]);
+  }
   catch { $('worker-status').textContent = 'server unreachable'; return; }
-  const busy = rows.find(r => !['built', 'stored', 'error'].includes(r.status));
-  $('worker-status').textContent = busy ? `${busy.status}: ${busy.name || busy.id}` : 'idle';
+  const busy = jobs.find(j => ['queued', 'running', 'cancelling'].includes(j.status));
+  $('worker-status').textContent = busy
+    ? `${busy.stage}: job ${busy.id.slice(0, 8)}` : 'idle';
   $('library-count').textContent = rows.length ? `${rows.length} characters` : '';
   const grid = $('grid');
   grid.replaceChildren(...rows.map(tile));
@@ -236,8 +244,11 @@ async function refresh() {
   if (open) {
     const row = rows.find(r => r.id === open);
     if (row) {
-      $('lb-status').textContent = row.status + (row.detail ? ` — ${row.detail}` : '');
-      if (row.has_scene && row.revision !== openRevision) loadScene(row);
+      const job = row.latest_job;
+      $('lb-status').textContent = job
+        ? job.stage + (job.detail ? ` — ${job.detail}` : '')
+        : row.artifact.available ? 'ready' : 'stored';
+      if (row.artifact.available && row.artifact.revision !== openRevision) loadScene(row);
     }
   }
 }
@@ -256,7 +267,7 @@ $('create').onclick = async () => {
     const response = await fetch('/v0/characters', { method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const record = await response.json();
-    $('note').textContent = response.ok ? `queued: ${record.name || record.id}`
+    $('note').textContent = response.ok ? `queued job ${record.id}`
                                         : (record.error || record.detail || 'failed');
   } catch (error) { $('note').textContent = String(error); }
   $('create').disabled = false;
@@ -300,10 +311,10 @@ function clearStage(spinning) {
   $('lb-spinner').hidden = !spinning;
 }
 function loadScene(row) {
-  openRevision = row.revision;
+  openRevision = row.artifact.revision;
   const token = ++loadToken;
   clearStage(true);
-  new GLTFLoader().load(`/v0/characters/${row.id}/scene.glb?rev=${row.revision}`, g => {
+  new GLTFLoader().load(`/v0/characters/${row.id}/scene.glb?rev=${row.artifact.revision}`, g => {
     if (token !== loadToken || open !== row.id) return;   // stale load
     model = g.scene; scene.add(model);
     mixer = new THREE.AnimationMixer(model);
@@ -317,7 +328,7 @@ async function openLightbox(id) {
   $('lightbox').hidden = false;
   $('lightbox').classList.remove('rail-open');   // details hidden by default
   const listedRow = rows.find(r => r.id === id);
-  clearStage(listedRow ? listedRow.status !== 'error' : true);
+  clearStage(listedRow ? !listedRow.artifact.available : true);
   resize();
   $('lb-id').textContent = id;
   const listed = rows.find(r => r.id === id);
@@ -335,11 +346,11 @@ async function openLightbox(id) {
   for (const slot of SLOTS.filter(s => present.includes(s))) {
     holder.insertAdjacentHTML('beforeend',
       `<figure><img loading="lazy"
-         src="/v0/characters/${id}/assets/${slot}.png?rev=${full.revision}"
+         src="/v0/characters/${id}/assets/${slot}.png?rev=${full.artifact.revision}"
          onerror="this.style.opacity=.15"><figcaption>${slot}</figcaption></figure>`);
   }
   const row = rows.find(r => r.id === id);
-  if (row?.has_scene) loadScene(row);
+  if (row?.artifact.available) loadScene(row);
 }
 function closeLightbox() { open = null; $('lightbox').hidden = true; }
 $('lb-close').onclick = closeLightbox;

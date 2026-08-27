@@ -6,11 +6,10 @@ same service as tools — see :mod:`character_factory.mcp`.
 
 from character_factory.server.service import (
     CharacterService,
-    NotAvailable,
     ServiceError,
 )
 
-__all__ = ["CharacterService", "NotAvailable", "ServiceError", "create_app", "serve"]
+__all__ = ["CharacterService", "ServiceError", "create_app", "serve"]
 
 
 def __getattr__(name: str):

@@ -6,20 +6,30 @@ out (SPEC.md §9). It runs everywhere — CUDA is never required here.
 
 `create` turns a description into a character file (interpretation +
 deterministic identity); `make` chains create → bake → assemble.
-Interpretation runs the configured model backend when one is configured
-(`interpreter.model` in the cache config) and the documented rules
-fallback otherwise; provenance records which.
+Interpretation runs the selected backend (`interpreter` in cache config);
+rules is an explicit degraded backend, and a failed model request changes
+backend only when the caller authorizes fallback. Provenance records which
+backend produced the document.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from character_factory.schema import Character, vocab
 
-__all__ = ["AssetError", "assemble", "create", "make"]
+__all__ = ["AssetError", "CreationResult", "assemble", "create", "make"]
+
+
+@dataclass(frozen=True)
+class CreationResult:
+    """A created character plus the interpreter decision made for it."""
+
+    character: Character
+    interpretation: dict
 
 
 def create(
@@ -30,7 +40,9 @@ def create(
     device: str = "cuda",
     name: str | None = None,
     interpreter: str | None = None,
-) -> Character:
+    allow_fallback: bool = False,
+    _with_report: bool = False,
+) -> Character | CreationResult:
     """Description → character file: interpretation fills the symbolic
     recipes; the identity component maps the raw prompt to body parameters
     (deterministic, no seed — the seed governs texture recipes only)."""
@@ -47,8 +59,9 @@ def create(
     # before the identity encoder or any diffusion pipeline loads (§2.2).
     # `interpreter` selects a configured backend by alias (per-request; the
     # create UI's model selector); None means the configured default.
-    interpretation, _ = interpret(
-        prompt, registry=registry, device=device, backend=interpreter
+    interpretation, interpretation_metrics = interpret(
+        prompt, registry=registry, device=device, backend=interpreter,
+        allow_fallback=allow_fallback,
     )
 
     resolved = registry.resolve_slots(sorted(interpretation.slot_prompts))
@@ -114,7 +127,7 @@ def create(
         words = re.findall(r"[a-z0-9]+", prompt.lower())
         name = "-".join(words[:6]) or "character"
 
-    return Character.from_document(
+    character = Character.from_document(
         {
             "format": vocab.FORMAT,
             "schema_version": vocab.SCHEMA_VERSION,
@@ -136,6 +149,21 @@ def create(
             },
         }
     )
+    if _with_report:
+        return CreationResult(
+            character,
+            {
+                "requested_interpreter": interpretation_metrics[
+                    "requested_interpreter"
+                ],
+                "actual_interpreter": interpretation_metrics[
+                    "actual_interpreter"
+                ],
+                "fallback_reason": interpretation_metrics["fallback_reason"],
+                "warnings": list(interpretation.notes),
+            },
+        )
+    return character
 
 
 def make(

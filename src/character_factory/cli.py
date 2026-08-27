@@ -115,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--library", type=Path, default=Path("characters"))
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8400)
+    serve.add_argument(
+        "--cors-origin", action="append", default=[],
+        help="allow a browser origin (repeat for more than one); omitted "
+             "means same-origin only",
+    )
     serve.set_defaults(func=_cmd_serve)
 
     mcp = commands.add_parser(
@@ -177,7 +182,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except ImportError as error:
         print(f"error: the [server] extra is not installed ({error})", file=sys.stderr)
         return 1
-    serve(args.library, host=args.host, port=args.port)
+    serve(
+        args.library, host=args.host, port=args.port,
+        cors_origins=args.cors_origin or None,
+    )
     return 0
 
 

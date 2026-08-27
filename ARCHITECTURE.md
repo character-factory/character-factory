@@ -257,10 +257,11 @@ overrides per key → rules abstains.**
 - **Optional backend: any OpenAI-compatible endpoint**, selected by one
   config field, for people running a local inference server or wanting a
   larger model. It must never complicate the default path.
-- **Degraded mode: a rules-based fallback** (slot-prompt splitting plus a
-  conservative default hair block), used in offline CI and when no
-  interpreter backend is available. It is documented as degraded, not
-  offered as a quality tier.
+- **Degraded mode: an explicit rules backend** (slot-prompt splitting plus a
+  conservative default hair block), used when rules is configured or
+  requested. A failed model request never changes backend silently:
+  fallback is off by default and requires `allow_fallback: true`; records
+  expose the requested backend, actual backend, reason, and warnings.
 - **VRAM discipline:** the interpreter never coexists in VRAM with the base
   model — it runs and releases before the diffusion stack loads, or runs
   CPU-only. The VRAM floor in §6.1 is unchanged by this component.
@@ -280,12 +281,19 @@ rather than being a dead end.
 Endpoint sketch (v0):
 
 ```
-POST   /v0/characters                  {prompt, seed?, interpreter?}  → 202 {id}  enqueue full make
+POST   /v0/characters                  {prompt, interpreter?, allow_fallback?, turbo?}
+                                       → 202 Job; Location + Retry-After
+                                       identical bodies are idempotent by default;
+                                       Idempotency-Key is also accepted
                                        interpreter: backend alias from /v0/interpreters —
                                        per-request model selection (hosted tiers use the same field)
 GET    /v0/interpreters                selectable interpreter backends: [{alias, kind}]
-GET    /v0/characters                  list (id, name, status, thumbnail)
-GET    /v0/characters/{id}             status + character document + revision
+GET    /v0/jobs                        lightweight job list
+GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error
+DELETE /v0/jobs/{id}                   cancel queued work or request cancellation
+POST   /v0/jobs/{id}/retry             explicit new attempt after failure/cancel
+GET    /v0/characters                  library records, newest first
+GET    /v0/characters/{id}             character + separate artifact/latest-job state
 GET    /v0/characters/{id}/scene.glb   current build artifact
 GET    /v0/characters/{id}/assets/{slot}.png
 GET    /v0/characters/{id}/manifest.json   the scene's embedded export manifest,
@@ -295,6 +303,7 @@ PUT    /v0/characters/{id}/assets/{slot}   image body → replace one baked asse
                                            the stored hash pin is updated and the
                                            scene rebuilds from the assemble stage
 POST   /v0/characters/{id}/rebuild     {from: "bake"|"assemble", overrides?}
+                                       → 202 Job; always explicit new work
 DELETE /v0/characters/{id}
 POST   /v0/validate                    character document in body → validation report
 GET    /v0/components                  registry view: installed + available components
@@ -311,16 +320,17 @@ designed as if a conformance suite will one day run against both. The auth
 story is reserved at the contract level now: clients send
 `Authorization: Bearer <token>`, which the v0 local server accepts and
 ignores, so no client changes shape when auth becomes real. The one expected
-divergence is capacity semantics (`202` queue depth and `/v0/health`
-contents), which are declared server-specific, not contractual.
+divergence is capacity (`queue_position` and device fields in `/v0/health`),
+which is declared server-specific, not contractual. Job states, terminal
+enums, idempotency, cancellation, and retry semantics are common contract.
 
 ### 2.4 The MCP server
 
 `character-factory mcp` (stdio transport; HTTP optional) exposes:
 
-- tools — `make_character`, `create_character`, `bake_character`,
-  `assemble_character`, `get_character`, `list_characters`,
-  `validate_character`, `list_components`;
+- tools — `create_character`, `assemble_character`, `get_job`, `cancel_job`,
+  `retry_job`, `get_character`, `list_characters`, `validate_character`,
+  `store_character`, `list_components`;
 - resources — the character JSON Schema, SPEC.md itself, and each existing
   character's document, so an agent can read the format it is writing
   against without leaving the session.

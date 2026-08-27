@@ -49,6 +49,7 @@ __all__ = [
     "RULES_ALIAS",
     "available_backends",
     "load_interpreter_config",
+    "resolve_interpreter_config",
 ]
 
 ENV_MODEL = "CHARACTER_FACTORY_INTERPRETER_MODEL"
@@ -99,8 +100,10 @@ def _config_from(values: dict, instruction: str | None) -> InterpreterConfig:
     )
 
 
-def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:
-    """The configuration for one interpreter backend.
+def resolve_interpreter_config(
+    alias: str | None = None,
+) -> tuple[str, InterpreterConfig]:
+    """Resolve a request to its public alias and configuration.
 
     With no alias: the default backend — environment overrides first, then
     the file's `default` alias (or its flat legacy keys). With an alias:
@@ -115,15 +118,16 @@ def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:
 
     if alias is not None:
         if alias == RULES_ALIAS:
-            return InterpreterConfig(instruction=instruction)
+            return RULES_ALIAS, InterpreterConfig(instruction=instruction)
         if alias == "default" and alias not in backends:
-            return _config_from(section, instruction)   # legacy flat form
+            config = _config_from(section, instruction)
+            return ("default" if config.configured else RULES_ALIAS), config
         if alias not in backends:
             raise ValueError(
                 f"unknown interpreter backend {alias!r}; configured: "
                 f"{', '.join(sorted(backends)) or '(none)'} plus '{RULES_ALIAS}'"
             )
-        return _config_from(backends[alias], instruction)
+        return alias, _config_from(backends[alias], instruction)
 
     env = {
         "model": os.environ.get(ENV_MODEL),
@@ -131,15 +135,21 @@ def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:
         "api_key": os.environ.get(ENV_API_KEY),
     }
     if env["model"] or env["endpoint"]:
-        return _config_from(
+        return "default", _config_from(
             {**{k: v for k, v in env.items() if v}}, instruction
         )
     default = section.get("default")
     if default and default in backends:
-        return _config_from(backends[default], instruction)
+        return default, _config_from(backends[default], instruction)
     if default == RULES_ALIAS:
-        return InterpreterConfig(instruction=instruction)
-    return _config_from(section, instruction)
+        return RULES_ALIAS, InterpreterConfig(instruction=instruction)
+    config = _config_from(section, instruction)
+    return ("default" if config.configured else RULES_ALIAS), config
+
+
+def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:
+    """The configuration for one interpreter backend."""
+    return resolve_interpreter_config(alias)[1]
 
 
 def available_backends() -> list[dict]:

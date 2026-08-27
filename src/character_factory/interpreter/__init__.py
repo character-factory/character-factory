@@ -5,10 +5,11 @@ decoding, run in-process (ARCHITECTURE §2.2). Which model is pure
 configuration (`interpreter.model` in the cache config, or the
 environment) — a registry component id or a local weights path — so
 candidates swap in seconds and `character-factory interpret` doubles as
-the side-by-side bench. With nothing configured, `interpret` uses the
-**rules fallback** below: the documented degraded mode — deterministic
-slot-prompt splitting plus a conservative hair block. It is deliberately
-simple; quality interpretation is the model backend's job.
+the side-by-side bench. With rules selected (including an installation
+whose configured default is rules), `interpret` uses the deterministic
+degraded mode below. A failed model request does not silently change
+backend; callers must explicitly authorize fallback. Rules mode is
+deliberately simple; quality interpretation is the model backend's job.
 
 Identity never consumes interpreter output: the raw description goes to
 the identity network unchanged (SPEC.md §7); interpretation conditions
@@ -52,26 +53,34 @@ def interpret(
     device: str = "cuda",
     config=None,
     backend: str | None = None,
+    allow_fallback: bool = False,
 ) -> tuple[Interpretation, dict]:
     """Description → (Interpretation, metrics).
 
     `backend` selects a configured backend by alias (the create UI's
     model selector; `"rules"` forces the fallback); without it the
     configured default applies. Uses the model backend when one is
-    configured, the rules fallback otherwise — and, with a note, when the
-    model backend fails (generation must degrade, not die). The model is
+    configured and rules mode when that is the selected backend. A failed
+    model request fails closed unless `allow_fallback` is explicitly true.
+    The model is
     loaded, run, and released inside this call: no interpreter VRAM
     survives into the diffusion stages (ARCHITECTURE §2.2).
     """
-    from character_factory.interpreter.config import load_interpreter_config
+    from character_factory.interpreter.config import resolve_interpreter_config
 
     if config is None:
-        config = load_interpreter_config(alias=backend)
+        actual_alias, config = resolve_interpreter_config(alias=backend)
+    else:
+        actual_alias = backend or ("configured" if config.configured else "rules")
+    requested_alias = backend or "default"
     start = time.monotonic()
     if not config.configured:
         interpretation = rules_interpret(prompt)
         return interpretation, {
             "backend": interpretation.backend,
+            "requested_interpreter": requested_alias,
+            "actual_interpreter": actual_alias,
+            "fallback_reason": None,
             "wall_seconds": time.monotonic() - start,
         }
 
@@ -87,13 +96,23 @@ def interpret(
         )
         metrics = backend.metrics.as_dict()
     except InterpreterError as error:
+        if not allow_fallback:
+            raise
         interpretation = rules_interpret(prompt)
         interpretation.notes.append(
             f"model backend failed ({error}); rules fallback used"
         )
-        metrics = {"backend": interpretation.backend, "error": str(error)}
+        metrics = {
+            "backend": interpretation.backend,
+            "requested_interpreter": requested_alias,
+            "actual_interpreter": "rules",
+            "fallback_reason": str(error),
+        }
     finally:
         backend.close()   # release before any diffusion loads (§2.2)
+    metrics.setdefault("requested_interpreter", requested_alias)
+    metrics.setdefault("actual_interpreter", actual_alias)
+    metrics.setdefault("fallback_reason", None)
     metrics["wall_seconds"] = time.monotonic() - start
     return interpretation, metrics
 

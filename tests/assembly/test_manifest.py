@@ -19,6 +19,8 @@ def test_versioned_downstream_fixture_matches_the_published_schema():
     manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
     require_supported_manifest(manifest)
     validate(manifest, export_manifest_schema())
+    assert manifest["topology"] == "mouth-interior"
+    assert manifest["humanoid_map"]["map"]
     assert manifest["expression_morphs"]["count"] == 72
     assert manifest["expression_morphs"]["names"] == [
         f"facs_{index:02d}" for index in range(72)

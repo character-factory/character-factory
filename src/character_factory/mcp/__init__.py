@@ -42,12 +42,15 @@ def build_mcp(service: CharacterService):
     def create_character(
         prompt: str, interpreter: str | None = None,
         allow_fallback: bool = False, turbo: bool = False,
+        idempotency_key: str | None = None,
     ) -> dict:
-        """Submit an idempotent character-creation job. Poll get_job until
-        it reaches succeeded, failed, or cancelled."""
+        """Submit a character-creation job. Supply idempotency_key only when
+        retrying an ambiguous submission; omit it to create new work. Poll
+        get_job until it reaches succeeded, failed, or cancelled."""
         return service.create_from_prompt(
             prompt, interpreter=interpreter,
             allow_fallback=allow_fallback, turbo=turbo,
+            idempotency_key=idempotency_key,
         )
 
     @mcp.tool()
@@ -58,18 +61,19 @@ def build_mcp(service: CharacterService):
         return record
 
     @mcp.tool()
-    def list_characters(limit: int = 50, cursor: str | None = None) -> dict:
-        """One newest-first page of stored characters."""
-        page = service.list_page(limit=limit, cursor=cursor)
-        return {
-            "items": [record.__dict__ for record in page["items"]],
-            "next_cursor": page["next_cursor"],
-        }
+    def list_characters() -> list[dict]:
+        """All completed stored characters, newest first."""
+        return [record.__dict__ for record in service.list()]
 
     @mcp.tool()
-    def assemble_character(character_id: str) -> dict:
-        """Submit a job to build the rigged GLB from stored assets."""
-        return service.rebuild(character_id, stage="assemble")
+    def assemble_character(
+        character_id: str, idempotency_key: str | None = None
+    ) -> dict:
+        """Submit a job to build the rigged GLB from stored assets. Supply
+        idempotency_key only when retrying an ambiguous submission."""
+        return service.rebuild(
+            character_id, stage="assemble", idempotency_key=idempotency_key
+        )
 
     @mcp.tool()
     def get_job(job_id: str) -> dict:

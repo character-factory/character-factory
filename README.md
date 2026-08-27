@@ -90,4 +90,12 @@ requests. Cross-origin browser clients are not supported, and the server does
 not provide CORS headers. CORS is a browser policy and would not protect this
 service from other machines or native clients that can reach its port.
 
+`GET /v0/characters` returns a bare newest-first array of completed character
+records. Character creation and explicit rebuilds are new work by default. If
+an HTTP response is lost, repeat the request with the same `Idempotency-Key` to
+recover the original job; using that key for a different request returns
+`409`. Export guarantees such as mouth topology, the Humanoid mapping, facial
+morph inventory, jaw behavior, and grounding live in the versioned export
+manifest rather than being duplicated on every record and job.
+
 Licensed under Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).

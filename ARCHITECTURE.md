@@ -283,8 +283,8 @@ Endpoint sketch (v0):
 ```
 POST   /v0/characters                  {prompt, interpreter?, allow_fallback?, turbo?}
                                        → 202 Job; Location + Retry-After
-                                       identical bodies are idempotent by default;
-                                       Idempotency-Key is also accepted
+                                       Idempotency-Key makes transport retries
+                                       safe; unkeyed requests are new work
                                        interpreter: backend alias from /v0/interpreters —
                                        per-request model selection (hosted tiers use the same field)
 GET    /v0/interpreters                selectable interpreter backends: [{alias, kind}]
@@ -292,7 +292,7 @@ GET    /v0/jobs                        lightweight job list
 GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error
 DELETE /v0/jobs/{id}                   cancel queued work or request cancellation
 POST   /v0/jobs/{id}/retry             explicit new attempt after failure/cancel
-GET    /v0/characters                  bounded cursor page, newest first
+GET    /v0/characters                  completed records array, newest first
 GET    /v0/characters/{id}             character + separate artifact/latest-job state
 GET    /v0/characters/{id}/scene.glb   current build artifact
 GET    /v0/characters/{id}/assets/{slot}.png
@@ -304,17 +304,18 @@ PUT    /v0/characters/{id}/assets/{slot}   image body → replace one baked asse
                                            scene rebuilds from the assemble stage
 POST   /v0/characters/{id}/rebuild     {from: "bake"|"assemble", overrides?}
                                        → 202 Job; always explicit new work
+                                       unless replaying the same Idempotency-Key
 DELETE /v0/characters/{id}
 POST   /v0/validate                    character document in body → validation report
 GET    /v0/components                  registry view: installed + available components
 GET    /v0/health                      GPU present, VRAM, component cache state
 ```
 
-List responses are `{items, next_cursor}`; `limit` is bounded to 1–100 and
-the cursor is opaque. Browser use is same-origin only. The server does not
-provide CORS headers or support separately hosted browser clients. The bundled
-docs are self-contained, and the gallery retains a dependency-free
-create/list/download view if its 3D viewer modules are unavailable offline.
+The character list is a bare JSON array of completed records. Browser use is
+same-origin only. The server does not provide CORS headers or support
+separately hosted browser clients. The bundled docs are self-contained, and
+the gallery retains a dependency-free create/list/download view if its 3D
+viewer modules are unavailable offline.
 
 Uploads of edited character files are just `POST /v0/characters` with a
 `character` body instead of a `prompt` — the server builds whatever valid
@@ -329,6 +330,13 @@ ignores, so no client changes shape when auth becomes real. The one expected
 divergence is capacity (`queue_position` and device fields in `/v0/health`),
 which is declared server-specific, not contractual. Job states, terminal
 enums, idempotency, cancellation, and retry semantics are common contract.
+
+Creation and rebuild submission use one retry contract. A caller that supplies
+`Idempotency-Key` receives the original job when it repeats the same operation,
+target, and payload. Reusing that key for different work is a `409` conflict.
+Omitting the header always submits a new job; rebuilds are never inferred from
+repeating a create body. The key does not alter character identity or artifact
+hashing.
 
 The local process binds to loopback by default. Binding it to all interfaces
 is intended only for a trusted local network or private overlay network, where

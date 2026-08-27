@@ -1,9 +1,11 @@
 """Persistent single-worker jobs for the HTTP and MCP surfaces.
 
-Submission is cheap and idempotent. Job state is a small JSON resource;
-character documents and artifacts remain separate resources. A process
-restart recovers queued work and converts interrupted stages to a retryable
-terminal error instead of leaving them apparently active forever.
+Submission is cheap. Callers opt into retry-safe submission with an explicit
+idempotency key; unkeyed submissions always create new work. Job state is a
+small JSON resource, while character documents and artifacts remain separate
+resources. A process restart recovers queued work and converts interrupted
+stages to a retryable terminal error instead of leaving them apparently active
+forever.
 """
 
 from __future__ import annotations
@@ -127,12 +129,16 @@ class JobStore:
         fingerprint = self._fingerprint(operation, request)
         if force_new:
             job_id = uuid.uuid4().hex[:24]
-        elif idempotency_key:
+        elif idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValueError("Idempotency-Key must be a non-empty string")
+            if len(idempotency_key) > 255:
+                raise ValueError("Idempotency-Key must not exceed 255 characters")
             job_id = hashlib.sha256(
                 f"idempotency:{idempotency_key}".encode("utf-8")
             ).hexdigest()[:24]
         else:
-            job_id = fingerprint[:24]
+            job_id = uuid.uuid4().hex[:24]
         with self._lock:
             path = self.root / f"{job_id}.json"
             if path.is_file():
@@ -188,6 +194,15 @@ class JobStore:
                 "last_heartbeat", "finished_at",
             )
         }
+        if isinstance(result.get("result"), dict):
+            # The manifest is the sole authority for mandatory export
+            # properties. Keep old on-disk job payloads private if a
+            # pre-release server wrote duplicated capability summaries.
+            result["result"] = dict(result["result"])
+            for key in (
+                "capabilities", "requested_capabilities", "actual_capabilities"
+            ):
+                result["result"].pop(key, None)
         if job.get("status") == "queued":
             queued = sorted(
                 (

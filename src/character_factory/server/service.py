@@ -14,9 +14,8 @@ retryable job errors — absent capability is reported, never stubbed.
 from __future__ import annotations
 
 import hashlib
-import base64
-import binascii
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -29,11 +28,11 @@ from character_factory.schema import Character, CharacterError
 from character_factory.server.jobs import JobConflict, JobNotFound, JobStore
 
 __all__ = [
-    "CharacterService", "IncompatibleCharacter", "ResourceNotFound",
-    "ServiceError"
+    "CharacterService", "ResourceNotFound", "ServiceConflict", "ServiceError"
 ]
 
 _ASSET_SLOTS_FILE_RE = None
+_LOG = logging.getLogger(__name__)
 
 
 def _delivery_warnings(manifest: dict, request: dict) -> list[dict]:
@@ -67,8 +66,19 @@ class ResourceNotFound(ServiceError):
     """A requested character, job, or artifact does not exist."""
 
 
-class IncompatibleCharacter(ServiceError):
+class ServiceConflict(ServiceError):
+    """A request conflicts with a resource reserved by an earlier request."""
+
+
+class _IncompatibleCharacter(ServiceError):
     """A stored character does not satisfy the server's current format."""
+
+    def __init__(self, character_id: str, detail: str):
+        self.character_id = character_id
+        super().__init__(
+            f"stored character {character_id!r} is incompatible with the "
+            f"current character format: {detail}"
+        )
 
 
 @dataclass
@@ -77,7 +87,6 @@ class CharacterRecord:
     name: str | None
     artifact: dict
     latest_job: dict | None
-    capabilities: dict
     creation: dict
     created_at: str | None = None    # ISO 8601 UTC; sidecar metadata,
     updated_at: str | None = None    # never the character document
@@ -93,6 +102,7 @@ class CharacterService:
         self._registry_cache: Registry | None = None
         self._registry_mtime: float | None = None
         self.device = device
+        self._reported_incompatible: set[str] = set()
         # One GPU, one worker: assembly/bake jobs run single-flight.
         self._job_lock = threading.Lock()
         self.jobs = JobStore(
@@ -101,6 +111,7 @@ class CharacterService:
             start_worker=start_worker,
             stage_timeout_seconds=stage_timeout_seconds,
         )
+        self._report_incompatible_records()
 
     @property
     def registry(self) -> Registry:
@@ -172,10 +183,30 @@ class CharacterService:
         try:
             return Character.load(directory / "character.char.json")
         except (CharacterError, json.JSONDecodeError) as error:
-            raise IncompatibleCharacter(
-                f"stored character {directory.name!r} is incompatible with "
-                f"the current character format: {error}"
-            ) from error
+            raise _IncompatibleCharacter(directory.name, str(error)) from error
+
+    def _report_incompatible(self, error: _IncompatibleCharacter) -> None:
+        character_id = error.character_id
+        if character_id not in self._reported_incompatible:
+            self._reported_incompatible.add(character_id)
+            _LOG.warning("ignoring incompatible character %s: %s", character_id, error)
+
+    def _report_incompatible_records(self) -> None:
+        for path in sorted(self.library_dir.iterdir()):
+            if not path.is_dir() or not (path / "character.char.json").is_file():
+                continue
+            try:
+                self._load_character(path)
+            except _IncompatibleCharacter as error:
+                self._report_incompatible(error)
+
+    def _supported_character(self, character_id: str) -> tuple[Path, Character]:
+        directory = self._dir(character_id)
+        try:
+            return directory, self._load_character(directory)
+        except _IncompatibleCharacter as error:
+            self._report_incompatible(error)
+            raise ResourceNotFound(f"unknown character {character_id!r}") from error
 
     # -- operations -----------------------------------------------------------
 
@@ -201,9 +232,8 @@ class CharacterService:
     ) -> dict:
         """Submit a full create without running model work on the request.
 
-        The canonical request is its default idempotency key, so replaying a
-        timed-out POST returns the same job. A caller key may be supplied to
-        make that intent explicit across equivalent client representations.
+        Unkeyed calls always create new work. An explicit idempotency key makes
+        an ambiguous transport retry return its original job.
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ServiceError("prompt must be a non-empty string")
@@ -228,42 +258,56 @@ class CharacterService:
                 idempotency_key=idempotency_key,
             )
         except JobConflict as error:
+            raise ServiceConflict(str(error)) from error
+        except ValueError as error:
             raise ServiceError(str(error)) from error
 
     def regenerate(self, character_id: str,
-                   turbo: bool = False) -> dict:
+                   turbo: bool = False,
+                   idempotency_key: str | None = None) -> dict:
         """Explicitly submit a fresh bake + assembly job."""
         self._dir(character_id)
         return self._submit_character_job(
-            "bake", character_id, {"turbo": bool(turbo)}
+            "bake", character_id, {"turbo": bool(turbo)},
+            idempotency_key=idempotency_key,
         )
 
     def rebuild(
         self, character_id: str, *, stage: str = "assemble",
         turbo: bool = False, garment_shells: bool | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         if stage not in {"assemble", "bake"}:
             raise ServiceError(f"unknown rebuild stage {stage!r}")
         request = {"turbo": bool(turbo)} if stage == "bake" else {
             "garment_shells": garment_shells
         }
-        return self._submit_character_job(stage, character_id, request)
+        return self._submit_character_job(
+            stage, character_id, request, idempotency_key=idempotency_key
+        )
 
     def _submit_character_job(
-        self, operation: str, character_id: str, request: dict
+        self, operation: str, character_id: str, request: dict,
+        *, idempotency_key: str | None = None,
     ) -> dict:
-        directory = self._dir(character_id)
-        job = self.jobs.submit(
-            operation,
-            {"character_id": character_id, **request},
-            force_new=True,
-        )
-        state = self._state(directory)
-        state.update(
-            status="queued", detail="waiting for the worker",
-            active_job_id=job["id"], last_job_id=job["id"],
-        )
-        self._write_state(directory, state)
+        directory, _ = self._supported_character(character_id)
+        try:
+            job = self.jobs.submit(
+                operation,
+                {"character_id": character_id, **request},
+                idempotency_key=idempotency_key,
+            )
+        except JobConflict as error:
+            raise ServiceConflict(str(error)) from error
+        except ValueError as error:
+            raise ServiceError(str(error)) from error
+        if job["status"] == "queued":
+            state = self._state(directory)
+            state.update(
+                status="queued", detail="waiting for the worker",
+                active_job_id=job["id"], last_job_id=job["id"],
+            )
+            self._write_state(directory, state)
         return job
 
     def _bake(self, character_id: str, turbo: bool = False) -> None:
@@ -345,14 +389,6 @@ class CharacterService:
                 {
                     "character_id": character_id,
                     "revision": record.artifact["revision"],
-                    "actual_capabilities": {
-                        "topology": manifest["topology"],
-                        "humanoid": bool(manifest.get("humanoid_map", {}).get("map")),
-                        "facial_animation": {
-                            "morph_count": manifest["expression_morphs"]["count"],
-                            "morph_names": manifest["expression_morphs"]["names"],
-                        },
-                    },
                 },
             )
         except InterpreterError as error:
@@ -407,7 +443,7 @@ class CharacterService:
                 raise ResourceNotFound(f"unknown job {job_id!r}") from error
             raise ServiceError(str(error)) from error
 
-    def _scan_library(self) -> tuple[list[CharacterRecord], list[str]]:
+    def _scan_library(self) -> list[CharacterRecord]:
         """Return current records and quarantine incompatible directories.
 
         A stale or damaged on-disk document must not make health, listing, or
@@ -415,55 +451,24 @@ class CharacterService:
         an operator to inspect or remove deliberately.
         """
         records = []
-        incompatible = []
         for path in sorted(self.library_dir.iterdir()):
             if path.is_dir() and (path / "character.char.json").is_file():
                 try:
                     records.append(self.get(path.name))
-                except IncompatibleCharacter:
-                    incompatible.append(path.name)
+                except ResourceNotFound:
+                    # A directory can exist yet remain unavailable because its
+                    # document does not satisfy the current format.
+                    continue
         records.sort(key=lambda r: r.created_at or "", reverse=True)
-        return records, incompatible
-
-    def list(self) -> list[CharacterRecord]:
-        """Every compatible stored character, newest first."""
-        records, _ = self._scan_library()
         return records
 
-    def list_page(self, *, limit: int = 50, cursor: str | None = None) -> dict:
-        if not 1 <= limit <= 100:
-            raise ServiceError("limit must be in [1, 100]")
-        records = sorted(
-            self.list(), key=lambda record: (record.created_at or "", record.id),
-            reverse=True,
-        )
-        if cursor:
-            try:
-                padding = "=" * (-len(cursor) % 4)
-                decoded = json.loads(
-                    base64.urlsafe_b64decode(cursor + padding).decode("utf-8")
-                )
-                boundary = (decoded["created_at"], decoded["id"])
-            except (ValueError, KeyError, UnicodeDecodeError, binascii.Error) as error:
-                raise ServiceError("invalid character-list cursor") from error
-            records = [
-                record for record in records
-                if (record.created_at or "", record.id) < boundary
-            ]
-        page = records[:limit]
-        next_cursor = None
-        if len(records) > limit:
-            tail = page[-1]
-            payload = json.dumps(
-                {"created_at": tail.created_at or "", "id": tail.id},
-                separators=(",", ":"),
-            ).encode("utf-8")
-            next_cursor = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-        return {"items": page, "next_cursor": next_cursor}
+    def list(self) -> list[CharacterRecord]:
+        """Every completed compatible character, newest first."""
+        return [record for record in self._scan_library()
+                if record.artifact["available"]]
 
     def get(self, character_id: str) -> CharacterRecord:
-        directory = self._dir(character_id)
-        character = self._load_character(directory)
+        directory, character = self._supported_character(character_id)
         state = self._state(directory)
         scene = directory / "scene.glb"
         artifact = dict(state.get("artifact") or {})
@@ -495,14 +500,6 @@ class CharacterService:
             name=character.name,
             artifact=artifact,
             latest_job=latest_job,
-            capabilities={
-                "topology": "mouth-interior",
-                "humanoid": True,
-                "facial_animation": {
-                    "morph_count": 72,
-                    "morph_names": [f"facs_{index:02d}" for index in range(72)],
-                },
-            },
             creation={
                 "requested_interpreter": state.get("requested_interpreter"),
                 "actual_interpreter": state.get("actual_interpreter"),
@@ -514,10 +511,12 @@ class CharacterService:
         )
 
     def document(self, character_id: str) -> dict:
-        return self._load_character(self._dir(character_id)).to_document()
+        _, character = self._supported_character(character_id)
+        return character.to_document()
 
     def delete(self, character_id: str) -> None:
-        shutil.rmtree(self._dir(character_id))
+        directory, _ = self._supported_character(character_id)
+        shutil.rmtree(directory)
 
     def validate(self, document: dict, strict: bool = False) -> dict:
         from character_factory.schema import validate_document
@@ -535,7 +534,8 @@ class CharacterService:
         deliveries)."""
         from character_factory.assembly.gltf import parse_glb
 
-        scene = self._dir(character_id) / "scene.glb"
+        directory, _ = self._supported_character(character_id)
+        scene = directory / "scene.glb"
         if not scene.is_file():
             raise ResourceNotFound(
                 f"character {character_id!r} has no built scene yet"
@@ -587,7 +587,7 @@ class CharacterService:
     def put_asset(self, character_id: str, slot: str, data: bytes) -> dict:
         from character_factory.schema import vocab
 
-        directory = self._dir(character_id)
+        directory, character = self._supported_character(character_id)
         if slot not in vocab.ALL_SLOTS:
             hint = vocab.SLOT_MISTAKES.get(slot)
             raise ServiceError(
@@ -598,7 +598,6 @@ class CharacterService:
             raise ServiceError("PNG asset exceeds the 16 MiB upload limit")
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise ServiceError("asset body must be a PNG image")
-        character = self._load_character(directory)
         pinned = character.asset_maps().get(slot, {}).get("albedo")
         digest = hashlib.sha256(data).hexdigest()
         if pinned is not None and digest != pinned["sha256"]:
@@ -612,7 +611,8 @@ class CharacterService:
         return {"slot": slot, "sha256": digest, "bytes": len(data)}
 
     def asset_path(self, character_id: str, slot: str) -> Path:
-        path = self._dir(character_id) / "assets" / f"{slot}.png"
+        directory, _ = self._supported_character(character_id)
+        path = directory / "assets" / f"{slot}.png"
         if not path.is_file():
             raise ResourceNotFound(
                 f"no {slot} asset for character {character_id!r}"
@@ -620,7 +620,8 @@ class CharacterService:
         return path
 
     def scene_path(self, character_id: str) -> Path:
-        path = self._dir(character_id) / "scene.glb"
+        directory, _ = self._supported_character(character_id)
+        path = directory / "scene.glb"
         if not path.is_file():
             raise ResourceNotFound(
                 f"character {character_id!r} has no built scene yet — "
@@ -636,7 +637,7 @@ class CharacterService:
         build only (the review app's shell-vs-painted comparison)."""
         from character_factory.api import AssetError, assemble
 
-        directory = self._dir(character_id)
+        directory, _ = self._supported_character(character_id)
         with self._job_lock:
             state = self._state(directory)
             state.update(status="assembling", detail=None)
@@ -683,7 +684,8 @@ class CharacterService:
             pass
 
     def thumbnail_path(self, character_id: str) -> Path:
-        path = self._dir(character_id) / "thumb.png"
+        directory, _ = self._supported_character(character_id)
+        path = directory / "thumb.png"
         if not path.is_file():
             raise ResourceNotFound(
                 f"character {character_id} has no thumbnail yet"
@@ -691,11 +693,9 @@ class CharacterService:
         return path
 
     def health(self) -> dict:
-        records, incompatible = self._scan_library()
         report: dict = {
             "status": "ok",
-            "characters": len(records),
-            "incompatible_characters": len(incompatible),
+            "characters": len(self.list()),
             "jobs": len(self.list_jobs()),
         }
         try:

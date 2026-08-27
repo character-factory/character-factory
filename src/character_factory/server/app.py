@@ -14,8 +14,8 @@ from pathlib import Path
 
 from character_factory.server.service import (
     CharacterService,
-    IncompatibleCharacter,
     ResourceNotFound,
+    ServiceConflict,
     ServiceError,
 )
 
@@ -42,7 +42,6 @@ def create_app(service: CharacterService):
             "name": record.name,
             "artifact": record.artifact,
             "latest_job": record.latest_job,
-            "capabilities": record.capabilities,
             "creation": record.creation,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
@@ -75,19 +74,6 @@ def create_app(service: CharacterService):
                 "required": ["available", "revision", "bytes", "sha256", "built_at"],
             },
             "latest_job": {"oneOf": [_ref("Job"), {"type": "null"}]},
-            "capabilities": {
-                "type": "object",
-                "properties": {
-                    "topology": {"type": "string", "const": "mouth-interior"},
-                    "humanoid": {"type": "boolean", "const": True},
-                    "facial_animation": {"type": "object", "properties": {
-                        "morph_count": {"type": "integer", "const": 72},
-                        "morph_names": {"type": "array",
-                                        "items": {"type": "string"}},
-                    }},
-                },
-                "required": ["topology", "humanoid", "facial_animation"],
-            },
             "creation": {
                 "type": "object",
                 "properties": {
@@ -106,7 +92,7 @@ def create_app(service: CharacterService):
             "character": {**_ref("CharacterDocument"),
                           "description": "Present on single-record reads only."},
         },
-        "required": ["id", "artifact", "latest_job", "capabilities", "creation"],
+        "required": ["id", "artifact", "latest_job", "creation"],
     }
     _SCHEMAS = {
         "CharacterRecord": _RECORD_SCHEMA,
@@ -226,14 +212,6 @@ def create_app(service: CharacterService):
                 "warnings", "created_at", "updated_at",
             ],
         },
-        "CharacterPage": {
-            "type": "object",
-            "properties": {
-                "items": {"type": "array", "items": _ref("CharacterRecord")},
-                "next_cursor": {"type": ["string", "null"]},
-            },
-            "required": ["items", "next_cursor"],
-        },
     }
 
     def _json_response(schema: dict, description: str) -> dict:
@@ -242,7 +220,7 @@ def create_app(service: CharacterService):
 
     _ERROR_400 = {400: _json_response(_ref("Error"), "Invalid request")}
     _ERROR_409 = {409: _json_response(
-        _ref("Error"), "Stored character is incompatible with this server"
+        _ref("Error"), "Idempotency key conflicts with an earlier request"
     )}
     _ERROR_404 = {404: _json_response(_ref("Error"), "Resource not found")}
     _RECORD_OK = _json_response(_ref("CharacterRecord"), "The library record")
@@ -273,15 +251,13 @@ def create_app(service: CharacterService):
             content={"error": str(error), "code": "not_found", "retryable": False},
         )
 
-    @app.exception_handler(IncompatibleCharacter)
-    async def incompatible_character(
-        request: Request, error: IncompatibleCharacter
-    ):
+    @app.exception_handler(ServiceConflict)
+    async def service_conflict(request: Request, error: ServiceConflict):
         return JSONResponse(
             status_code=409,
             content={
                 "error": str(error),
-                "code": "incompatible_character",
+                "code": "idempotency_conflict",
                 "retryable": False,
             },
         )
@@ -309,14 +285,26 @@ def create_app(service: CharacterService):
         )
         return HTMLResponse(page.read_text(encoding="utf-8"))
 
+    idempotency_parameter = {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": False,
+        "schema": {"type": "string", "minLength": 1, "maxLength": 255},
+        "description": "Retry key for asynchronous creation. Reusing the "
+                       "same key with the same request returns the original "
+                       "job; reusing it for different work returns 409. "
+                       "Omit it to create a new job.",
+    }
+
     @app.post(
         "/v0/characters", status_code=202,
         responses={
             201: _RECORD_OK,
             202: _json_response(_ref("Job"), "Accepted create job"),
-            **_ERROR_400,
+            **_ERROR_400, **_ERROR_409,
         },
-        openapi_extra={"requestBody": {"required": True, "content": {
+        openapi_extra={"parameters": [idempotency_parameter],
+                       "requestBody": {"required": True, "content": {
             "application/json": {"schema": {
                 "type": "object",
                 "description": 'Either a full character document ("character") '
@@ -373,19 +361,17 @@ def create_app(service: CharacterService):
         raise ServiceError('the body must contain "character" or "prompt"')
 
     @app.get("/v0/characters", responses={
-        200: _json_response(_ref("CharacterPage"),
-                            "One page of library records, newest first")})
-    async def list_characters(limit: int = 50, cursor: str | None = None):
-        page = service.list_page(limit=limit, cursor=cursor)
-        return {
-            "items": [record_json(record) for record in page["items"]],
-            "next_cursor": page["next_cursor"],
-        }
+        200: _json_response(
+            {"type": "array", "items": _ref("CharacterRecord")},
+            "Completed library records, newest first",
+        )})
+    async def list_characters():
+        return [record_json(record) for record in service.list()]
 
     @app.get("/v0/characters/{character_id}",
              responses={200: _json_response(_ref("CharacterRecord"),
                         "The record with its character document"),
-                        **_ERROR_400, **_ERROR_404, **_ERROR_409})
+                        **_ERROR_400, **_ERROR_404})
     async def get_character(character_id: str):
         record = record_json(service.get(character_id))
         record["character"] = service.document(character_id)
@@ -394,7 +380,7 @@ def create_app(service: CharacterService):
     @app.get("/v0/characters/{character_id}/character.json",
              responses={200: _json_response(_ref("CharacterDocument"),
                         "The character document alone"),
-                        **_ERROR_400, **_ERROR_404, **_ERROR_409})
+                        **_ERROR_400, **_ERROR_404})
     async def get_character_document(character_id: str):
         return service.document(character_id)
 
@@ -472,8 +458,13 @@ def create_app(service: CharacterService):
         "/v0/characters/{character_id}/rebuild",
         status_code=202,
         responses={202: _json_response(_ref("Job"), "Accepted rebuild job"),
-                   **_ERROR_400},
-        openapi_extra={"requestBody": {"required": False, "content": {
+                   **_ERROR_400, **_ERROR_404, **_ERROR_409},
+        openapi_extra={"parameters": [{
+            **idempotency_parameter,
+            "description": "Retry key for this rebuild target and payload. "
+                           "The same key and request returns the original job; "
+                           "different work returns 409. Omit it for a new revision.",
+        }], "requestBody": {"required": False, "content": {
             "application/json": {"schema": {
                 "type": "object",
                 "properties": {"from": {
@@ -495,7 +486,8 @@ def create_app(service: CharacterService):
             }}}}},
     )
     async def rebuild(
-        character_id: str, response: Response, payload: dict = Body(default={})
+        character_id: str, response: Response, request: Request,
+        payload: dict = Body(default={}),
     ):
         stage = payload.get("from", "assemble")
         shells = payload.get("shells")
@@ -506,6 +498,7 @@ def create_app(service: CharacterService):
             stage=stage,
             turbo=bool(payload.get("turbo", False)),
             garment_shells=shells,
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
         response.headers["Location"] = f"/v0/jobs/{job['id']}"
         response.headers["Retry-After"] = "2"

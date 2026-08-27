@@ -181,18 +181,18 @@ setTimeout(async () => {
   if (window.characterFactoryUiReady) return;
   const byId = id => document.getElementById(id);
   byId('worker-status').textContent = 'basic offline view';
-  const page = await fetch('/v0/characters?limit=100').then(r => r.json())
-    .catch(() => ({items: []}));
+  const rows = await fetch('/v0/characters').then(r => r.json())
+    .catch(() => []);
   const grid = byId('grid');
-  grid.replaceChildren(...page.items.map(row => {
+  grid.replaceChildren(...rows.map(row => {
     const tile = document.createElement(row.artifact.available ? 'a' : 'div');
     tile.className = 'tile pending';
     tile.textContent = `${row.name || row.id} — ${row.artifact.available ? 'download GLB' : 'stored'}`;
     if (row.artifact.available) tile.href = `/v0/characters/${row.id}/scene.glb`;
     return tile;
   }));
-  byId('empty').hidden = page.items.length > 0;
-  byId('library-count').textContent = `${page.items.length} characters`;
+  byId('empty').hidden = rows.length > 0;
+  byId('library-count').textContent = `${rows.length} characters`;
   fetch('/v0/interpreters').then(r => r.json()).then(items => {
     for (const item of items) {
       const option = document.createElement('option');
@@ -273,7 +273,7 @@ function tile(row) {
 async function refresh() {
   try {
     [rows, jobs] = await Promise.all([
-      fetch('/v0/characters?limit=100').then(r => r.json()).then(p => p.items),
+      fetch('/v0/characters').then(r => r.json()),
       fetch('/v0/jobs').then(r => r.json()),
     ]);
   }

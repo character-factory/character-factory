@@ -39,7 +39,10 @@ def test_store_is_idempotent_by_content(service, stored):
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     again = service.store_character(document)
     assert again.id == stored.id
-    assert len(service.list()) == 1
+    assert len([
+        path for path in service.library_dir.iterdir()
+        if path.is_dir() and path.name != ".jobs"
+    ]) == 1
 
 
 def test_store_rejects_invalid_documents(service):
@@ -47,17 +50,21 @@ def test_store_rejects_invalid_documents(service):
         service.store_character({"format": "nope"})
 
 
-def test_incompatible_disk_record_is_quarantined(service, stored):
+def test_incompatible_disk_record_is_quarantined_internally(
+    service, stored, caplog
+):
     incompatible = service.library_dir / "precontract"
     incompatible.mkdir()
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     document["body"]["topology"] = "closed"
     (incompatible / "character.char.json").write_text(json.dumps(document))
+    (incompatible / "scene.glb").write_bytes(b"not a supported artifact")
 
-    assert [record.id for record in service.list()] == [stored.id]
+    assert service.list() == []
     health = service.health()
-    assert health["characters"] == 1
-    assert health["incompatible_characters"] == 1
+    assert health["characters"] == 0
+    assert "incompatible_characters" not in health
+    assert "ignoring incompatible character precontract" in caplog.text
 
 
 def _wait_for_job(service, job_id, timeout=3.0):
@@ -140,15 +147,15 @@ def client(service):
     return TestClient(create_app(service))
 
 
-def test_http_round_trip(client):
+def test_http_round_trip(client, service):
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     created = client.post("/v0/characters", json={"character": document})
     assert created.status_code == 201
     character_id = created.json()["id"]
 
-    listed = client.get("/v0/characters").json()
-    assert [row["id"] for row in listed["items"]] == [character_id]
-    assert listed["next_cursor"] is None
+    # Stored-but-unbuilt documents are addressable by id but are not completed
+    # library entries.
+    assert client.get("/v0/characters").json() == []
 
     fetched = client.get(f"/v0/characters/{character_id}")
     assert fetched.json()["character"]["name"] == "freediver"
@@ -159,17 +166,20 @@ def test_http_round_trip(client):
         "sha256": None, "built_at": None,
     }
     assert record["latest_job"] is None
-    assert record["capabilities"]["topology"] == "mouth-interior"
-    assert record["capabilities"]["facial_animation"]["morph_count"] == 72
-    assert len(record["capabilities"]["facial_animation"]["morph_names"]) == 72
+    assert "capabilities" not in record
+
+    # A completed artifact makes the record appear in the bare array.
+    (service.library_dir / character_id / "scene.glb").write_bytes(b"built")
+    listed = client.get("/v0/characters").json()
+    assert isinstance(listed, list)
+    assert [row["id"] for row in listed] == [character_id]
+    assert "capabilities" not in listed[0]
 
     raw = client.get(f"/v0/characters/{character_id}/character.json")
     assert raw.json()["format"] == "character-factory/character"
 
     assert client.delete(f"/v0/characters/{character_id}").status_code == 204
-    assert client.get("/v0/characters").json() == {
-        "items": [], "next_cursor": None
-    }
+    assert client.get("/v0/characters").json() == []
 
 
 def test_http_prompt_returns_an_async_job(client):
@@ -206,6 +216,7 @@ def test_http_components_and_health(client):
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert "library" not in health.json()  # never expose a server path
+    assert "incompatible_characters" not in health.json()
 
 
 def test_http_bad_input_is_400(client):
@@ -213,17 +224,21 @@ def test_http_bad_input_is_400(client):
     assert client.get("/v0/characters/unknown0000/scene.glb").status_code == 404
 
 
-def test_http_incompatible_disk_record_is_409_without_breaking_list(client, service):
+def test_http_incompatible_disk_record_is_an_ordinary_404(client, service):
     incompatible = service.library_dir / "precontract"
     incompatible.mkdir()
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     document["body"]["topology"] = "closed"
     (incompatible / "character.char.json").write_text(json.dumps(document))
+    (incompatible / "scene.glb").write_bytes(b"must not be served")
 
-    assert client.get("/v0/characters").json()["items"] == []
+    assert client.get("/v0/characters").json() == []
     response = client.get("/v0/characters/precontract")
-    assert response.status_code == 409
-    assert response.json()["code"] == "incompatible_character"
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+    scene = client.get("/v0/characters/precontract/scene.glb")
+    assert scene.status_code == 404
+    assert scene.json()["code"] == "not_found"
 
 
 def test_http_rebuild_bake_queues_regeneration(client):
@@ -288,6 +303,7 @@ def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
 
     first = service.get(stored.id)
     assert first.created_at and first.updated_at
+    (service.library_dir / stored.id / "scene.glb").write_bytes(b"first")
 
     # A second character stored later must list first.
     timelib.sleep(1.1)   # timestamps have second resolution
@@ -296,30 +312,27 @@ def test_records_carry_timestamps_and_list_is_newest_first(service, stored):
     other["name"] = "later-one"
     other["body"]["identity"][0] += 0.25   # different content id
     later = service.store_character(other)
+    (service.library_dir / later.id / "scene.glb").write_bytes(b"later")
     rows = service.list()
     assert [r.id for r in rows][0] == later.id
     assert rows[0].created_at >= rows[-1].created_at
 
 
-def test_character_list_uses_bounded_opaque_cursor_pages(service, stored):
+def test_character_list_is_a_complete_newest_first_array(service, stored):
     source = service.document(stored.id)
+    (service.library_dir / stored.id / "scene.glb").write_bytes(b"base")
     for index in (1, 2):
         document = json.loads(json.dumps(source))
-        document["name"] = f"page-{index}"
+        document["name"] = f"character-{index}"
         document["body"]["identity"][0] += index * 0.1
-        service.store_character(document)
+        record = service.store_character(document)
+        (service.library_dir / record.id / "scene.glb").write_bytes(
+            f"built-{index}".encode()
+        )
 
-    first = service.list_page(limit=2)
-    assert len(first["items"]) == 2
-    assert first["next_cursor"]
-    second = service.list_page(limit=2, cursor=first["next_cursor"])
-    assert len(second["items"]) == 1
-    assert second["next_cursor"] is None
-    assert {record.id for record in first["items"]}.isdisjoint(
-        {record.id for record in second["items"]}
-    )
-    with pytest.raises(ServiceError, match="cursor"):
-        service.list_page(cursor="not-a-cursor")
+    rows = service.list()
+    assert len(rows) == 3
+    assert rows == sorted(rows, key=lambda row: row.created_at or "", reverse=True)
 
 
 def test_manifest_route_serves_the_embedded_extras(client, service, stored):
@@ -353,20 +366,36 @@ def test_openapi_schemas_are_real(client):
     assert schemas["CharacterDocument"]["properties"]["format"]["const"] == (
         "character-factory/character"
     )
-    for name in ("CharacterRecord", "CharacterPage", "ValidationReport",
+    for name in ("CharacterRecord", "ValidationReport",
                  "Component", "Interpreter", "Health", "Job", "AssetReceipt",
                  "Error"):
         assert name in schemas
+    assert "CharacterPage" not in schemas
+    assert "capabilities" not in schemas["CharacterRecord"]["properties"]
     # Key routes reference real response schemas — no bare `{}` bodies.
     listing = spec["paths"]["/v0/characters"]["get"]["responses"]["200"]
-    assert listing["content"]["application/json"]["schema"]["$ref"] \
-        == "#/components/schemas/CharacterPage"
+    listing_schema = listing["content"]["application/json"]["schema"]
+    assert listing_schema == {
+        "type": "array",
+        "items": {"$ref": "#/components/schemas/CharacterRecord"},
+    }
     create = spec["paths"]["/v0/characters"]["post"]
     body = create["requestBody"]["content"]["application/json"]["schema"]
     assert body["properties"]["character"]["$ref"] \
         == "#/components/schemas/CharacterDocument"
     assert len(body["oneOf"]) == 2
     assert body["properties"]["allow_fallback"]["default"] is False
+    create_headers = {
+        parameter["name"]: parameter for parameter in create["parameters"]
+    }
+    assert create_headers["Idempotency-Key"]["in"] == "header"
+    assert "409" in create["responses"]
+    rebuild = spec["paths"]["/v0/characters/{character_id}/rebuild"]["post"]
+    rebuild_headers = {
+        parameter["name"]: parameter for parameter in rebuild["parameters"]
+    }
+    assert rebuild_headers["Idempotency-Key"]["in"] == "header"
+    assert "409" in rebuild["responses"]
     validate = spec["paths"]["/v0/validate"]["post"]["responses"]["200"]
     assert validate["content"]["application/json"]["schema"]["$ref"] \
         == "#/components/schemas/ValidationReport"
@@ -408,13 +437,17 @@ def test_thumbnail_route_missing_is_400_then_serves(client, service, stored, tmp
     assert cached.content == b""
 
 
-def test_prompt_create_is_idempotent_by_default_and_by_header(client):
+def test_prompt_create_uses_only_explicit_idempotency(client):
     body = {"prompt": "the same person", "interpreter": "rules"}
     first = client.post("/v0/characters", json=body)
-    replay = client.post("/v0/characters", json=body)
-    assert replay.json()["id"] == first.json()["id"]
+    second = client.post("/v0/characters", json=body)
+    assert second.json()["id"] != first.json()["id"]
 
     keyed = client.post(
+        "/v0/characters", json={**body, "prompt": "another person"},
+        headers={"Idempotency-Key": "client-request-1"},
+    )
+    replay = client.post(
         "/v0/characters", json={**body, "prompt": "another person"},
         headers={"Idempotency-Key": "client-request-1"},
     )
@@ -423,8 +456,26 @@ def test_prompt_create_is_idempotent_by_default_and_by_header(client):
         headers={"Idempotency-Key": "client-request-1"},
     )
     assert keyed.status_code == 202
-    assert conflict.status_code == 400
+    assert replay.json()["id"] == keyed.json()["id"]
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "idempotency_conflict"
+    assert conflict.json()["retryable"] is False
     assert "different request" in conflict.json()["error"]
+
+
+def test_rebuild_uses_the_same_explicit_idempotency_contract(client, stored):
+    path = f"/v0/characters/{stored.id}/rebuild"
+    headers = {"Idempotency-Key": "rebuild-request-1"}
+    first = client.post(path, json={"from": "assemble"}, headers=headers)
+    replay = client.post(path, json={"from": "assemble"}, headers=headers)
+    conflict = client.post(path, json={"from": "bake"}, headers=headers)
+    unkeyed = client.post(path, json={"from": "assemble"})
+
+    assert first.status_code == 202
+    assert replay.json()["id"] == first.json()["id"]
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "idempotency_conflict"
+    assert unkeyed.json()["id"] != first.json()["id"]
 
 
 def test_http_does_not_offer_cross_origin_browser_access(client):

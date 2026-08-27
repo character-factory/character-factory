@@ -22,9 +22,8 @@ One sentence in; two artifacts out:
   provenance. Diff it, commit it, edit it by hand, hand it to an agent.
 - **`scene.glb`** — a rigged, skinned glTF built deterministically from the
   character file: 127-joint skeleton, embedded bone-role manifest, baked
-  idle clip. Drop it into any engine or viewer. Characters with the
-  `mouth-interior` topology additionally carry a modeled mouth (teeth,
-  gums, tongue, inner cavity) and 72 exact facial-expression morph targets
+  idle clip, modeled mouth (teeth, gums, tongue, inner cavity), and 72 exact
+  facial-expression morph targets
   (`facs_00`–`facs_71`); the jaw animates through the `c_jaw` joint, with
   the certified rotation and the measured animation limitations stated
   machine-readably in the embedded manifest. Keep compound facial

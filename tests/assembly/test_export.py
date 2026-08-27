@@ -23,7 +23,7 @@ EXPRESSION = [0.0, 0.0]
 def export(rig, tmp_path, **kwargs):
     return export_character_glb(
         rig, IDENTITY, EXPRESSION, tmp_path / "out.glb",
-        generator="character-factory/test", **kwargs
+        generator="character-factory/test", _body_only_test=True, **kwargs
     )
 
 
@@ -34,6 +34,7 @@ def test_export_passes_validation(rig, tmp_path):
     assert report["mirror_pairs"] == 2  # l_upleg/r_upleg, l_lowleg/r_lowleg
     assert report["idle_channels"] == 21          # T, R, and S per joint
     assert report["idle_clip_rest_error_mm"] < 1e-3
+    assert report["rest_local_rotation_min_abs_w"] >= 0.25
     # The clip is a real (if subtle) motion loop, not a statue hold.
     assert report["idle_clip_peak_deviation_mm"] > 0.05
     assert result.manifest["format"] == "character-factory/export-manifest"
@@ -44,11 +45,19 @@ def test_export_passes_validation(rig, tmp_path):
     assert result.manifest["idle_clip"]["starts_at_rest"] is True
 
 
+def test_character_export_requires_the_facial_surface(rig, tmp_path):
+    with pytest.raises(ValueError, match="72 facial morph targets"):
+        export_character_glb(
+            rig, IDENTITY, EXPRESSION, tmp_path / "invalid.glb",
+            generator="character-factory/test",
+        )
+
+
 def test_export_is_byte_deterministic(rig, tmp_path):
     first = export(rig, tmp_path).glb_path.read_bytes()
     second = export_character_glb(
         rig, IDENTITY, EXPRESSION, tmp_path / "second.glb",
-        generator="character-factory/test",
+        generator="character-factory/test", _body_only_test=True,
     ).glb_path.read_bytes()
     assert first == second
     # The embedded manifest is inside those bytes; assert it explicitly —
@@ -308,7 +317,7 @@ def test_real_rig_export_passes_acceptance(tmp_path):
     result = export_character_glb(
         rig, character.identity, character.resting_expression,
         tmp_path / "runner.glb", name="marathon-runner",
-        generator="character-factory/test",
+        generator="character-factory/test", _body_only_test=True,
     )
     report = validate_glb(result.glb_path.read_bytes(), expected_joints=127)
     assert report["reparse_max_error_mm"] < 1e-2
@@ -377,6 +386,7 @@ def test_real_rig_proportioned_export_passes_acceptance(tmp_path):
         result = export_character_glb(
             rig, character.identity, character.resting_expression,
             tmp_path / f"{label}.glb", generator="character-factory/test",
+            _body_only_test=True,
             evaluation=rig.evaluate(
                 character.identity, character.resting_expression,
                 proportions=proportions,
@@ -385,6 +395,7 @@ def test_real_rig_proportioned_export_passes_acceptance(tmp_path):
         report = validate_glb(result.glb_path.read_bytes(), expected_joints=127)
         assert report["mirror_worst_deviation_degrees"] < 0.1  # the bone floor
         assert report["idle_clip_rest_error_mm"] < 1e-3
+        assert report["rest_local_rotation_min_abs_w"] >= 0.25
         statures[label] = result.manifest["stature_m"]
 
     # Proportions moved the skeleton: legs+spine at +0.4 ≈ +8 cm; legs at

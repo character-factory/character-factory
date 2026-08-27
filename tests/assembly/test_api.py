@@ -88,11 +88,12 @@ def test_assemble_end_to_end(tmp_path):
     for joint, child in (("l_eye", "eye_left"), ("r_eye", "eye_right"),
                          ("c_head", "hair")):
         assert names[child] in gltf["nodes"][names[joint]]["children"]
-    # Socket faces were removed from the body: fewer than the full triangle
-    # count, and the body still skins exactly (validated above).
+    # The body primitive removes 64 eye faces and the 288-face mouth portal,
+    # then appends the 806-face socket strip. It still skins exactly
+    # (validated above).
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
-    assert len(indices) // 3 == 36874 - 64
+    assert len(indices) // 3 == 36874 - 64 - 288 + 806
 
 
 def test_assemble_is_deterministic(tmp_path):
@@ -126,7 +127,7 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
 def test_mouth_interior_refused_without_rig_mouth_data(tmp_path):
     # SPEC.md §4.2: assembling a mouth-interior document against a body-rig
     # version that declares no mouth data is a defined error — never a
-    # silent fall back to the closed surface.
+    # silent reduced-quality fallback.
     import json as jsonlib
 
     from character_factory.api import assemble
@@ -273,8 +274,11 @@ def test_garment_shell_ships_when_every_gate_passes(tmp_path):
     weights = _ra(gltf, binary, attributes["WEIGHTS_0"])
     assert np.abs(weights.sum(axis=1) - 1.0).max() < 1e-4
 
-    # Covered body faces are omitted from the body primitive (alongside
-    # the 64 eye-socket faces the eye path always removes).
+    # Covered body faces are omitted alongside the 64 eye faces and the
+    # 288-face mouth portal; the 806-face socket strip is then appended.
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
-    assert len(indices) // 3 == 36874 - 64 - shell_info["hidden_body_faces"]
+    assert (
+        len(indices) // 3
+        == 36874 - 64 - 288 + 806 - shell_info["hidden_body_faces"]
+    )

@@ -288,7 +288,7 @@ def test_socket_uv_density_even_and_bounded(rig, mouth_data, socket_uv_build):
 EXAMPLES = Path(__file__).parents[2] / "examples" / "characters"
 
 
-def _assemble_example(tmp_path, topology):
+def _assemble_example(tmp_path):
     import json as jsonlib
 
     from PIL import Image
@@ -303,27 +303,49 @@ def _assemble_example(tmp_path, topology):
     # written against rather than following what the index serves today.
     registry = source_topology_registry()
 
-    assets = tmp_path / f"assets-{topology}"
+    assets = tmp_path / "assets-mouth-interior"
     assets.mkdir(exist_ok=True)
     for slot, color in (("skin", (170, 132, 105)), ("eye", (90, 60, 40)),
                         ("garment", (0, 0, 0))):
         Image.new("RGB", (64, 64), color).save(assets / f"{slot}.png")
     document = jsonlib.loads((EXAMPLES / "storyteller.char.json").read_text())
-    document["body"]["topology"] = topology
     resolved = registry.resolve_slots(sorted(document["textures"]))
     for slot, recipe in document["textures"].items():
         recipe["component_version"] = str(resolved[slot].version)
-    out = tmp_path / f"{topology}.glb"
+    out = tmp_path / "mouth-interior.glb"
     assemble(Character.from_document(document), assets, out, registry=registry)
     return out.read_bytes()
 
 
+def _export_body_oracle(tmp_path, rig):
+    """A low-level body-only export used solely as the UV preservation
+    oracle. It is not a valid character tier or a public assembly path."""
+    from character_factory.assembly import export_character_glb
+    from character_factory.schema import Character
+
+    character = Character.load(EXAMPLES / "storyteller.char.json")
+    result = export_character_glb(
+        rig,
+        character.identity,
+        character.resting_expression,
+        tmp_path / "body-oracle.glb",
+        generator="character-factory/test",
+        _body_only_test=True,
+        evaluation=rig.evaluate(
+            character.identity,
+            character.resting_expression,
+            proportions=character.proportions,
+        ),
+    )
+    return result.glb_path.read_bytes()
+
+
 @pytest.fixture(scope="module")
-def exported(tmp_path_factory):
+def exported(tmp_path_factory, rig):
     tmp = tmp_path_factory.mktemp("mouth-glb")
     return {
-        "mouth-interior": _assemble_example(tmp, "mouth-interior"),
-        "closed": _assemble_example(tmp, "closed"),
+        "mouth-interior": _assemble_example(tmp),
+        "body-oracle": _export_body_oracle(tmp, rig),
     }
 
 
@@ -339,7 +361,7 @@ def test_original_uvs_bit_exact_after_interior(exported):
     from character_factory.assembly.gltf import read_accessor
 
     gltf_m, bin_m, body_m = _body_prim(exported["mouth-interior"])
-    gltf_c, bin_c, body_c = _body_prim(exported["closed"])
+    gltf_c, bin_c, body_c = _body_prim(exported["body-oracle"])
     from character_factory.assembly.gltf import read_accessor as _read
 
     def pairs(gltf, binary, body, drop_tail=0):
@@ -350,14 +372,14 @@ def test_original_uvs_bit_exact_after_interior(exported):
         rows = np.concatenate([pos[:count], uv[:count]], axis=1)
         return {row.tobytes() for row in rows}
 
-    # Every original (position, uv) vertex of the mouthed export must exist
-    # byte-identically in the closed export of the same character — the
-    # interior only removes portal faces and appends; it never touches an
-    # original vertex's texcoords. (Unweld order differs between the two
-    # face sets, so this is a set comparison, not a prefix comparison.)
+    # Every original (position, uv) vertex of the character export must
+    # exist byte-identically in a low-level body-only oracle — the interior
+    # only removes portal faces and appends; it never touches an original
+    # vertex's texcoords. (Unweld order differs between the two face sets,
+    # so this is a set comparison, not a prefix comparison.)
     mouthed = pairs(gltf_m, bin_m, body_m, drop_tail=7 * 62 + 1)
-    closed = pairs(gltf_c, bin_c, body_c)
-    assert mouthed <= closed
+    body_only = pairs(gltf_c, bin_c, body_c)
+    assert mouthed <= body_only
 
 
 def test_export_has_exact_named_morphs(rig, mouth_data, exported):
@@ -436,9 +458,6 @@ def test_manifest_carries_tables_and_jaw_guidance(exported):
     assert set(jaw["composition"]) == {
         "joint_only", "expression_playback", "rule"}
     assert "never their sum" in jaw["composition"]["rule"]
-    closed_manifest = _body_prim(exported["closed"])[0]["asset"]["extras"]
-    assert closed_manifest["topology"] == "closed"
-    assert "expression_morphs" not in closed_manifest
 
 
 def test_jaw_rotation_keeps_interior_behind_exterior(exported):
@@ -551,8 +570,8 @@ def test_jaw_rotation_keeps_interior_behind_exterior(exported):
 
 
 def test_mouthed_assembly_is_deterministic(tmp_path):
-    first = _assemble_example(tmp_path, "mouth-interior")
-    second = _assemble_example(tmp_path, "mouth-interior")
+    first = _assemble_example(tmp_path)
+    second = _assemble_example(tmp_path)
     assert first == second
 
 

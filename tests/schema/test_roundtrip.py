@@ -58,7 +58,7 @@ def test_nan_literal_rejected_in_text(doc):
 def test_typed_accessors(example_doc):
     character = Character.from_document(example_doc)
     assert character.rig == "mhr-lod1@1.0"
-    assert character.topology in {"closed", "mouth-interior"}
+    assert character.topology == "mouth-interior"
     assert len(character.identity) == 45
     assert len(character.resting_expression) == 72
     assert set(character.textures) >= {"skin", "eye", "garment"}

@@ -21,8 +21,9 @@ body model is helpful but not required.
 2. **Reproducible.** A character file plus a pinned set of generation
    components rebuilds the same character. Every generative step records the
    inputs that produced it.
-3. **Forward-compatible.** New texture slots, new components, and a future
-   mouth-interior body variant are additive changes, not breaking ones.
+3. **Runtime-ready.** Every character has one complete body-and-face
+   animation surface: the full skeleton, modeled mouth anatomy, 72 named
+   facial controls, and certified jaw guidance are baseline format quality.
 4. **Small surface.** Five blocks: `body`, `textures`, `hair`, `provenance`,
    `assets`. No block requires another implementation's internals to
    interpret.
@@ -66,7 +67,7 @@ A complete v0.1 character file:
   "name": "marathon-runner",
   "body": {
     "rig": "mhr-lod1@1.0",
-    "topology": "closed",
+    "topology": "mouth-interior",
     "identity": [0.1837423, -0.0921118, 1.2210972, "... 45 values total"],
     "resting_expression": [0.0, 0.0, 0.0, "... 72 values total"]
   },
@@ -157,7 +158,7 @@ model — no mesh data appears in the file.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `rig` | string | yes | The body model and version, as `<model>@<version>`. v0.1 defines exactly one value: `"mhr-lod1@1.0"`. |
-| `topology` | string | yes | Surface topology variant. v0.1 defines two values: `"closed"` and `"mouth-interior"`. §4.2. |
+| `topology` | string | yes | The character surface contract. v0.1 defines exactly `"mouth-interior"`. §4.2. |
 | `identity` | array of 45 numbers | yes | MHR identity coefficients, in MHR's native order. Together these determine the body and face shape. |
 | `proportions` | object | no | Skeletal-proportion parameters: rig proportion-parameter name → number, `0.0` meaning the rig's template value. Absent (or empty) means the template skeleton. §4.3. |
 | `resting_expression` | array of 72 numbers | yes | MHR expression coefficients describing the character's *resting* face (for example, natural eyelid posture). Most entries are typically `0.0`. This is part of identity — it is not an animation pose. |
@@ -178,7 +179,7 @@ Evaluating the rig with `identity`, a body pose, and an expression yields
 posed vertex positions and a posed skeleton. Identity, pose, and expression
 change vertex *positions* only — vertex and triangle indexing is invariant.
 The character format relies on this: everything index-based (UV layout,
-attachment regions, the topology variant below) is defined against the rig
+attachment regions, and the character topology below) is defined against the rig
 version, not against an individual character.
 
 Animation is out of scope for the format. The rig's 204-value body pose
@@ -188,18 +189,14 @@ proportions** (segment lengths — identity-class data, carried by
 `proportions`, §4.3). A character file never contains articulation;
 non-resting expression is likewise a runtime input.
 
-### 4.2 The `topology` variants
+### 4.2 The `topology` contract
 
-`topology` selects the surface variant the document assembles to. v0.1
-defines two values.
+`topology` is explicit because it changes the mesh that a character file
+builds, but it is not a quality selector. v0.1 defines exactly one value:
+**`"mouth-interior"`**. Every conforming character is body- and
+face-animatable.
 
-**`"closed"`** is the full, unmodified MHR surface, with a closed mouth
-region. It assembles exactly as the sections above describe: no interior
-components, no expression morph targets. This meaning is frozen — a
-document that says `"closed"` assembles to the same surface under every
-future version of this specification.
-
-**`"mouth-interior"`** is the same exterior surface with a fixed patch of
+The topology uses the rig's exterior surface with a fixed patch of
 triangles removed from the mouth region of the rig's triangle buffer, and
 interior components assembled behind it: a posterior-lip cuff, an
 inner-mouth cavity, and teeth, gums, and tongue meshes. The removal set is
@@ -213,18 +210,18 @@ through `facs_71`) plus jaw-animation guidance in its manifest, so the face
 is animatable at runtime. This does not change §4.1's semantics: non-resting
 expression remains a runtime input, never document data.
 
-Assembling a `"mouth-interior"` document requires a `body-rig` component
-version that declares mouth data; assembling it against one that does not is
-a defined error — never a silent fall back to a closed surface.
+Assembling a character requires a `body-rig` component version that declares
+the mouth basis and compatible `assembly-assets` carrying its anatomy.
+Missing or incompatible data is a defined error before an artifact is
+accepted — never a reduced-quality fallback.
 
 Readers encountering an unrecognized `topology` value MUST treat the
 document as requiring a newer schema version rather than silently assembling
-a different surface. Writers targeting v0.1 MUST emit one of the two defined
-values; both are valid forever, and no migration between them exists or is
-implied (they are different characters' surfaces, not versions of one).
-Mechanically, the variant ships as a new `body-rig` component version plus
-grown `assembly-assets` (the interior meshes are placed by assembly, like
-the eyeballs) — no new texture slot and no new component kind.
+a different surface. Writers targeting v0.1 MUST emit `"mouth-interior"`.
+Mechanically, the topology is supplied by the `body-rig` component plus
+`assembly-assets` (the interior meshes are placed by assembly, like the
+eyeballs) — no texture slot or separate component kind represents facial
+animation.
 
 ### 4.3 `proportions` — skeletal proportions
 

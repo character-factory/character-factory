@@ -39,12 +39,14 @@ _REFERENCE = np.array([0.0, 0.0, 1.0])   # +Z: invariant under the sagittal mirr
 _FALLBACK = np.array([0.0, 1.0, 0.0])    # +Y: also mirror-invariant
 _PARALLEL_LIMIT = 0.99
 # Bones shorter than this (cm) inherit the parent's direction instead of
-# deriving their own: a micrometer-scale bone amplifies micrometer-scale
-# template asymmetry into degrees of frame deviation, and the amplification
-# varies with skeletal proportions. On the production rig this floors the
-# worst left/right frame deviation at ~0.02° across the whole proportion
-# range (it was 0.35° on the template and rose with leg length).
-_DEGENERATE_BONE_CM = 0.1
+# deriving their own. Besides micrometer-scale template bones, this covers
+# the neck's 1.5 mm procedural twist helper: within the valid proportion
+# envelope its endpoint can cross its parent, reversing the derived axis and
+# forcing an unavoidable 180° local rotation. A two-millimeter floor keeps
+# helpers aligned with their carrier while leaving anatomical bones alone.
+# On the production rig it also holds the worst left/right frame deviation
+# at ~0.02° across the whole proportion range.
+_DEGENERATE_BONE_CM = 0.2
 
 
 def quat_to_matrix(q: np.ndarray) -> np.ndarray:
@@ -173,7 +175,10 @@ def reauthor_orientations(skeleton: Skeleton) -> None:
         side /= np.linalg.norm(side)
         frame = np.column_stack([bone, side, np.cross(bone, side)])
         parent = int(skeleton.parents[joint])
-        if parent >= 0 and _local_w(skeleton.rotations[parent], frame) < _ROLL_LIMIT:
+        parent_rotation = (
+            skeleton.rotations[parent] if parent >= 0 else np.eye(3)
+        )
+        if _local_w(parent_rotation, frame) < _ROLL_LIMIT:
             frame = np.column_stack([bone, -side, -np.cross(bone, side)])
         skeleton.rotations[joint] = frame
 

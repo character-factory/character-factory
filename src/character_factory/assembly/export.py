@@ -286,7 +286,13 @@ def export_character_glb(
     evaluation=None,
     mouth: "MouthGlb | None" = None,
     manifest_extra: dict | None = None,
+    _body_only_test: bool = False,
 ) -> ExportResult:
+    if mouth is None and not _body_only_test:
+        raise ValueError(
+            "every character export requires the mouth interior and 72 "
+            "facial morph targets"
+        )
     out_path = Path(out_path)
 
     # 1. Rest evaluation and rest-pose authoring (ARCHITECTURE.md §3.1).
@@ -342,7 +348,7 @@ def export_character_glb(
     # Mouth interior (SPEC.md §9 step 4): stitch the socket strip into the
     # skinned body mesh AFTER the original surface is fully assembled, so
     # every original vertex's position, UV, and weights are byte-identical
-    # to the closed export's — the interior-UV contract's first rule,
+    # to a body-only test oracle's — the interior-UV contract's first rule,
     # asserted here rather than assumed.
     original_vertex_count = len(positions)
     original_uvs = uvs.copy() if mouth is not None else None
@@ -569,7 +575,7 @@ def export_character_glb(
         # Winding guard: an attachment wound coherently inside-out (the hair
         # provider emits one) gets flipped — but only on a decisive vote;
         # concave shells like dental arches make the centroid test
-        # uninformative, and authored winding is trusted there.
+        # uninformative, and authored winding is preserved there.
         outward = local_pos - local_pos.mean(axis=0)
         agreement = float(((att_normals * outward).sum(axis=1) > 0).mean())
         if agreement < 0.25:
@@ -738,7 +744,9 @@ def export_character_glb(
     }
     if rig.render is not None:
         manifest["budget"]["render_lod"] = rig.render.lod
-    manifest["topology"] = "closed" if mouth is None else "mouth-interior"
+    manifest["topology"] = (
+        "body-only-test" if mouth is None else "mouth-interior"
+    )
     if manifest_extra:
         manifest.update(manifest_extra)
     if mouth is not None:

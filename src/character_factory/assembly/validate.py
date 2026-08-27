@@ -106,6 +106,21 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
     report["mesh_skeleton_centroid_gap_m"] = gap
     assert gap < 0.5, "mesh and skeleton are not co-located"
 
+    # -- local rotations avoid the quaternion half-turn singularity ---------
+    # At 180 degrees q and -q are equally canonical (w == 0), and importers
+    # disagree during handedness conversion and sign normalization. The
+    # exporter has freedom to choose joint roll because IBMs cancel it, so a
+    # character deliverable must stay comfortably away from that boundary.
+    local_abs_w = [
+        abs(float(gltf["nodes"][node].get("rotation", [0, 0, 0, 1])[3]))
+        for node in joints
+    ]
+    report["rest_local_rotation_min_abs_w"] = min(local_abs_w)
+    assert min(local_abs_w) >= 0.25 - 1e-6, (
+        "a joint rest rotation is too close to 180 degrees "
+        f"(minimum |w| {min(local_abs_w):.8f})"
+    )
+
     # -- mirror consistency: left frames are reflections of right frames -------
     names = {gltf["nodes"][n].get("name", ""): n for n in joints}
     worst = 0.0

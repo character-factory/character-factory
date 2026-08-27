@@ -12,10 +12,12 @@ SCHEMA_MINOR = 1
 SCHEMA_VERSION = f"{SCHEMA_MAJOR}.{SCHEMA_MINOR}"
 
 RIGS = frozenset({"mhr-lod1@1.0"})
-# Surface topology variants (§4.2): "closed" is the full unmodified rig
-# surface; "mouth-interior" removes the rig-version-fixed mouth patch and
-# assembles interior components (teeth, gums, tongue, cavity) behind it.
-TOPOLOGIES = frozenset({"closed", "mouth-interior"})
+# The one v0.1 character topology (§4.2). Every character is facially
+# animatable: the rig-version-fixed mouth patch is replaced by the socket
+# and anatomy, and all 72 expression controls export as named morph targets.
+# The field remains explicit in the document because it is build-defining
+# recipe data, not a caller-selectable quality tier.
+TOPOLOGIES = frozenset({"mouth-interior"})
 
 IDENTITY_LENGTH = 45
 RESTING_EXPRESSION_LENGTH = 72

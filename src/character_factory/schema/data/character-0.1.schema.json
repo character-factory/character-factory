@@ -41,7 +41,6 @@
         "topology": {
           "type": "string",
           "enum": [
-            "closed",
             "mouth-interior"
           ]
         },

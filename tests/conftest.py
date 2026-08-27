@@ -12,7 +12,7 @@ _BASE: dict = {
     "name": "fixture",
     "body": {
         "rig": "mhr-lod1@1.0",
-        "topology": "closed",
+        "topology": "mouth-interior",
         "identity": [0.0] * 45,
         "resting_expression": [0.0] * 72,
     },

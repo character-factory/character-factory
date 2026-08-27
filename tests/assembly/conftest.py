@@ -27,15 +27,17 @@ class FakeRigModel:
 JOINTS = ["body_world", "root", "l_upleg", "l_lowleg", "r_upleg", "r_lowleg", "c_head"]
 PARENTS = np.array([-1, 0, 1, 2, 1, 4, 1], dtype=np.int64)
 
-# World rest positions (cm): pelvis at 90, knees at 50, head at 160.
+# World rest positions (cm): pelvis at 90, hips at 70, knees at 50, head at
+# 160. The deliberately diagonal thigh links exercise mirror handling
+# without creating an artificial exact half-turn between synthetic joints.
 POSITIONS = np.array(
     [
         [0, 0, 0],       # body_world
         [0, 90, 0],      # root
-        [10, 90, 0],     # l_upleg
-        [10, 50, 0],     # l_lowleg (knee)
-        [-10, 90, 0],    # r_upleg
-        [-10, 50, 0],    # r_lowleg (knee)
+        [10, 70, 0],     # l_upleg
+        [30, 50, 0],     # l_lowleg (knee)
+        [-10, 70, 0],    # r_upleg
+        [-30, 50, 0],    # r_lowleg (knee)
         [0, 160, 0],     # c_head
     ],
     dtype=np.float64,

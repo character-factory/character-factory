@@ -167,7 +167,7 @@
      "bytes": 198943157
     }
    },
-   "description": "The rig of 1.0.1 (same pinned MHR release) plus the data behind the 'mouth-interior' topology (SPEC.md §4.2): mouth portal and socket metadata, the exact expression morph basis and its provisional semantic table, jaw articulation guidance, and the machine-readable animation-limitations list. Characters with 'closed' topology build identically on this version."
+   "description": "The rig of 1.0.1 (same pinned MHR release) plus the data behind the character topology (SPEC.md §4.2): mouth portal and socket metadata, the exact expression morph basis and its provisional semantic table, jaw articulation guidance, and the machine-readable animation-limitations list."
   },
   {
    "name": "flux2-klein-4b",
@@ -204,7 +204,7 @@
    },
    "artifacts": [],
    "source": null,
-   "description": "Everything in 0.1.0 plus the mouth-interior anatomy attachments: teeth, gum, and tongue meshes with their placement metadata (geometry from the Google Neutral Model, attributed in NOTICE), used when a character's topology is 'mouth-interior'."
+   "description": "Everything in 0.1.0 plus the required mouth anatomy attachments: teeth, gum, and tongue meshes with their placement metadata (geometry from the Google Neutral Model, attributed in NOTICE)."
   },
   {
    "name": "make-wig",

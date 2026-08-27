@@ -4,7 +4,7 @@
   "name": "high-jumper",
   "body": {
     "rig": "mhr-lod1@1.0",
-    "topology": "closed",
+    "topology": "mouth-interior",
     "identity": [
       0.12999999523162842,
       0.925599992275238,

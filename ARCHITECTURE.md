@@ -72,13 +72,13 @@ the boundaries more than the features:
   cadence after launch (§4), so this does not wait on a code release. (Hair
   is the exception: the hair synthesizer emits its own albedo and normal
   textures.)
-- **Facial animation is data, not authoring.** `mouth-interior`
-  characters carry 72 exact expression morph targets and a jaw that
+- **Facial animation is baseline data, not an optional tier.** Every
+  character carries 72 exact expression morph targets and a jaw that
   animates through `c_jaw` (SPEC.md §4.2, §7.4 here) — but the system
   authors no facial performances: playing expressions, lip-sync, and
   blends is the consumer's job, within the measured limitation table the
-  manifest ships. The `closed` topology remains available and assembles
-  with no mouth interior and no morph targets.
+  manifest ships. Creation fails if the complete mouth-interior artifact
+  cannot be delivered; there is no body-only fallback.
 - **Footwear is below-ankle styles only.** Footwear ships at launch as the
   optional `shoe` texture slot on the foot regions of the body atlas —
   closed, below-ankle shoes can be painted; boots above the ankle, sandals,
@@ -439,15 +439,14 @@ of conventions chosen so the artifact imports and retargets correctly:
   joint's rest orientation from geometry under one mirror-invariant global
   convention (bone-long axis toward the mean of children; a forward-axis
   reference vector, invariant under the sagittal mirror, orthogonalized
-  against it). Joint *positions* are untouched. Bones shorter than one
-  millimeter inherit the parent's direction instead of deriving their
-  own — a change that re-authored four joints' rest orientations (the
-  foot and wrist-twist pairs, whose child joints sit micrometers away):
-  a near-zero bone amplifies micrometer-scale template asymmetry into
-  degrees of frame deviation, and the amplification varies with skeletal
-  proportions. With the floor, the worst left/right frame deviation is
-  ~0.02° across the entire proportion range (previously 0.35° on the
-  template, rising past the mirror bound on long-legged characters).
+  against it). Joint *positions* are untouched. Bones shorter than two
+  millimeters inherit the parent's direction instead of deriving their
+  own. This covers the near-zero foot and wrist-twist pairs and the neck's
+  procedural twist helper, whose endpoint can cross its parent at valid
+  body proportions; deriving an axis from that displacement would force a
+  180° local rotation. With the floor, no exported joint approaches that
+  half-turn singularity, and the worst left/right frame deviation remains
+  ~0.02° across the entire proportion range.
 - **A small knee flexion is baked into the exported rest pose** (a
   documented, versioned constant), because a near-straight knee is a
   degenerate hinge that retargeters can resolve backwards. It is applied as

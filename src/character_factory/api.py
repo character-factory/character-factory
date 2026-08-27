@@ -121,7 +121,7 @@ def create(
             "name": name,
             "body": {
                 "rig": "mhr-lod1@1.0",
-                "topology": "closed",
+                "topology": "mouth-interior",
                 "identity": identity,
                 **({"proportions": proportions} if proportions else {}),
                 "resting_expression": resting_expression,
@@ -241,14 +241,13 @@ def assemble(
 
     rig = load_rig(registry.ensure("body-rig"), device=device)
 
-    # SPEC.md §4.2: a topology beyond "closed" needs a body-rig version that
-    # declares its mouth data — assembling the closed surface instead would
-    # silently build a different character than the document describes.
-    if character.topology != "closed" and "mouth" not in rig.metadata:
+    # SPEC.md §4.2: facial animation is part of every character, so a rig
+    # without the mouth basis is incompatible — never a reduced-quality
+    # fallback after texture work has already completed.
+    if "mouth" not in rig.metadata:
         raise ValueError(
-            f"character topology {character.topology!r} requires a body-rig "
-            "component version with mouth data, and the resolved version "
-            "declares none"
+            "the character contract requires a body-rig component with "
+            "mouth data, and the resolved version declares none"
         )
 
     # The shoe generator paints a one-foot canvas; its component's foot
@@ -388,19 +387,18 @@ def assemble(
     # Mouth interior (SPEC.md §4.2, §9 step 4): remove the rig version's
     # fixed portal, stitch the socket strip into the skinned body, place
     # the anatomy meshes on the jaw chain, and bake the 72 expression morph
-    # targets. The closed path above is untouched by any of this.
-    mouth_glb = None
-    if character.topology == "mouth-interior":
-        mouth_glb, mouth_attachments, mouth_removal = _prepare_mouth(
-            rig, assets_component, evaluation, character,
-            surface=rig.render, surface_vertices=surface_vertices
-        )
-        attachments.extend(mouth_attachments)
-        remove_faces = (
-            mouth_removal if remove_faces is None
-            else np.concatenate([np.asarray(remove_faces, dtype=np.int64),
-                                 mouth_removal])
-        )
+    # targets. This is the one public character assembly path: facial
+    # animation is baseline quality, not a topology option.
+    mouth_glb, mouth_attachments, mouth_removal = _prepare_mouth(
+        rig, assets_component, evaluation, character,
+        surface=rig.render, surface_vertices=surface_vertices
+    )
+    attachments.extend(mouth_attachments)
+    remove_faces = (
+        mouth_removal if remove_faces is None
+        else np.concatenate([np.asarray(remove_faces, dtype=np.int64),
+                             mouth_removal])
+    )
 
     # Garment shells (feature-gated assembly behavior, never recipe): the
     # baked garment texture may become a skinned, body-following closed

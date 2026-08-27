@@ -72,10 +72,15 @@ def test_unknown_rig_is_hard_error_in_both_modes(doc):
     assert errors_at(validate_document(doc, strict=True), "body.rig")
 
 
-def test_mouth_interior_topology_is_valid_in_both_modes(doc):
-    doc["body"]["topology"] = "mouth-interior"
+def test_required_topology_is_valid_in_both_modes(doc):
     assert validate_document(doc).ok
     assert validate_document(doc, strict=True).ok
+
+
+def test_body_only_topology_is_not_a_character(doc):
+    doc["body"]["topology"] = "closed"
+    assert errors_at(validate_document(doc), "body.topology")
+    assert errors_at(validate_document(doc, strict=True), "body.topology")
 
 
 def test_unknown_topology_is_hard_error_in_both_modes(doc):

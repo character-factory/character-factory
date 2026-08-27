@@ -18,7 +18,7 @@ def test_renders_a_figure_on_transparent_background(rig, tmp_path):
 
     result = export_character_glb(
         rig, [0.0, 0.0], [0.0, 0.0], tmp_path / "scene.glb",
-        generator="character-factory/test",
+        generator="character-factory/test", _body_only_test=True,
     )
     png = render_thumbnail(result.glb_path.read_bytes(), width=160, height=200)
     image = np.asarray(Image.open(io.BytesIO(png)))
@@ -37,7 +37,7 @@ def test_renders_a_figure_on_transparent_background(rig, tmp_path):
 def test_render_is_deterministic(rig, tmp_path):
     result = export_character_glb(
         rig, [0.0, 0.0], [0.0, 0.0], tmp_path / "scene.glb",
-        generator="character-factory/test",
+        generator="character-factory/test", _body_only_test=True,
     )
     data = result.glb_path.read_bytes()
     assert render_thumbnail(data, width=96, height=128) == \

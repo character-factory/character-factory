@@ -311,10 +311,10 @@ GET    /v0/health                      GPU present, VRAM, component cache state
 ```
 
 List responses are `{items, next_cursor}`; `limit` is bounded to 1–100 and
-the cursor is opaque. Browser use is same-origin unless the operator supplies
-one or more explicit CORS origins. The bundled docs are self-contained, and
-the gallery retains a dependency-free create/list/download view if its 3D
-viewer modules are unavailable offline.
+the cursor is opaque. Browser use is same-origin only. The server does not
+provide CORS headers or support separately hosted browser clients. The bundled
+docs are self-contained, and the gallery retains a dependency-free
+create/list/download view if its 3D viewer modules are unavailable offline.
 
 Uploads of edited character files are just `POST /v0/characters` with a
 `character` body instead of a `prompt` — the server builds whatever valid
@@ -329,6 +329,13 @@ ignores, so no client changes shape when auth becomes real. The one expected
 divergence is capacity (`queue_position` and device fields in `/v0/health`),
 which is declared server-specific, not contractual. Job states, terminal
 enums, idempotency, cancellation, and retry semantics are common contract.
+
+The local process binds to loopback by default. Binding it to all interfaces
+is intended only for a trusted local network or private overlay network, where
+the host firewall and network access rules are the security boundary. Because
+the local server does not authenticate requests, it must not be exposed to the
+public internet or an untrusted network. CORS would not change that boundary:
+it constrains browser scripts, not agents, native clients, or other machines.
 
 ### 2.4 The MCP server
 

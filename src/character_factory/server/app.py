@@ -22,9 +22,7 @@ from character_factory.server.service import (
 __all__ = ["create_app"]
 
 
-def create_app(
-    service: CharacterService, *, cors_origins: list[str] | None = None
-):
+def create_app(service: CharacterService):
     from character_factory.assembly.manifest import (
         MANIFEST_SCHEMA_PATH,
         export_manifest_schema,
@@ -38,18 +36,6 @@ def create_app(
         docs_url=None,
         openapi_url="/v0/openapi.json",
     )
-    if cors_origins:
-        from fastapi.middleware.cors import CORSMiddleware
-
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_credentials=False,
-            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
-            expose_headers=["ETag", "Location", "Retry-After", "Content-Disposition"],
-        )
-
     def record_json(record):
         return {
             "id": record.id,
@@ -611,9 +597,8 @@ def create_app(
 
 def serve(
     library_dir: str | Path, host: str = "127.0.0.1", port: int = 8400,
-    *, cors_origins: list[str] | None = None,
 ):
     import uvicorn
 
-    app = create_app(CharacterService(library_dir), cors_origins=cors_origins)
+    app = create_app(CharacterService(library_dir))
     uvicorn.run(app, host=host, port=port)

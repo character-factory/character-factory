@@ -427,23 +427,17 @@ def test_prompt_create_is_idempotent_by_default_and_by_header(client):
     assert "different request" in conflict.json()["error"]
 
 
-def test_cors_preflight_uses_an_explicit_allow_list(service):
-    from fastapi.testclient import TestClient
-
-    from character_factory.server.app import create_app
-
-    allowed = "https://viewer.example"
-    cors_client = TestClient(create_app(service, cors_origins=[allowed]))
-    response = cors_client.options(
+def test_http_does_not_offer_cross_origin_browser_access(client):
+    response = client.options(
         "/v0/characters",
         headers={
-            "Origin": allowed,
+            "Origin": "https://viewer.example",
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "content-type,idempotency-key",
         },
     )
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == allowed
+    assert response.status_code == 405
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_openapi_and_runtime_describe_binary_resources(client, service, stored):

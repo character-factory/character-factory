@@ -76,4 +76,18 @@ Start with [SPEC.md](SPEC.md) if you are judging the format,
 [ARCHITECTURE.md](ARCHITECTURE.md) if you are judging the system, and
 `/v0/docs` on a running server if you are integrating against the API.
 
+## Server trust boundary
+
+The local server binds to `127.0.0.1` by default. An operator may bind it to
+`0.0.0.0` for agents and native clients on a trusted local network or private
+overlay network. In that mode, the operator's firewall and network access
+rules are the security boundary: the v0 local server does not authenticate
+requests, and a bearer token is accepted but ignored. Do not expose it to the
+public internet or an untrusted network.
+
+The bundled browser UI is served by the same process and uses same-origin
+requests. Cross-origin browser clients are not supported, and the server does
+not provide CORS headers. CORS is a browser policy and would not protect this
+service from other machines or native clients that can reach its port.
+
 Licensed under Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).

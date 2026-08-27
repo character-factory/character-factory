@@ -47,6 +47,19 @@ def test_store_rejects_invalid_documents(service):
         service.store_character({"format": "nope"})
 
 
+def test_incompatible_disk_record_is_quarantined(service, stored):
+    incompatible = service.library_dir / "precontract"
+    incompatible.mkdir()
+    document = json.loads((EXAMPLES / "freediver.char.json").read_text())
+    document["body"]["topology"] = "closed"
+    (incompatible / "character.char.json").write_text(json.dumps(document))
+
+    assert [record.id for record in service.list()] == [stored.id]
+    health = service.health()
+    assert health["characters"] == 1
+    assert health["incompatible_characters"] == 1
+
+
 def _wait_for_job(service, job_id, timeout=3.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -200,6 +213,19 @@ def test_http_bad_input_is_400(client):
     assert client.get("/v0/characters/unknown0000/scene.glb").status_code == 404
 
 
+def test_http_incompatible_disk_record_is_409_without_breaking_list(client, service):
+    incompatible = service.library_dir / "precontract"
+    incompatible.mkdir()
+    document = json.loads((EXAMPLES / "freediver.char.json").read_text())
+    document["body"]["topology"] = "closed"
+    (incompatible / "character.char.json").write_text(json.dumps(document))
+
+    assert client.get("/v0/characters").json()["items"] == []
+    response = client.get("/v0/characters/precontract")
+    assert response.status_code == 409
+    assert response.json()["code"] == "incompatible_character"
+
+
 def test_http_rebuild_bake_queues_regeneration(client):
     document = json.loads((EXAMPLES / "freediver.char.json").read_text())
     character_id = client.post(
@@ -346,7 +372,7 @@ def test_openapi_schemas_are_real(client):
         == "#/components/schemas/ValidationReport"
 
 
-def test_v0_index_links_to_docs(client):
+def test_api_index_links_to_docs(client):
     index = client.get("/v0").json()
     assert index["docs"] == "/v0/docs"
     assert index["openapi"] == "/v0/openapi.json"

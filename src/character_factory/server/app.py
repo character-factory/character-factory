@@ -14,6 +14,7 @@ from pathlib import Path
 
 from character_factory.server.service import (
     CharacterService,
+    IncompatibleCharacter,
     ResourceNotFound,
     ServiceError,
 )
@@ -254,6 +255,9 @@ def create_app(
                 "content": {"application/json": {"schema": schema}}}
 
     _ERROR_400 = {400: _json_response(_ref("Error"), "Invalid request")}
+    _ERROR_409 = {409: _json_response(
+        _ref("Error"), "Stored character is incompatible with this server"
+    )}
     _ERROR_404 = {404: _json_response(_ref("Error"), "Resource not found")}
     _RECORD_OK = _json_response(_ref("CharacterRecord"), "The library record")
 
@@ -281,6 +285,19 @@ def create_app(
         return JSONResponse(
             status_code=404,
             content={"error": str(error), "code": "not_found", "retryable": False},
+        )
+
+    @app.exception_handler(IncompatibleCharacter)
+    async def incompatible_character(
+        request: Request, error: IncompatibleCharacter
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": str(error),
+                "code": "incompatible_character",
+                "retryable": False,
+            },
         )
 
     @app.exception_handler(ServiceError)
@@ -382,7 +399,7 @@ def create_app(
     @app.get("/v0/characters/{character_id}",
              responses={200: _json_response(_ref("CharacterRecord"),
                         "The record with its character document"),
-                        **_ERROR_400, **_ERROR_404})
+                        **_ERROR_400, **_ERROR_404, **_ERROR_409})
     async def get_character(character_id: str):
         record = record_json(service.get(character_id))
         record["character"] = service.document(character_id)
@@ -391,7 +408,7 @@ def create_app(
     @app.get("/v0/characters/{character_id}/character.json",
              responses={200: _json_response(_ref("CharacterDocument"),
                         "The character document alone"),
-                        **_ERROR_400, **_ERROR_404})
+                        **_ERROR_400, **_ERROR_404, **_ERROR_409})
     async def get_character_document(character_id: str):
         return service.document(character_id)
 

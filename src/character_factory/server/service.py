@@ -29,7 +29,8 @@ from character_factory.schema import Character, CharacterError
 from character_factory.server.jobs import JobConflict, JobNotFound, JobStore
 
 __all__ = [
-    "CharacterService", "ResourceNotFound", "ServiceError"
+    "CharacterService", "IncompatibleCharacter", "ResourceNotFound",
+    "ServiceError"
 ]
 
 _ASSET_SLOTS_FILE_RE = None
@@ -64,6 +65,10 @@ class ServiceError(ValueError):
 
 class ResourceNotFound(ServiceError):
     """A requested character, job, or artifact does not exist."""
+
+
+class IncompatibleCharacter(ServiceError):
+    """A stored character does not satisfy the server's current format."""
 
 
 @dataclass
@@ -161,6 +166,16 @@ class CharacterService:
             tmp.flush()
             os.fsync(tmp.fileno())
         os.replace(tmp.name, directory / "state.json")
+
+    @staticmethod
+    def _load_character(directory: Path) -> Character:
+        try:
+            return Character.load(directory / "character.char.json")
+        except (CharacterError, json.JSONDecodeError) as error:
+            raise IncompatibleCharacter(
+                f"stored character {directory.name!r} is incompatible with "
+                f"the current character format: {error}"
+            ) from error
 
     # -- operations -----------------------------------------------------------
 
@@ -392,13 +407,27 @@ class CharacterService:
                 raise ResourceNotFound(f"unknown job {job_id!r}") from error
             raise ServiceError(str(error)) from error
 
-    def list(self) -> list[CharacterRecord]:
-        """Every stored character, newest first."""
+    def _scan_library(self) -> tuple[list[CharacterRecord], list[str]]:
+        """Return current records and quarantine incompatible directories.
+
+        A stale or damaged on-disk document must not make health, listing, or
+        unrelated characters unavailable. The bytes are left untouched for
+        an operator to inspect or remove deliberately.
+        """
         records = []
+        incompatible = []
         for path in sorted(self.library_dir.iterdir()):
             if path.is_dir() and (path / "character.char.json").is_file():
-                records.append(self.get(path.name))
+                try:
+                    records.append(self.get(path.name))
+                except IncompatibleCharacter:
+                    incompatible.append(path.name)
         records.sort(key=lambda r: r.created_at or "", reverse=True)
+        return records, incompatible
+
+    def list(self) -> list[CharacterRecord]:
+        """Every compatible stored character, newest first."""
+        records, _ = self._scan_library()
         return records
 
     def list_page(self, *, limit: int = 50, cursor: str | None = None) -> dict:
@@ -434,7 +463,7 @@ class CharacterService:
 
     def get(self, character_id: str) -> CharacterRecord:
         directory = self._dir(character_id)
-        character = Character.load(directory / "character.char.json")
+        character = self._load_character(directory)
         state = self._state(directory)
         scene = directory / "scene.glb"
         artifact = dict(state.get("artifact") or {})
@@ -485,9 +514,7 @@ class CharacterService:
         )
 
     def document(self, character_id: str) -> dict:
-        return Character.load(
-            self._dir(character_id) / "character.char.json"
-        ).to_document()
+        return self._load_character(self._dir(character_id)).to_document()
 
     def delete(self, character_id: str) -> None:
         shutil.rmtree(self._dir(character_id))
@@ -571,7 +598,7 @@ class CharacterService:
             raise ServiceError("PNG asset exceeds the 16 MiB upload limit")
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise ServiceError("asset body must be a PNG image")
-        character = Character.load(directory / "character.char.json")
+        character = self._load_character(directory)
         pinned = character.asset_maps().get(slot, {}).get("albedo")
         digest = hashlib.sha256(data).hexdigest()
         if pinned is not None and digest != pinned["sha256"]:
@@ -664,9 +691,11 @@ class CharacterService:
         return path
 
     def health(self) -> dict:
+        records, incompatible = self._scan_library()
         report: dict = {
             "status": "ok",
-            "characters": len(self.list()),
+            "characters": len(records),
+            "incompatible_characters": len(incompatible),
             "jobs": len(self.list_jobs()),
         }
         try:

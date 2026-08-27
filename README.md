@@ -98,4 +98,11 @@ recover the original job; using that key for a different request returns
 morph inventory, jaw behavior, and grounding live in the versioned export
 manifest rather than being duplicated on every record and job.
 
+Interpreter failures are structured and backend-neutral. Clients can use the
+job error's `code`, safe `classification`, `retryable` flag, and opaque
+`trace_id`, then retry the original job through `/v0/jobs/{id}/retry`. A policy
+change that permits rules fallback is a separate request with a new
+`Idempotency-Key` and `allow_fallback: true`; the server never silently changes
+the requested interpreter or mutates the original request.
+
 Licensed under Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).

@@ -393,7 +393,10 @@ class CharacterService:
             )
         except InterpreterError as error:
             self.jobs.fail(
-                job_id, "interpreter_unavailable", str(error), retryable=True
+                job_id, error.code, error.public_message,
+                retryable=error.retryable,
+                classification=error.classification,
+                trace_id=error.trace_id,
             )
         except (ComponentNotPublished, FileNotFoundError, PreflightError) as error:
             self.jobs.fail(

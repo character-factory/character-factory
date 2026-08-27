@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-__all__ = ["interpretation_schema"]
+__all__ = ["endpoint_interpretation_schema", "interpretation_schema"]
 
 
 def interpretation_schema() -> dict:
@@ -66,3 +66,37 @@ def interpretation_schema() -> dict:
             "proportions": proportions,
         },
     }
+
+
+def endpoint_interpretation_schema() -> dict:
+    """A strict-output form of :func:`interpretation_schema`.
+
+    Strict chat-completions endpoints require every object property to be
+    listed in ``required``. Optional fields therefore become required but
+    nullable at this transport boundary; nulls are removed before the normal
+    interpretation validator runs. The character-facing interpretation
+    contract remains unchanged.
+    """
+    return _strict_object_schema(interpretation_schema())
+
+
+def _strict_object_schema(value: dict) -> dict:
+    value = json.loads(json.dumps(value))
+    if value.get("type") == "object":
+        properties = value.get("properties", {})
+        originally_required = set(value.get("required", []))
+        converted = {}
+        for name, child in properties.items():
+            child = _strict_object_schema(child)
+            if name not in originally_required:
+                child = {"anyOf": [child, {"type": "null"}]}
+            converted[name] = child
+        value["properties"] = converted
+        value["required"] = list(properties)
+        value["additionalProperties"] = False
+    elif value.get("type") == "array" and isinstance(value.get("items"), dict):
+        value["items"] = _strict_object_schema(value["items"])
+    for keyword in ("anyOf", "oneOf"):
+        if keyword in value:
+            value[keyword] = [_strict_object_schema(item) for item in value[keyword]]
+    return value

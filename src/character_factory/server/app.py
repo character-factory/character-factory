@@ -200,6 +200,16 @@ def create_app(service: CharacterService):
                     "code": {"type": "string"},
                     "message": {"type": "string"},
                     "retryable": {"type": "boolean"},
+                    "classification": {
+                        "type": "string",
+                        "description": "Safe failure class; raw endpoint "
+                                       "content remains in protected logs.",
+                    },
+                    "trace_id": {
+                        "type": "string",
+                        "description": "Opaque correlation identifier for "
+                                       "operator diagnostics.",
+                    },
                 }},
                 "created_at": {"type": "string"},
                 "updated_at": {"type": "string"},

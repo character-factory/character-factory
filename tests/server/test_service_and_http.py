@@ -372,6 +372,8 @@ def test_openapi_schemas_are_real(client):
         assert name in schemas
     assert "CharacterPage" not in schemas
     assert "capabilities" not in schemas["CharacterRecord"]["properties"]
+    job_error = schemas["Job"]["properties"]["error"]["properties"]
+    assert "classification" in job_error and "trace_id" in job_error
     # Key routes reference real response schemas — no bare `{}` bodies.
     listing = spec["paths"]["/v0/characters"]["get"]["responses"]["200"]
     listing_schema = listing["content"]["application/json"]["schema"]

@@ -15,9 +15,13 @@ texture generation never hold VRAM at the same time.
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from character_factory.interpreter.config import InterpreterConfig
 from character_factory.interpreter.schema import interpretation_schema
@@ -26,7 +30,43 @@ __all__ = ["InterpreterError", "InterpreterMetrics", "ModelInterpreter"]
 
 
 class InterpreterError(RuntimeError):
-    """The model backend could not produce a usable interpretation."""
+    """The model backend could not produce a usable interpretation.
+
+    Endpoint failures carry only safe public metadata. Raw prompts and
+    responses, when audit logging is configured, stay in the protected log.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "interpreter_unavailable",
+        classification: str | None = None,
+        retryable: bool = True,
+        trace_id: str | None = None,
+    ):
+        super().__init__(message)
+        self.code = code
+        self.classification = classification
+        self.retryable = retryable
+        self.trace_id = trace_id
+
+    @property
+    def public_message(self) -> str:
+        if self.classification is None:
+            return str(self)
+        message = f"interpreter failure: {self.classification}"
+        if self.trace_id:
+            message += f" (trace {self.trace_id})"
+        return message
+
+
+@dataclass
+class EndpointResult:
+    content: str | None
+    finish_reason: str | None
+    refusal: str | None
+    audit: dict
 
 
 @dataclass
@@ -180,8 +220,21 @@ class ModelInterpreter:
             output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
         )
 
-    def _generate_endpoint(self, instruction: str, description: str) -> str:
+    def _generate_endpoint(
+        self,
+        instruction: str,
+        description: str,
+        schema: dict,
+        *,
+        trace_id: str,
+        attempt: int,
+    ) -> EndpointResult:
+        import urllib.error
         import urllib.request
+
+        from character_factory.interpreter.schema import (
+            endpoint_interpretation_schema,
+        )
 
         body = {
             "model": self.config.model or "default",
@@ -189,12 +242,18 @@ class ModelInterpreter:
                 {"role": "system", "content": instruction},
                 {"role": "user", "content": description},
             ],
-            # JSON mode instead of a sampling override: current hosted
-            # models reject non-default temperature but honor a JSON
-            # response format, and the validation/repair pass covers the
-            # rest (an unconstrained backend has no decoding grammar).
-            "response_format": {"type": "json_object"},
-            "max_completion_tokens": max(self.config.max_new_tokens, 900),
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "character_interpretation",
+                    "strict": True,
+                    "schema": endpoint_interpretation_schema(),
+                },
+            },
+            # Reasoning-capable endpoints account for hidden reasoning and
+            # visible JSON inside the same limit. The old 900-token floor
+            # could be exhausted entirely before content was emitted.
+            "max_completion_tokens": max(self.config.max_new_tokens, 1800),
         }
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
@@ -204,13 +263,137 @@ class ModelInterpreter:
             data=json.dumps(body).encode("utf-8"),
             headers=headers,
         )
-        with urllib.request.urlopen(request, timeout=300) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        started = time.monotonic()
+        status = None
+        response_headers = {}
+        raw_body = b""
         try:
-            return payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as error:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                status = response.status
+                response_headers = dict(response.headers.items())
+                raw_body = response.read()
+        except urllib.error.HTTPError as error:
+            status = error.code
+            response_headers = dict(error.headers.items()) if error.headers else {}
+            raw_body = error.read()
+            audit = self._endpoint_audit(
+                trace_id=trace_id, attempt=attempt, instruction=instruction,
+                description=description, status=status, raw_body=raw_body,
+                response_headers=response_headers,
+                latency_seconds=time.monotonic() - started,
+                classification="http_error",
+            )
+            self._write_audit(audit)
             raise InterpreterError(
-                f"endpoint returned an unexpected payload: {error}"
+                "interpreter endpoint request failed",
+                classification="http_error",
+                retryable=status in {408, 409, 425, 429} or status >= 500,
+                trace_id=trace_id,
+            ) from error
+        except Exception as error:
+            audit = self._endpoint_audit(
+                trace_id=trace_id, attempt=attempt, instruction=instruction,
+                description=description, status=status, raw_body=raw_body,
+                response_headers=response_headers,
+                latency_seconds=time.monotonic() - started,
+                classification="transport_error",
+                transport_error=type(error).__name__,
+            )
+            self._write_audit(audit)
+            raise InterpreterError(
+                "interpreter endpoint request failed",
+                classification="transport_error", retryable=True,
+                trace_id=trace_id,
+            ) from error
+        latency_seconds = time.monotonic() - started
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeError, ValueError) as error:
+            audit = self._endpoint_audit(
+                trace_id=trace_id, attempt=attempt, instruction=instruction,
+                description=description, status=status, raw_body=raw_body,
+                response_headers=response_headers,
+                latency_seconds=latency_seconds,
+                classification="invalid_response",
+            )
+            self._write_audit(audit)
+            raise InterpreterError(
+                "interpreter endpoint returned an invalid response",
+                code="interpreter_invalid_output",
+                classification="invalid_response", retryable=True,
+                trace_id=trace_id,
+            ) from error
+        try:
+            choice = payload["choices"][0]
+            message = choice["message"]
+            content = message.get("content")
+            finish_reason = choice.get("finish_reason")
+        except (KeyError, IndexError, TypeError) as error:
+            audit = self._endpoint_audit(
+                trace_id=trace_id, attempt=attempt, instruction=instruction,
+                description=description, status=status, raw_body=raw_body,
+                response_headers=response_headers,
+                latency_seconds=latency_seconds,
+                classification="invalid_response", payload=payload,
+            )
+            self._write_audit(audit)
+            raise InterpreterError(
+                "interpreter endpoint returned an unexpected payload",
+                code="interpreter_invalid_output",
+                classification="invalid_response", retryable=True,
+                trace_id=trace_id,
+            ) from error
+        audit = self._endpoint_audit(
+            trace_id=trace_id, attempt=attempt, instruction=instruction,
+            description=description, status=status, raw_body=raw_body,
+            response_headers=response_headers,
+            latency_seconds=latency_seconds, payload=payload,
+            content=content, finish_reason=finish_reason,
+        )
+        return EndpointResult(
+            content=content,
+            finish_reason=finish_reason,
+            refusal=message.get("refusal"),
+            audit=audit,
+        )
+
+    def _endpoint_audit(self, **values) -> dict:
+        payload = values.pop("payload", None)
+        response_headers = values.pop("response_headers", {})
+        raw_body = values.pop("raw_body", b"")
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "configured_model": self.config.model,
+            "endpoint": self.config.endpoint,
+            "http_status": values.pop("status", None),
+            "response_bytes": len(raw_body),
+            "request_id": response_headers.get("x-request-id"),
+            "response_model": payload.get("model") if isinstance(payload, dict) else None,
+            "system_fingerprint": payload.get("system_fingerprint")
+            if isinstance(payload, dict) else None,
+            "usage": payload.get("usage") if isinstance(payload, dict) else None,
+            "raw_response": raw_body.decode("utf-8", errors="replace"),
+            **values,
+        }
+
+    def _write_audit(self, record: dict) -> None:
+        if not self.config.audit_log:
+            return
+        try:
+            path = Path(self.config.audit_log).expanduser()
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(path, flags, 0o600)
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "a", encoding="utf-8") as output:
+                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as error:
+            raise InterpreterError(
+                "protected interpreter audit logging is unavailable",
+                classification="audit_log_error", retryable=False,
+                trace_id=record.get("trace_id"),
             ) from error
 
     # -- interpretation -----------------------------------------------------
@@ -221,11 +404,12 @@ class ModelInterpreter:
         from character_factory.interpreter import Interpretation
 
         schema = interpretation_schema()
-        unconstrained = self.generate is None and self.config.endpoint is not None
         instruction = build_instruction(
             slot_guidance or {},
             header=self.config.instruction,
-            schema=schema if unconstrained else None,
+            # Endpoint output is constrained directly by its strict response
+            # schema; repeating that schema in the prompt wastes context.
+            schema=None,
         )
         start = time.monotonic()
         try:
@@ -235,13 +419,19 @@ class ModelInterpreter:
                 torch.cuda.reset_peak_memory_stats()
         except ImportError:
             pass
+        trace_id = secrets.token_hex(12) if self.config.endpoint is not None else None
         try:
-            if self.generate is not None:
-                raw = self.generate(instruction, prompt, schema)
-            elif self.config.endpoint is not None:
-                raw = self._generate_endpoint(instruction, prompt)
+            if self.config.endpoint is not None and self.generate is None:
+                slots, hair, notes, proportions = self._interpret_endpoint(
+                    instruction, prompt, schema, trace_id
+                )
             else:
-                raw = self._generate_local(instruction, prompt, schema)
+                if self.generate is not None:
+                    raw = self.generate(instruction, prompt, schema)
+                else:
+                    raw = self._generate_local(instruction, prompt, schema)
+                document = _parse_json(raw)
+                slots, hair, notes, proportions = _validate(document, prompt)
         except InterpreterError:
             raise
         except Exception as error:
@@ -249,8 +439,6 @@ class ModelInterpreter:
         self.metrics.generate_seconds = time.monotonic() - start
         self._record_memory()
 
-        document = _parse_json(raw)
-        slots, hair, notes, proportions = _validate(document, prompt)
         return Interpretation(
             slot_prompts=slots,
             hair=hair,
@@ -258,6 +446,54 @@ class ModelInterpreter:
             notes=notes,
             proportions=proportions,
         )
+
+    def _interpret_endpoint(
+        self, instruction: str, prompt: str, schema: dict, trace_id: str
+    ):
+        for attempt in (1, 2):
+            result = self._generate_endpoint(
+                instruction, prompt, schema,
+                trace_id=trace_id, attempt=attempt,
+            )
+            classification = None
+            retryable = True
+            if result.refusal:
+                classification = "refusal"
+                retryable = False
+            elif result.finish_reason == "content_filter":
+                classification = "content_filtered"
+                retryable = False
+            elif result.finish_reason == "length":
+                classification = "truncated_response"
+            elif not isinstance(result.content, str) or not result.content.strip():
+                classification = "empty_response"
+            if classification is None:
+                try:
+                    document = _drop_nulls(_parse_json(result.content))
+                except InterpreterError:
+                    classification = "invalid_json"
+                else:
+                    try:
+                        validated = _validate(document, prompt)
+                    except InterpreterError:
+                        classification = "schema_invalid"
+                    else:
+                        result.audit["classification"] = "valid"
+                        self._write_audit(result.audit)
+                        return validated
+            result.audit["classification"] = classification
+            self._write_audit(result.audit)
+            if classification in {"empty_response", "truncated_response"} \
+                    and attempt == 1:
+                continue
+            raise InterpreterError(
+                "interpreter endpoint produced no usable document",
+                code="interpreter_invalid_output",
+                classification=classification,
+                retryable=retryable,
+                trace_id=trace_id,
+            )
+        raise AssertionError("endpoint retry loop exhausted")
 
     def _record_memory(self) -> None:
         import resource
@@ -351,6 +587,19 @@ def _parse_json(raw: str) -> dict:
     if not isinstance(document, dict):
         raise InterpreterError("model output is not a JSON object")
     return document
+
+
+def _drop_nulls(value):
+    """Normalize strict-endpoint nullable optionals back to omissions."""
+    if isinstance(value, dict):
+        return {
+            key: _drop_nulls(child)
+            for key, child in value.items()
+            if child is not None
+        }
+    if isinstance(value, list):
+        return [_drop_nulls(child) for child in value]
+    return value
 
 
 _BALD_WORDS = ("bald", "shaved head", "hairless")

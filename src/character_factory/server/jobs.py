@@ -283,14 +283,21 @@ class JobStore:
         )
 
     def fail(
-        self, job_id: str, code: str, message: str, *, retryable: bool
+        self, job_id: str, code: str, message: str, *, retryable: bool,
+        classification: str | None = None,
+        trace_id: str | None = None,
     ) -> dict:
+        error = {"code": code, "message": message, "retryable": retryable}
+        if classification is not None:
+            error["classification"] = classification
+        if trace_id is not None:
+            error["trace_id"] = trace_id
         return self.update(
             job_id,
             status="failed",
             stage="failed",
             detail=message,
-            error={"code": code, "message": message, "retryable": retryable},
+            error=error,
             finished_at=_now(),
         )
 

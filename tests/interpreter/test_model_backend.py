@@ -3,6 +3,7 @@ generator: parsing, validation, fallback, guidance, and configuration —
 everything except the actual language model."""
 
 import json
+import stat
 
 import pytest
 
@@ -207,9 +208,14 @@ def test_endpoint_backend_speaks_openai_chat(monkeypatch):
     seen = {}
 
     class FakeResponse:
+        status = 200
+        headers = {"x-request-id": "request-1"}
+
         def read(self):
             return json.dumps(
-                {"choices": [{"message": {"content": json.dumps(good_document())}}]}
+                {"choices": [{"finish_reason": "stop", "message": {
+                    "content": json.dumps(good_document())
+                }}]}
             ).encode()
 
         def __enter__(self):
@@ -233,10 +239,114 @@ def test_endpoint_backend_speaks_openai_chat(monkeypatch):
     assert result.slot_prompts["skin"].startswith("fair")
     assert seen["url"].endswith("/chat/completions")
     assert seen["body"]["model"] == "served-name"
-    assert seen["body"]["response_format"] == {"type": "json_object"}
-    assert seen["body"]["max_completion_tokens"] >= 900
+    response_format = seen["body"]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    strict_schema = response_format["json_schema"]["schema"]
+    assert set(strict_schema["required"]) == {"textures", "hair", "proportions"}
+    assert seen["body"]["max_completion_tokens"] >= 1800
     assert "temperature" not in seen["body"]   # hosted models reject overrides
     assert seen["auth"] == "Bearer k"
+
+
+def test_endpoint_retries_one_empty_truncated_response_and_audits(
+    monkeypatch, tmp_path
+):
+    calls = 0
+
+    class FakeResponse:
+        status = 200
+        headers = {"x-request-id": "request-1"}
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeResponse({
+                "model": "endpoint-version",
+                "usage": {"completion_tokens": 1800,
+                          "completion_tokens_details": {"reasoning_tokens": 1800}},
+                "choices": [{"finish_reason": "length",
+                             "message": {"content": ""}}],
+            })
+        return FakeResponse({
+            "model": "endpoint-version",
+            "choices": [{"finish_reason": "stop", "message": {
+                "content": json.dumps(good_document())
+            }}],
+        })
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    audit = tmp_path / "protected" / "interpreter.jsonl"
+    backend = ModelInterpreter(InterpreterConfig(
+        model="served-name", endpoint="http://localhost:1",
+        audit_log=str(audit),
+    ))
+    result = backend.interpret("the raw prompt")
+
+    assert result.slot_prompts["skin"].startswith("fair")
+    assert calls == 2
+    rows = [json.loads(line) for line in audit.read_text().splitlines()]
+    assert [row["classification"] for row in rows] == [
+        "truncated_response", "valid",
+    ]
+    assert rows[0]["trace_id"] == rows[1]["trace_id"]
+    assert rows[0]["attempt"] == 1 and rows[1]["attempt"] == 2
+    assert rows[0]["description"] == "the raw prompt"
+    assert rows[0]["finish_reason"] == "length"
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+
+
+def test_endpoint_invalid_json_is_precise_safe_and_not_retried(monkeypatch):
+    calls = 0
+
+    class FakeResponse:
+        status = 200
+        headers = {}
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"finish_reason": "stop", "message": {
+                    "content": "private malformed output"
+                }}],
+            }).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        nonlocal calls
+        calls += 1
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    backend = ModelInterpreter(InterpreterConfig(
+        model="served-name", endpoint="http://localhost:1",
+    ))
+    with pytest.raises(InterpreterError) as excinfo:
+        backend.interpret("private prompt")
+    error = excinfo.value
+    assert calls == 1
+    assert error.code == "interpreter_invalid_output"
+    assert error.classification == "invalid_json"
+    assert error.retryable is True
+    assert error.trace_id
+    assert "private" not in error.public_message
 
 def test_backend_aliases_resolve_and_list(monkeypatch, tmp_path):
     from character_factory.interpreter import config as configuration
@@ -332,3 +442,15 @@ def test_interpretation_schema_carries_bounded_integer_proportions():
         "spine_length", "neck_length", "shoulder_width",
         "arm_length", "hip_width", "leg_length",
     }
+
+
+def test_endpoint_schema_makes_optional_fields_nullable_and_required():
+    from character_factory.interpreter.schema import endpoint_interpretation_schema
+
+    schema = endpoint_interpretation_schema()
+    assert set(schema["required"]) == {"textures", "hair", "proportions"}
+    textures = schema["properties"]["textures"]
+    assert set(textures["required"]) == {"skin", "eye", "garment", "shoe"}
+    assert textures["properties"]["shoe"]["anyOf"][1] == {"type": "null"}
+    proportions = schema["properties"]["proportions"]["anyOf"][0]
+    assert set(proportions["required"]) == set(proportions["properties"])

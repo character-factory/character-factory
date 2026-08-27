@@ -113,3 +113,21 @@ def test_wedged_stage_reaches_a_documented_timeout(tmp_path):
     assert job["error"]["code"] == "stage_timeout"
     assert job["error"]["retryable"] is True
     assert job["last_heartbeat"] is not None
+
+
+def test_failure_can_expose_safe_interpreter_diagnostics(tmp_path):
+    store = JobStore(tmp_path / "jobs", lambda *_: None, start_worker=False)
+    submitted = store.submit("create", {"prompt": "one"})
+    store.fail(
+        submitted["id"], "interpreter_invalid_output",
+        "interpreter failure: truncated_response (trace opaque123)",
+        retryable=True, classification="truncated_response",
+        trace_id="opaque123",
+    )
+    assert store.get(submitted["id"])["error"] == {
+        "code": "interpreter_invalid_output",
+        "message": "interpreter failure: truncated_response (trace opaque123)",
+        "retryable": True,
+        "classification": "truncated_response",
+        "trace_id": "opaque123",
+    }

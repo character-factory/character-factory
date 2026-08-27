@@ -29,6 +29,10 @@ backend when no ``backends`` table is present. Environment overrides
 (``CHARACTER_FACTORY_INTERPRETER_MODEL`` / ``_ENDPOINT`` / ``_API_KEY``)
 take precedence over the file and describe the default backend.
 
+Endpoint operators may set ``CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`` to a
+protected JSONL path. That diagnostic log contains raw prompts and endpoint
+responses and must be treated as sensitive; it is never exposed over HTTP.
+
 ``endpoint`` selects the OpenAI-compatible chat-completions backend
 (``model`` is then the served model name). ``instruction`` (global or
 per-backend) replaces the built-in task header — conditioning-grade
@@ -55,6 +59,7 @@ __all__ = [
 ENV_MODEL = "CHARACTER_FACTORY_INTERPRETER_MODEL"
 ENV_ENDPOINT = "CHARACTER_FACTORY_INTERPRETER_ENDPOINT"
 ENV_API_KEY = "CHARACTER_FACTORY_INTERPRETER_API_KEY"
+ENV_AUDIT_LOG = "CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG"
 
 RULES_ALIAS = "rules"
 
@@ -67,6 +72,7 @@ class InterpreterConfig:
     max_new_tokens: int = 768
     instruction: str | None = None   # system-prompt override (data, not code)
     repetition_penalty: float = 1.0  # >1 damps greedy repetition loops
+    audit_log: str | None = None     # protected JSONL; never served over HTTP
 
     @property
     def configured(self) -> bool:
@@ -97,6 +103,7 @@ def _config_from(values: dict, instruction: str | None) -> InterpreterConfig:
         max_new_tokens=int(values.get("max_new_tokens", 768)),
         instruction=values.get("instruction") or instruction,
         repetition_penalty=float(values.get("repetition_penalty", 1.0)),
+        audit_log=os.environ.get(ENV_AUDIT_LOG) or values.get("audit_log"),
     )
 
 

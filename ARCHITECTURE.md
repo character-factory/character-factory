@@ -256,12 +256,25 @@ overrides per key → rules abstains.**
   in the grammar test module.
 - **Optional backend: any OpenAI-compatible endpoint**, selected by one
   config field, for people running a local inference server or wanting a
-  larger model. It must never complicate the default path.
+  larger model. Endpoint output uses strict JSON-Schema response formatting
+  where the endpoint supports it and still passes through the same validator.
+  Empty or length-truncated output receives one bounded retry against the
+  same backend; malformed JSON and schema-invalid documents fail immediately.
+  It must never complicate the default path.
 - **Degraded mode: an explicit rules backend** (slot-prompt splitting plus a
   conservative default hair block), used when rules is configured or
   requested. A failed model request never changes backend silently:
   fallback is off by default and requires `allow_fallback: true`; records
   expose the requested backend, actual backend, reason, and warnings.
+- **Endpoint diagnostics are private.** If an operator configures
+  `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`, the server writes a mode-0600
+  JSONL stream containing raw prompts, raw responses, HTTP status, response
+  size, finish reason, latency, endpoint request id, reported backend version,
+  usage, attempt number, and an opaque trace id. Public job failures include
+  only that trace id and a safe classification such as `empty_response`,
+  `truncated_response`, `invalid_json`, or `schema_invalid`. Invalid endpoint
+  output uses `interpreter_invalid_output`; transport and HTTP availability
+  failures use `interpreter_unavailable`.
 - **VRAM discipline:** the interpreter never coexists in VRAM with the base
   model — it runs and releases before the diffusion stack loads, or runs
   CPU-only. The VRAM floor in §6.1 is unchanged by this component.
@@ -337,6 +350,14 @@ target, and payload. Reusing that key for different work is a `409` conflict.
 Omitting the header always submits a new job; rebuilds are never inferred from
 repeating a create body. The key does not alter character identity or artifact
 hashing.
+
+Interpreter failure handling is backend-neutral. A client should inspect the
+job's structured `error.code`, `error.classification`, `error.retryable`, and
+opaque `error.trace_id`; it must not infer backend behavior from the message.
+It may retry the original failed job through `POST /v0/jobs/{id}/retry`.
+Changing fallback policy is a different request: submit it separately with a
+new `Idempotency-Key` and `allow_fallback: true`. Retrying never mutates the
+original idempotent request, and fallback is never enabled silently.
 
 The local process binds to loopback by default. Binding it to all interfaces
 is intended only for a trusted local network or private overlay network, where

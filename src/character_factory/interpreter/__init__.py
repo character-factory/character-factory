@@ -100,13 +100,13 @@ def interpret(
             raise
         interpretation = rules_interpret(prompt)
         interpretation.notes.append(
-            f"model backend failed ({error}); rules fallback used"
+            f"model backend failed ({error.public_message}); rules fallback used"
         )
         metrics = {
             "backend": interpretation.backend,
             "requested_interpreter": requested_alias,
             "actual_interpreter": "rules",
-            "fallback_reason": str(error),
+            "fallback_reason": error.public_message,
         }
     finally:
         backend.close()   # release before any diffusion loads (§2.2)

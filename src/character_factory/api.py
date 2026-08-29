@@ -224,12 +224,16 @@ def assemble(
     character carries an `assets` block, every file is verified against its
     pinned hash before use; a mismatch is a hard error.
 
-    A character with a garment ships it as a separate skinned shell mesh
-    with its own cloth material; a character whose garment extraction
-    fails any certification gate silently keeps the painted composite —
-    the manifest's `garments` block records which mode shipped, with the
-    rejection reason.
+    Garments and shoes ship as separate skinned shell meshes with their
+    own cloth material, and the body faces underneath are omitted — the
+    body mesh renders skin only (a narrow skin band survives at each
+    shell's coverage boundary). A slot whose extraction fails a
+    structural gate silently keeps the painted composite; the manifest's
+    `garments` block records which mode shipped, with the rejection
+    reason.
     """
+    import io
+
     import numpy as np
     from PIL import Image
 
@@ -297,14 +301,6 @@ def assemble(
             resolution=skin.shape[0],
         )
 
-    albedo = composite_albedo(
-        skin, garment, shoe_overlay, atlas.at_resolution(skin.shape[0])
-    )
-
-    import io
-
-    png = io.BytesIO()
-    Image.fromarray(albedo).save(png, format="PNG")
     evaluation = rig.evaluate(
         character.identity, character.resting_expression,
         proportions=character.proportions or None,
@@ -428,65 +424,92 @@ def assemble(
                              mouth_removal])
     )
 
-    # Garment shells (assembly behavior, never recipe): the baked garment
-    # texture becomes a skinned, body-following closed solid over the
-    # painted composite. Every failed certification gate falls back to
-    # paint for this character, silently; the manifest's `garments` block
-    # records the shipped mode per slot so consumers never sniff.
+    # Shells (assembly behavior, never recipe): each baked coverage slot —
+    # the garment texture and the shoe overlay — becomes its own skinned,
+    # body-following closed solid with cloth material, and the body faces
+    # under it are omitted (a narrow skin band survives at the coverage
+    # boundary so skin runs continuously under the rim). The body albedo
+    # carries only the layers that did NOT ship as geometry, so with
+    # shells shipped the body mesh is skin alone. A slot whose extraction
+    # fails a structural gate keeps the painted composite, reason in the
+    # manifest.
+    from character_factory.assembly import garment_shell as shell_module
     from character_factory.assembly.export import SkinnedAttachment
 
     skinned_attachments: list[SkinnedAttachment] = []
     garments_manifest: dict = {}
-    if "shoe" in character.textures:
-        garments_manifest["shoe"] = {"render_mode": "painted"}
-    if "garment" in character.textures:
-        garments_manifest["garment"] = {"render_mode": "painted"}
-        shell, rejection = _prepare_garment_shell(
-            rig, character, evaluation, garment, atlas,
-            surface_vertices, surface_faces)
-        if shell is not None:
-            # The shell's texture is the baked garment with its
-            # boundary colors bled outward (atlas hygiene): boundary
-            # faces and rim insets sample cloth, never the keyed-out
-            # background. The key itself always comes from the
-            # original bytes — dilation cannot grow coverage.
-            import io as _io
+    shelled: dict[str, bool] = {}
 
-            from character_factory.assembly.garment_shell import (
-                dilate_garment_colors,
-            )
-
-            dilated = dilate_garment_colors(garment, shell.hard_key)
-            shell_buffer = _io.BytesIO()
-            Image.fromarray(dilated).save(shell_buffer, format="PNG")
-            shell_png = shell_buffer.getvalue()
-            skinned_attachments.append(SkinnedAttachment(
-                name="garment",
-                vertices=shell.vertices,
-                faces=shell.faces,
-                corner_uv=shell.corner_uv,
-                joints4=shell.joints4,
-                weights4=shell.weights4,
-                albedo_png=shell_png,
-            ))
-            remove_faces = (
-                shell.covered_body_faces if remove_faces is None
-                else np.concatenate([
-                    np.asarray(remove_faces, dtype=np.int64),
-                    shell.covered_body_faces]))
-            garments_manifest["garment"] = {
-                "render_mode": "shell",
-                "shell": {
-                    "constants_version": shell.audit["constants_version"],
-                    "components": shell.audit["components"],
-                    "solid_vertices": int(len(shell.vertices)),
-                    "solid_faces": int(len(shell.faces)),
-                    "hidden_body_faces": int(len(shell.covered_body_faces)),
-                },
-            }
-        else:
-            garments_manifest["garment"] = {
+    def _attempt(slot: str, rgb, coverage_alpha, excluded) -> None:
+        garments_manifest[slot] = {"render_mode": "painted"}
+        shelled[slot] = False
+        shell, rejection = _prepare_shell(
+            rig, character, evaluation, rgb, surface_vertices,
+            coverage_alpha=coverage_alpha, excluded=excluded)
+        if shell is None:
+            garments_manifest[slot] = {
                 "render_mode": "painted", "reason": rejection}
+            return
+        # The shell's texture is the baked slot image with its boundary
+        # colors bled outward (atlas hygiene): boundary faces and rim
+        # insets sample real material, never keyed-out background. The
+        # key itself always comes from the original coverage — dilation
+        # cannot grow it.
+        dilated = shell_module.dilate_garment_colors(rgb, shell.hard_key)
+        buffer = io.BytesIO()
+        Image.fromarray(dilated).save(buffer, format="PNG")
+        skinned_attachments.append(SkinnedAttachment(
+            name=slot,
+            vertices=shell.vertices,
+            faces=shell.faces,
+            corner_uv=shell.corner_uv,
+            joints4=shell.joints4,
+            weights4=shell.weights4,
+            albedo_png=buffer.getvalue(),
+        ))
+        nonlocal remove_faces
+        remove_faces = (
+            shell.covered_body_faces if remove_faces is None
+            else np.concatenate([
+                np.asarray(remove_faces, dtype=np.int64),
+                shell.covered_body_faces]))
+        shelled[slot] = True
+        garments_manifest[slot] = {
+            "render_mode": "shell",
+            "shell": {
+                "constants_version": shell.audit["constants_version"],
+                "components": shell.audit["components"],
+                "solid_vertices": int(len(shell.vertices)),
+                "solid_faces": int(len(shell.faces)),
+                "hidden_body_faces": int(len(shell.covered_body_faces)),
+            },
+        }
+
+    resolution = skin.shape[0]
+    scaled_atlas = atlas.at_resolution(resolution)
+    if "garment" in character.textures:
+        _attempt("garment", garment, None, scaled_atlas.head_mask)
+    if shoe_overlay is not None:
+        # The shoe's coverage is the overlay's own alpha (authoritative);
+        # the atlas region contract confines it to the feet region.
+        shoe_excluded = (
+            ~scaled_atlas.feet_mask if scaled_atlas.feet_mask is not None
+            else None)
+        _attempt("shoe", shoe_overlay[:, :, :3], shoe_overlay[:, :, 3],
+                 shoe_excluded)
+
+    # The body albedo: only what still renders ON the body. With both
+    # shells shipped this is pure skin — the skin band at every shell rim
+    # shows skin, never painted-on garment.
+    albedo = composite_albedo(
+        skin,
+        np.zeros_like(garment) if shelled.get("garment") else garment,
+        None if shelled.get("shoe") else shoe_overlay,
+        scaled_atlas,
+    )
+
+    png = io.BytesIO()
+    Image.fromarray(albedo).save(png, format="PNG")
 
     result = export_character_glb(
         rig,
@@ -507,17 +530,16 @@ def assemble(
     return result.glb_path
 
 
-def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas,
-                           surface_vertices=None, surface_faces=None):
-    """Run the full extraction + certification ladder for one character.
-    Returns (shell, None) on success, (None, reason-code) on any gate.
+def _prepare_shell(rig, character, evaluation, rgb, surface_vertices,
+                   coverage_alpha=None, excluded=None):
+    """Extract one slot's shell on this character, fail-closed.
 
-    Extraction runs natively on the surface that ships — a declared
-    render LOD is cut, skinned and certified on its own buffers, never
-    extracted at a finer topology and reduced afterwards.
+    Returns (PreparedShell, None) or (None, reason). Structural gates
+    only: a shell that builds as a valid closed solid ships — posing
+    behavior is the consumer's to see, not a reason to withhold geometry
+    (the body under the shell is omitted, so cloth is the only surface
+    where cloth is).
     """
-    import numpy as np
-
     from character_factory.assembly import garment_shell as shell_module
 
     surface = rig.render if rig.render is not None else rig
@@ -530,23 +552,13 @@ def _prepare_garment_shell(rig, character, evaluation, garment_rgb, atlas,
         canonical_vertices = rig.render.vertices_from(canonical.vertices, rig.faces)
     if surface_vertices is None:
         surface_vertices = evaluation.vertices
-    resolution = garment_rgb.shape[0]
+    resolution = rgb.shape[0]
     atlas_valid = shell_module.valid_atlas_mask(surface, resolution)
-    # The region contract mirrors the compositor exactly: the head mask
-    # (garment never paints there) subtracts from the key. The feet mask
-    # is a shoe-side constraint — a broad lower-body region where the
-    # shoe may paint — and does NOT remove garment (trouser legs live
-    # there in paint and in shell alike).
-    excluded = atlas.at_resolution(resolution).head_mask
     try:
         shell = shell_module.prepare_shell(
-            surface, garment_rgb, surface_vertices, canonical_vertices,
-            atlas_valid, excluded_regions=excluded, constants=constants)
-        shell.audit["pose_gate"] = shell_module.pose_gate(
-            rig, shell, evaluation, character.identity,
-            character.resting_expression,
-            proportions=character.proportions or None,
-            constants=constants, surface=surface, body_rest=surface_vertices)
+            surface, rgb, surface_vertices, canonical_vertices,
+            atlas_valid, excluded_regions=excluded, constants=constants,
+            coverage_alpha=coverage_alpha)
     except shell_module.ShellRejected as error:
         return None, error.reason
     return shell, None

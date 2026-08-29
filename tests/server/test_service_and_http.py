@@ -517,8 +517,8 @@ def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
 def test_painted_fallback_is_a_structured_job_warning():
     warnings = _delivery_warnings(
         {"garments": {
-            "garment": {"render_mode": "painted", "reason": "pose-gate"},
-            "shoe": {"render_mode": "painted"},
+            "garment": {"render_mode": "painted", "reason": "cut-empty"},
+            "shoe": {"render_mode": "shell"},
         }},
     )
     assert warnings == [
@@ -528,9 +528,14 @@ def test_painted_fallback_is_a_structured_job_warning():
                        "rendering for this character",
             "details": {
                 "slot": "garment", "expected": "shell", "actual": "painted",
-                "reason": "pose-gate",
+                "reason": "cut-empty",
             },
         },
     ]
+    # Shoes warn identically; delivered shells never warn.
+    assert [w["details"]["slot"] for w in _delivery_warnings(
+        {"garments": {"garment": {"render_mode": "shell"},
+                      "shoe": {"render_mode": "painted", "reason": "x"}}}
+    )] == ["shoe"]
     assert _delivery_warnings(
         {"garments": {"garment": {"render_mode": "shell"}}}) == []

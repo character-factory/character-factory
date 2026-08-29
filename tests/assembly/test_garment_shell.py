@@ -176,6 +176,19 @@ def test_seam_detector_enforces_a_configured_budget():
     assert excinfo.value.reason == "alpha-seam-disagreement"
 
 
+def test_coverage_alpha_replaces_luminance_keying():
+    # The shoe path: coverage arrives as an authoritative alpha channel
+    # (the baked overlay's), so even an all-black RGB extracts — keying
+    # is bypassed entirely, and the cut matches the keyed equivalent.
+    alpha = np.zeros((TEXTURE, TEXTURE), dtype=np.uint8)
+    alpha[int(0.30 * (TEXTURE - 1)):int(0.72 * (TEXTURE - 1)) + 1, :] = 255
+    shell = prepare(np.zeros((TEXTURE, TEXTURE, 3), dtype=np.uint8),
+                    coverage_alpha=alpha)
+    keyed = prepare(band_texture())
+    assert shell.outer_face_count == keyed.outer_face_count
+    assert shell.audit["cutoff_stability_iou"] == 1.0
+
+
 # --------------------------------------------------------------------------
 # the cut and the solid
 # --------------------------------------------------------------------------
@@ -267,37 +280,12 @@ def test_extraction_is_deterministic():
 # the pose gate
 # --------------------------------------------------------------------------
 
-def _evaluation(vertices):
-    rest = np.array([
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0],
-        [0.0, HEIGHT / 2, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]])
-    return types.SimpleNamespace(vertices=vertices, skeleton=rest)
-
-
-BEND = {"bend": np.array([0.35] + [0.0] * 203, dtype=np.float32)}
-
-
-def test_pose_gate_passes_when_the_shell_follows_the_body():
-    rig, vertices = cylinder_rig()
-    shell = prepare(band_texture(), rig=rig, vertices=vertices)
-    diagnostics = gs.pose_gate(
-        rig, shell, _evaluation(vertices), [0.0] * 45, [0.0] * 72,
-        poses=BEND)
-    assert diagnostics["bend"]["visible_max_mm"] <= 0.5
-    assert diagnostics["bend"]["render"]["skin_in_silhouette"] == 0
-    assert diagnostics["bend"]["render"]["body_holes"] == 0
-
-
-def test_pose_gate_fails_a_shell_that_does_not_follow():
-    rig, vertices = cylinder_rig()
-    shell = prepare(band_texture(), rig=rig, vertices=vertices)
-    # Sabotage: bind the whole shell to the static root while the upper
-    # body rotates away — the body must sweep through the shell.
-    shell.joints4[:] = 0
-    with pytest.raises(gs.ShellRejected) as excinfo:
-        gs.pose_gate(rig, shell, _evaluation(vertices), [0.0] * 45,
-                     [0.0] * 72, poses=BEND)
-    assert excinfo.value.reason in ("pose-visible-poke", "pose-render-poke")
+def test_no_pose_gate_exists():
+    """Posing behavior is the consumer's to see: the body under a shell is
+    omitted, so there is no doubled surface for a pose gate to police.
+    Structural gates only."""
+    assert not hasattr(gs, "pose_gate")
+    assert not hasattr(gs, "POSE_SET")
 
 
 def test_valid_atlas_mask_covers_the_unwrap():

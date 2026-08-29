@@ -63,12 +63,16 @@ def test_assemble_end_to_end(tmp_path):
     assert manifest["format"] == "character-factory/export-manifest"
     assert manifest["joint_count"] == 127
     assert manifest["units"] == "meters"
-    # The garments block states the shipped mode per slot. Shell
-    # extraction is always attempted for the garment; this synthetic
-    # texture cannot key, so it fails closed to painted with the reason.
+    # The garments block states the shipped mode per slot. The all-black
+    # garment texture cannot key (luminance path) and fails closed to
+    # painted; the shoe overlay's alpha is authoritative occupancy, so
+    # even a black canvas bakes real coverage — black shoes, shipped as a
+    # shell (two feet, upper + sole islands).
     assert manifest["garments"]["garment"] == {
         "render_mode": "painted", "reason": "alpha-coverage-small"}
-    assert manifest["garments"]["shoe"] == {"render_mode": "painted"}
+    shoe_entry = manifest["garments"]["shoe"]
+    assert shoe_entry["render_mode"] == "shell"
+    assert shoe_entry["shell"]["hidden_body_faces"] > 0
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
 
@@ -89,12 +93,14 @@ def test_assemble_end_to_end(tmp_path):
     for joint, child in (("l_eye", "eye_left"), ("r_eye", "eye_right"),
                          ("c_head", "hair")):
         assert names[child] in gltf["nodes"][names[joint]]["children"]
-    # The body primitive removes 64 eye faces and the 288-face mouth portal,
-    # then appends the 806-face socket strip. It still skins exactly
-    # (validated above).
+    # The body primitive removes 64 eye faces, the 288-face mouth portal,
+    # and the faces under the shoe shell, then appends the 806-face socket
+    # strip. It still skins exactly (validated above).
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
-    assert len(indices) // 3 == 36874 - 64 - 288 + 806
+    assert (len(indices) // 3
+            == 36874 - 64 - 288 + 806
+            - shoe_entry["shell"]["hidden_body_faces"])
 
 
 def test_assemble_is_deterministic(tmp_path):
@@ -184,6 +190,10 @@ def test_garment_shell_fails_closed_to_the_painted_build(tmp_path):
     assert all(m["name"] != "garment" for m in gltf["meshes"])
     assert gltf["asset"]["extras"]["garments"]["garment"] == {
         "render_mode": "painted", "reason": "alpha-coverage-small"}
+    # The shoe fails closed independently of the garment — but a black
+    # canvas is real occupancy to the overlay baker, so the shoe ships.
+    assert gltf["asset"]["extras"]["garments"]["shoe"]["render_mode"] == "shell"
+    assert any(m["name"] == "shoe" for m in gltf["meshes"])
 
 
 def test_garment_shell_ships_when_every_gate_passes(tmp_path):
@@ -266,11 +276,13 @@ def test_garment_shell_ships_when_every_gate_passes(tmp_path):
     weights = _ra(gltf, binary, attributes["WEIGHTS_0"])
     assert np.abs(weights.sum(axis=1) - 1.0).max() < 1e-4
 
-    # Covered body faces are omitted alongside the 64 eye faces and the
-    # 288-face mouth portal; the 806-face socket strip is then appended.
+    # Covered body faces (garment and shoe shells alike) are omitted
+    # alongside the 64 eye faces and the 288-face mouth portal; the
+    # 806-face socket strip is then appended.
+    hidden = shell_info["hidden_body_faces"]
+    shoe_entry = manifest["garments"].get("shoe", {})
+    if shoe_entry.get("render_mode") == "shell":
+        hidden += shoe_entry["shell"]["hidden_body_faces"]
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
-    assert (
-        len(indices) // 3
-        == 36874 - 64 - 288 + 806 - shell_info["hidden_body_faces"]
-    )
+    assert len(indices) // 3 == 36874 - 64 - 288 + 806 - hidden

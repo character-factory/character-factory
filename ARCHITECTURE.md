@@ -100,7 +100,8 @@ the boundaries more than the features:
   extraction certification falls back to the painted composite, recorded
   in the manifest. The shells follow the body silhouette; loose clothing,
   skirts, and anything that departs from the silhouette are out of v0
-  scope. Footwear remains painted in v0.
+  scope. Footwear ships the same way: the baked shoe overlay becomes its
+  own shell over the feet, cloth-class material included.
 - **No identity resampling of an existing character.** Identity is sampled
   at create time (a different seed gives a different take on the same
   description), but there is no operation that redraws the body of a
@@ -416,7 +417,12 @@ system and deliberately boring:
    keep only their straps; the shaft is cut to the style's declared
    height), and the resulting RGBA overlay composites above the garment
    layer — the normative order is skin, then garment, then shoe
-   (SPEC.md §9). Result: one albedo atlas on one body mesh.
+   (SPEC.md §9). That is the *painted* composite — the fallback form.
+   When slots ship as shells (the standard outcome, next step), their
+   layers are left out of the body albedo entirely: with garment and
+   shoe both shipped as geometry, the body mesh carries pure skin, and
+   the narrow skin band retained at each shell's coverage boundary shows
+   skin — never painted-on garment — at the rim.
 
    **Garment shells.** The baked garment texture then becomes geometry
    (standard assembly behavior, never recorded in the character
@@ -424,14 +430,23 @@ system and deliberately boring:
    coverage — never a canonical or per-style cut — is marched through the
    body triangles, reconstructed on the character's identity, lifted and
    faired under clamps, closed into a watertight solid, and exported as a
-   skinned mesh riding the body's own skin, with a conservatively eroded
-   set of covered body faces omitted underneath. Extraction is a pure
-   function of the published baked asset bytes; certification is a
-   fail-closed ladder (alpha quality, seam-crack detection, topology and
-   weight audits, then a pose-envelope gate requiring zero visible
-   body-through-shell poke across rest/walk/arms-raised/crouch, measured
-   geometrically and by ID/depth renders). A character that fails any
-   gate keeps the painted composite,
+   skinned mesh riding the body's own skin. The body faces under the
+   coverage are omitted — deleted, not hidden — so the shell is the only
+   surface where the shell is: no doubled geometry, no z-fighting, and
+   body-through-cloth clipping is impossible where cloth covers, because
+   there is no body there. The one intentional overlap is a narrow skin
+   band retained at the coverage boundary (the erosion rings), tucked
+   under the shell's rim so skin runs continuously under cloth from any
+   angle; the band width is the technique's tuning knob. The shoe shell
+   extracts identically from the baked overlay's own alpha (authoritative
+   occupancy — no luminance keying), confined to the atlas's feet
+   region, and carries the same cloth-class material. Extraction is a
+   pure function of the published baked asset bytes; certification is a
+   fail-closed ladder of structural gates (alpha quality, seam-crack
+   detection, topology, closed-solid and weight audits) — a shell that
+   builds as a valid solid ships; posing behavior is the consumer's to
+   see, not a reason to withhold geometry. A slot that fails a
+   structural gate keeps the painted composite,
    and the manifest's `garments` block records the shipped `render_mode`
    per slot (with the rejection reason when an extraction was attempted),
    so consumers never sniff. Validators validate; nothing repairs a
@@ -473,7 +488,8 @@ system and deliberately boring:
    to the eye joints, hair to the head joint). Where UV seams force vertex
    duplication, skinning weights are carried through the duplication.
    Materials are metallic-roughness PBR with fixed v0 constants —
-   dielectric throughout, skin at roughness 0.5 and garment shells at
+   dielectric throughout, skin at roughness 0.5 and garment and shoe
+   shells at
    0.9, so cloth responds to light differently than skin by design
    (roughness contrast is the one portable lever while surfaces are
    albedo-only); hair

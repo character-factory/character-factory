@@ -40,8 +40,6 @@ def _delivery_warnings(manifest: dict) -> list[dict]:
     per-character quality event worth surfacing on the job."""
     warnings = []
     for slot, delivered in manifest.get("garments", {}).items():
-        if slot != "garment":
-            continue
         if delivered.get("render_mode") != "shell":
             warnings.append({
                 "code": "geometry_not_delivered",

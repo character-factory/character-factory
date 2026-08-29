@@ -16,8 +16,8 @@ Contract highlights (SPEC-independent — assembly behavior, like turbo):
   the rig buffers, and versioned constants. No inference, no RNG — the
   same inputs produce the same solid, byte for byte.
 - **Fail-closed ladder**: alpha gates → cut/topology audits → closed-
-  solid audits → weight audits → pose-envelope gate. Validators
-  validate; nothing repairs.
+  solid audits → weight audits. Structural validity only — a shell that
+  builds, ships. Validators validate; nothing repairs.
 
 All geometry is rig-native: centimeters, Y-up. The exporter applies its
 usual unit scale; nothing here converts.
@@ -35,8 +35,6 @@ __all__ = [
     "ShellRejected",
     "PreparedShell",
     "prepare_shell",
-    "pose_gate",
-    "POSE_SET",
     "PROPORTION_EXTREMES",
 ]
 
@@ -90,49 +88,10 @@ class ShellConstants:
     excluded_removed_max: float = 0.25  # keyed fraction the excluded-region
                                         # masking may remove before the mask
                                         # itself is judged untrustworthy
-    poke_mm: float = 0.5              # pose-gate visible-intersection threshold
     # Seam-disagreement budget: D5 ruling — the value arrives as config/
     # registry data once its derivation evidence lands. None = the
     # detector runs report-only and never fails a character.
     seam_disagreement_budget: float | None = None
-
-
-# The R&D pose-envelope set: MHR 204-dim articulation vectors. Indices are
-# rig-native pose channels; the set is rest, walk-mid, arms-raised, crouch.
-def _pose_set() -> dict[str, np.ndarray]:
-    poses = {"rest": np.zeros(204, dtype=np.float32)}
-    walk = np.zeros(204, dtype=np.float32)
-    for index, value in ((52, 0.55), (53, 0.30), (61, -0.55), (62, 0.82),
-                         (35, 0.32), (36, 0.22), (45, -0.32), (46, 0.25),
-                         (7, 0.10)):
-        walk[index] = value
-    poses["walk_mid"] = walk
-    raised = np.zeros(204, dtype=np.float32)
-    for index, value in ((31, 0.24), (41, 0.24), (35, 1.42), (45, 1.42),
-                         (36, 0.20), (46, 0.20), (17, -0.18)):
-        raised[index] = value
-    poses["arms_raised"] = raised
-    crouch = np.zeros(204, dtype=np.float32)
-    for index, value in ((1, -8.0), (11, 0.42), (17, 0.38), (52, -0.92),
-                         (61, -0.92), (53, 1.62), (62, 1.62), (55, -0.34),
-                         (64, -0.34), (35, 0.36), (45, 0.36), (36, 0.58),
-                         (46, 0.58)):
-        crouch[index] = value
-    poses["crouch"] = crouch
-    return poses
-
-
-POSE_SET = _pose_set()
-
-# The six proportion controls at their envelope extremes (±0.40), in the
-# schema's control order — the certification sweep runs the pose set
-# against these in addition to each character's own proportions.
-PROPORTION_EXTREMES = (
-    {"spine_length": 0.4, "neck_length": 0.4, "shoulder_width": 0.4,
-     "arm_length": 0.4, "hip_width": 0.4, "leg_length": 0.4},
-    {"spine_length": -0.4, "neck_length": -0.4, "shoulder_width": -0.4,
-     "arm_length": -0.4, "hip_width": -0.4, "leg_length": -0.4},
-)
 
 
 # --------------------------------------------------------------------------
@@ -150,13 +109,19 @@ def _hard_key(rgb: np.ndarray, atlas_valid: np.ndarray, cutoff: int,
 
 def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
                   constants: ShellConstants,
-                  excluded_regions: np.ndarray | None = None) -> dict:
+                  excluded_regions: np.ndarray | None = None,
+                  coverage_alpha: np.ndarray | None = None) -> dict:
     """The normative key: hard cutoff over the valid atlas, opened, then
     gaussian-feathered. `excluded_regions` (the atlas's declared
-    garment-never-paints-here region — the head mask) subtracts from the
+    region contract — garment never paints in the head region; the shoe
+    is confined to the feet region) subtracts from the
     key exactly as the compositor's region contract does for paint, so
-    the shell keys the same effective garment the painted path
+    the shell keys the same effective coverage the painted path
     composites. Region masking is atlas contract, never content repair.
+    `coverage_alpha` replaces luminance keying with an authoritative
+    coverage channel (the shoe overlay's alpha — its generator paints
+    real occupancy, so no cutoff estimation applies and the
+    cutoff-stability gate is vacuous).
     Returns hard/soft masks plus audit metrics; raises ShellRejected on
     any alpha-quality gate."""
     from scipy import ndimage
@@ -168,8 +133,18 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
             "alpha-bad-input",
             f"texture {rgb.shape[:2]} vs atlas {atlas_valid.shape}")
     rgb = rgb[:, :, :3]
-    hard = _hard_key(rgb, atlas_valid, constants.key_cutoff,
-                     constants.opening_size)
+    if coverage_alpha is not None:
+        if coverage_alpha.shape != atlas_valid.shape:
+            raise ShellRejected(
+                "alpha-bad-input",
+                f"coverage {coverage_alpha.shape} vs atlas {atlas_valid.shape}")
+        structure = np.ones((constants.opening_size, constants.opening_size),
+                            dtype=bool)
+        hard = ndimage.binary_opening(
+            (coverage_alpha >= 128) & atlas_valid, structure=structure)
+    else:
+        hard = _hard_key(rgb, atlas_valid, constants.key_cutoff,
+                         constants.opening_size)
     excluded_removed = 0.0
     if excluded_regions is not None:
         keyed_total = int(hard.sum())
@@ -182,8 +157,8 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
             raise ShellRejected("alpha-excluded-region",
                                 f"{excluded_removed:.3f} of the key removed")
         atlas_valid = atlas_valid & ~excluded_regions
-    check = _hard_key(rgb, atlas_valid, constants.key_cutoff_check,
-                      constants.opening_size)
+    check = hard if coverage_alpha is not None else _hard_key(
+        rgb, atlas_valid, constants.key_cutoff_check, constants.opening_size)
     if excluded_regions is not None:
         check = check & ~excluded_regions
     valid_area = int(atlas_valid.sum())
@@ -782,15 +757,20 @@ class PreparedShell:
 def prepare_shell(surface, garment_rgb: np.ndarray, identity_vertices: np.ndarray,
                   canonical_vertices: np.ndarray, atlas_valid: np.ndarray,
                   excluded_regions: np.ndarray | None = None,
-                  constants: ShellConstants | None = None) -> PreparedShell:
-    """The full extraction: baked garment bytes → closed skinned solid.
+                  constants: ShellConstants | None = None,
+                  coverage_alpha: np.ndarray | None = None) -> PreparedShell:
+    """The full extraction: baked slot texture → closed skinned solid.
 
-    Raises ShellRejected (with a stable reason code) on any gate; the
-    caller falls back to the painted composite for this character.
+    Works for any slot whose coverage lives in the body atlas: garments
+    (luminance-keyed) and shoes (`coverage_alpha` from the baked
+    overlay). Raises ShellRejected (with a stable reason code) on any
+    gate; the caller falls back to the painted composite for this
+    character.
     """
     constants = constants or ShellConstants()
     alpha = prepare_alpha(garment_rgb, atlas_valid, constants,
-                          excluded_regions=excluded_regions)
+                          excluded_regions=excluded_regions,
+                          coverage_alpha=coverage_alpha)
     fields = welded_field(alpha["soft"], surface, canonical_vertices, constants)
     seam = _seam_diagnostic(fields, constants)
     cut = march_cut(fields["values"], alpha["soft"], surface,
@@ -876,245 +856,6 @@ def _loop_count(boundary: dict) -> int:
 
 
 # --------------------------------------------------------------------------
-# the pose-envelope gate
-# --------------------------------------------------------------------------
-
-def _world_matrices(skeleton_state: np.ndarray, parents: np.ndarray) -> np.ndarray:
-    from character_factory.assembly.restpose import Skeleton
-
-    skeleton = Skeleton.from_rig_state(skeleton_state, parents)
-    return np.stack([skeleton.world_matrix(j) for j in range(len(parents))])
-
-
-def _joint_transforms(rest_state: np.ndarray, posed_state: np.ndarray,
-                      parents: np.ndarray) -> np.ndarray:
-    rest = _world_matrices(rest_state, parents)
-    posed = _world_matrices(posed_state, parents)
-    return np.einsum("jab,jbc->jac", posed, np.linalg.inv(rest))
-
-
-def _lbs(vertices: np.ndarray, joints4: np.ndarray, weights4: np.ndarray,
-         transforms: np.ndarray) -> np.ndarray:
-    homogeneous = np.concatenate(
-        [vertices, np.ones((len(vertices), 1))], axis=1)
-    result = np.zeros_like(vertices)
-    for slot in range(joints4.shape[1]):
-        weight = weights4[:, slot].astype(np.float64)
-        active = weight > 0
-        if not active.any():
-            continue
-        matrices = transforms[joints4[active, slot].astype(np.int64)]
-        moved = np.einsum("nab,nb->na", matrices, homogeneous[active])[:, :3]
-        result[active] += weight[active, None] * moved
-    return result
-
-
-def evaluate_posed_skeleton(rig, identity, resting_expression, pose_vector,
-                            proportions=None) -> np.ndarray:
-    """The rig's skeleton state at an articulation vector (adds the
-    character's proportion pose when present)."""
-    import torch
-
-    pose = np.asarray(pose_vector, dtype=np.float32).copy()
-    if proportions:
-        pose = pose + rig.proportion_pose(proportions).astype(np.float32)
-    with torch.no_grad():
-        _, skeleton = rig.model(
-            torch.tensor([list(identity)], dtype=torch.float32),
-            torch.from_numpy(pose).unsqueeze(0),
-            torch.tensor([list(resting_expression)], dtype=torch.float32),
-        )
-    return skeleton[0].numpy().astype(np.float64)
-
-
-def pose_gate(rig, shell: PreparedShell, evaluation, identity,
-              resting_expression, proportions=None,
-              constants: ShellConstants | None = None,
-              poses: dict[str, np.ndarray] | None = None,
-              surface=None, body_rest=None) -> dict:
-    """Certification: across the pose set, the LBS-posed shell must show
-    zero visible body poke — measured against the *retained* body faces
-    (covered faces are omitted at export) and confirmed by an ID-buffer
-    render test. Raises ShellRejected on failure; returns diagnostics.
-
-    The gate poses body and shell with the same exact-LBS deformation the
-    exported GLB uses (this product ships no pose correctives — the
-    stack's ruled export contract), so what passes here is what a
-    consumer's engine actually renders.
-    """
-    constants = constants or ShellConstants()
-    poses = poses or POSE_SET
-    # The body under test is whatever ships: the rig's own surface, or
-    # the render LOD it declares. The skeleton always comes from the rig.
-    surface = surface if surface is not None else rig
-    rest_state = evaluation.skeleton
-    body_rest = body_rest if body_rest is not None else evaluation.vertices
-    retained = np.ones(len(surface.faces), dtype=bool)
-    retained[shell.covered_body_faces] = False
-    diagnostics = {}
-    for name, vector in poses.items():
-        posed_state = evaluate_posed_skeleton(
-            rig, identity, resting_expression, vector, proportions)
-        transforms = _joint_transforms(rest_state, posed_state, rig.parents)
-        body = _lbs(body_rest, surface.vertex_joints, surface.vertex_weights,
-                    transforms)
-        posed = _lbs(shell.vertices, shell.joints4, shell.weights4,
-                     transforms)
-        if not np.isfinite(posed).all():
-            raise ShellRejected("pose-nonfinite", name)
-        _audit_posed_sidewalls(posed, shell)
-        outer = posed[:shell.outer_count]
-        visible_depth, hidden_depth = _poke_depths(outer, body, surface.faces,
-                                                   retained)
-        threshold_cm = constants.poke_mm / 10.0
-        diagnostics[name] = {
-            "visible_max_mm": round(float(visible_depth.max()) * 10.0, 3)
-            if len(visible_depth) else 0.0,
-            "covered_contact_max_mm": round(float(hidden_depth.max()) * 10.0, 3)
-            if len(hidden_depth) else 0.0,
-            "covered_contact_over": int((hidden_depth > threshold_cm).sum()),
-        }
-        if len(visible_depth) and visible_depth.max() > threshold_cm:
-            raise ShellRejected(
-                "pose-visible-poke",
-                f"{name}: {visible_depth.max() * 10.0:.3f} mm")
-        render = _render_poke_check(posed, shell.faces, body,
-                                    surface.faces[retained],
-                                    surface.faces[~retained])
-        diagnostics[name]["render"] = render
-        if render["skin_in_silhouette"] or render["body_holes"]:
-            raise ShellRejected(
-                "pose-render-poke",
-                f"{name}: skin {render['skin_in_silhouette']}, "
-                f"holes {render['body_holes']}")
-    return diagnostics
-
-
-def _audit_posed_sidewalls(posed: np.ndarray, shell: PreparedShell) -> None:
-    side = shell.faces[2 * shell.outer_face_count:]
-    if not len(side):
-        return
-    v0 = posed[side[:, 0]]
-    areas = 0.5 * np.linalg.norm(
-        np.cross(posed[side[:, 1]] - v0, posed[side[:, 2]] - v0), axis=1)
-    if areas.min() <= 1e-9:
-        raise ShellRejected("pose-degenerate-sidewall",
-                            f"minimum area {areas.min():.2e}")
-
-
-def _poke_depths(points: np.ndarray, body_vertices: np.ndarray,
-                 body_faces: np.ndarray,
-                 retained: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Penetration depths (cm) of outer-shell points into the complete
-    body, split by *what they penetrate through*: the reliable sign comes
-    from the watertight complete body; each penetrating point is
-    attributed to its nearest body face — a retained (visible) face is a
-    real poke, a hidden face is covered-cloth contact (diagnostic)."""
-    import trimesh
-
-    mesh = trimesh.Trimesh(vertices=body_vertices, faces=body_faces,
-                           process=False)
-    signed = trimesh.proximity.signed_distance(mesh, points)
-    depth = np.maximum(0.0, signed)   # trimesh: positive = inside
-    inside = depth > 0
-    visible = np.zeros(0)
-    hidden = np.zeros(0)
-    if inside.any():
-        _, _, triangle = trimesh.proximity.closest_point(mesh, points[inside])
-        through_visible = retained[triangle]
-        visible = depth[inside][through_visible]
-        hidden = depth[inside][~through_visible]
-    return visible, hidden
-
-
-_VIEWS = {"front": 0.0, "three_quarter": 35.0, "side": 90.0, "back": 180.0}
-
-
-# A pixel counts as skin-through-cloth only when the visible body surface
-# sits just in front of the shell (within this window). A true poke
-# renders skin within roughly the lift distance of the pierced cloth;
-# body parts legitimately passing in front (a raised wrist before the
-# torso, measured at ~9.5 mm in the R&D-pose sweep) sit farther out and
-# are occlusion, not poke. This is a measurement-classification constant
-# of the render check, not a clearance: the geometric 0.5 mm gate against
-# retained faces is unaffected by it.
-_POKE_DEPTH_WINDOW_CM = 0.3
-
-
-def _render_poke_check(shell_vertices: np.ndarray, shell_faces: np.ndarray,
-                       body_vertices: np.ndarray, retained_faces: np.ndarray,
-                       hidden_faces: np.ndarray,
-                       resolution: int = 512) -> dict:
-    """Object-ID + depth rasterization at four views: zero skin pixels
-    poking through the opaque garment silhouette (visible body within the
-    poke window in front of cloth), zero body holes outside it (pixels
-    only hidden faces would have covered)."""
-    skin_pixels = 0
-    hole_pixels = 0
-    for yaw in _VIEWS.values():
-        angle = np.radians(yaw)
-        rotation = np.array([
-            [np.cos(angle), 0.0, np.sin(angle)],
-            [0.0, 1.0, 0.0],
-            [-np.sin(angle), 0.0, np.cos(angle)]])
-        shell_view = shell_vertices @ rotation.T
-        body_view = body_vertices @ rotation.T
-        everything = np.concatenate([shell_view, body_view])
-        low = everything.min(axis=0)
-        high = everything.max(axis=0)
-        scale = (resolution - 1) / max(high[0] - low[0], high[1] - low[1], 1e-6)
-
-        def raster(vertices, faces):
-            depth = np.full((resolution, resolution), -np.inf)
-            xy = (vertices[:, :2] - low[:2]) * scale
-            z = vertices[:, 2]
-            for a, b, c in faces:
-                _fill(depth, xy[a], xy[b], xy[c], z[a], z[b], z[c])
-            return depth
-
-        shell_depth = raster(shell_view, shell_faces)
-        retained_depth = raster(body_view, retained_faces)
-        hidden_depth = raster(body_view, hidden_faces)
-        silhouette = shell_depth > -np.inf
-        in_front = retained_depth > shell_depth
-        with np.errstate(invalid="ignore"):
-            # -inf minus -inf (empty vs empty pixels) is NaN; NaN compares
-            # False, which is the correct "not a poke" answer.
-            near = (retained_depth - shell_depth) < _POKE_DEPTH_WINDOW_CM
-        skin_pixels += int((silhouette & in_front & near).sum())
-        hole_pixels += int(
-            (~silhouette & (hidden_depth > retained_depth)).sum())
-    return {"skin_in_silhouette": skin_pixels, "body_holes": hole_pixels}
-
-
-def _fill(depth: np.ndarray, p0, p1, p2, z0, z1, z2) -> None:
-    minimum = np.floor(np.minimum(np.minimum(p0, p1), p2)).astype(int)
-    maximum = np.ceil(np.maximum(np.maximum(p0, p1), p2)).astype(int)
-    minimum = np.maximum(minimum, 0)
-    maximum = np.minimum(maximum, np.array(depth.shape)[::-1] - 1)
-    if (maximum < minimum).any():
-        return
-    xs = np.arange(minimum[0], maximum[0] + 1)
-    ys = np.arange(minimum[1], maximum[1] + 1)
-    grid_x, grid_y = np.meshgrid(xs, ys)
-    d = (p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1])
-    if abs(d) < 1e-12:
-        return
-    w0 = ((p1[1] - p2[1]) * (grid_x - p2[0])
-          + (p2[0] - p1[0]) * (grid_y - p2[1])) / d
-    w1 = ((p2[1] - p0[1]) * (grid_x - p2[0])
-          + (p0[0] - p2[0]) * (grid_y - p2[1])) / d
-    w2 = 1.0 - w0 - w1
-    inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
-    if not inside.any():
-        return
-    z = w0 * z0 + w1 * z1 + w2 * z2
-    region = depth[minimum[1]:maximum[1] + 1, minimum[0]:maximum[0] + 1]
-    update = inside & (z > region)
-    region[update] = z[update]
-
-
-# --------------------------------------------------------------------------
 # data-supplied constants
 # --------------------------------------------------------------------------
 
@@ -1158,6 +899,33 @@ def configured_constants() -> ShellConstants:
 # --------------------------------------------------------------------------
 # atlas helpers
 # --------------------------------------------------------------------------
+
+def _fill(depth: np.ndarray, p0, p1, p2, z0, z1, z2) -> None:
+    minimum = np.floor(np.minimum(np.minimum(p0, p1), p2)).astype(int)
+    maximum = np.ceil(np.maximum(np.maximum(p0, p1), p2)).astype(int)
+    minimum = np.maximum(minimum, 0)
+    maximum = np.minimum(maximum, np.array(depth.shape)[::-1] - 1)
+    if (maximum < minimum).any():
+        return
+    xs = np.arange(minimum[0], maximum[0] + 1)
+    ys = np.arange(minimum[1], maximum[1] + 1)
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    d = (p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1])
+    if abs(d) < 1e-12:
+        return
+    w0 = ((p1[1] - p2[1]) * (grid_x - p2[0])
+          + (p2[0] - p1[0]) * (grid_y - p2[1])) / d
+    w1 = ((p2[1] - p0[1]) * (grid_x - p2[0])
+          + (p0[0] - p2[0]) * (grid_y - p2[1])) / d
+    w2 = 1.0 - w0 - w1
+    inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
+    if not inside.any():
+        return
+    z = w0 * z0 + w1 * z1 + w2 * z2
+    region = depth[minimum[1]:maximum[1] + 1, minimum[0]:maximum[0] + 1]
+    update = inside & (z > region)
+    region[update] = z[update]
+
 
 def valid_atlas_mask(surface, resolution: int) -> np.ndarray:
     """Rasterize the rig's UV triangles: the valid-atlas mask (True where

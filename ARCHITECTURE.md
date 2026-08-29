@@ -23,8 +23,9 @@ Character Factory turns a text description into a rigged, textured, realtime
         │                        the raw description also passes through untouched)
         ▼
   identity generation           (raw text → 45 body/face shape coefficients + 72 resting-
-        │                        expression values on the MHR parametric body — a
-        │                        deterministic function of the text, no seed)
+        │                        expression values on the MHR parametric body — SAMPLED
+        │                        from a generative model; the create seed picks one
+        │                        identity from the description's distribution)
         ▼
   texture generation            (skin, eye, garment, optional shoe: UV-space
         │                        images from a FLUX.2 Klein 4B base model with
@@ -46,11 +47,15 @@ provenance. The GLB is a build artifact; the character file is the source.
 
 Two properties are load-bearing:
 
-- **Identity is deterministic.** The identity model consumes the raw user
-  description — never an interpreter rewrite of it — so the same description
-  always produces the same body. Variation between characters comes from the
-  description (and from texture seeds), not from identity sampling. This
-  makes character files honest recipes rather than lottery tickets.
+- **Identity is generative, and the document records the draw.** The
+  identity model consumes the raw user description — never an interpreter
+  rewrite of it — and SAMPLES one identity from that description's
+  distribution: a single joint model (a semantic-center regressor plus a
+  conditional rectified flow over one body+proportions+face state), seeded
+  by the create seed, with noise drawn on the CPU so a (description, seed,
+  component version) triple reproduces the same body on every device. The
+  drawn values land in the character file, so the file remains an honest,
+  fully-determined recipe — stochasticity exists at create time only.
 - **Everything downstream of generation is symbolic.** Textures are recipes
   (prompt + seed + component version), hair is a semantic vocabulary, the
   body is 117 floats. Regeneration and hand-editing are both first-class.
@@ -92,9 +97,11 @@ the boundaries more than the features:
   space and composited onto the body surface — visually "worn," structurally
   painted-on. Loose clothing, skirts, and anything that departs from the
   body silhouette are out of v0 scope.
-- **No identity randomness.** There is deliberately no "give me a different
-  face for the same prompt" sampler in v0. If you want a different
-  character, describe a different character.
+- **No identity resampling of an existing character.** Identity is sampled
+  at create time (a different seed gives a different take on the same
+  description), but there is no operation that redraws the body of a
+  character file that already exists — the drawn parameters in the file are
+  the character. Want a variant? Create again with another seed.
 - **No animation authoring.** The output is a rigged, skinned glTF; playing
   or retargeting animation on it is the consumer's job.
 

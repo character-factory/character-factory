@@ -459,13 +459,14 @@ descriptive, not instructions to a reader.
 | `created` | string | no | RFC 3339 timestamp. |
 | `notes` | string | no | Free text. |
 
-Identity generation is deterministic: the identity component maps prompt
-text to body parameters as a pure function, with no seed. `provenance.prompt`
-plus the pinned `identity` component version therefore reproduces
-`body.identity` exactly — and conversely, editing `body.identity` by hand
-makes `provenance.prompt` a historical note rather than a regeneration
-recipe. Implementations MUST treat the parameter arrays in `body`, not the
-prompt, as authoritative.
+Identity generation is stochastic: the identity component samples body
+parameters from the prompt's distribution, seeded by the creating
+pipeline. The drawn values are written into `body.identity` and
+`body.resting_expression`, so the character file — not the prompt — is the
+reproducible artifact; `provenance.prompt` is a descriptive record of what
+the character was sampled *from*, not a regeneration recipe on its own.
+Implementations MUST treat the parameter arrays in `body`, not the prompt,
+as authoritative.
 
 ## 8. `assets` — pinning generated images
 

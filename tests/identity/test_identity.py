@@ -223,3 +223,130 @@ def test_proportions_bound_clamps_extreme_outputs(tmp_path):
     generator = IdentityGenerator(component, fake_embedder)
     result = generator.generate("anyone")
     assert all(v == 0.40 for v in result.proportions.values())
+
+
+# --------------------------------------------------------------------------
+# the joint-rectified-flow generation (generative identity)
+# --------------------------------------------------------------------------
+
+FLOW_BODY_INDICES = [0, 1, 2, 3, 4]
+FLOW_FACE_INDICES = [20, 21, 22, 23]
+
+
+def write_flow_component(directory, *, seed=0):
+    """A synthetic component of the generative kind: joint flow + center,
+    small enough to sample in milliseconds."""
+    from character_factory.identity.model import (
+        CenterNetwork,
+        IdentityFlowNetwork,
+    )
+
+    config = {
+        "format": COMPONENT_FORMAT,
+        "component_version": "0.0.0+test",
+        "embedding": {"pooling": "masked_mean", "normalize": "l2",
+                      "max_tokens": 128, "dimensions": EMBED_DIM},
+        "architecture": {
+            "kind": "joint-rectified-flow",
+            "hidden": 32,
+            "blocks": 2,
+            "output_order": ["body", "proportions", "face"],
+            "center": {"hidden": 16, "blocks": 1},
+            "sampling": {"steps": 4, "guidance": 1.25, "temperature": 0.75},
+        },
+        "heads": {
+            "body": {"identity_indices": FLOW_BODY_INDICES},
+            "face": {"identity_indices": FLOW_FACE_INDICES},
+            "proportions": {"parameters": list(PROPORTION_NAMES), "bound": 0.40},
+        },
+        "identity_size": 45,
+        "expression_size": 72,
+        "base_identity": None,
+    }
+    output_dim = len(FLOW_BODY_INDICES) + 6 + len(FLOW_FACE_INDICES)
+    torch.manual_seed(seed)
+    flow = IdentityFlowNetwork(EMBED_DIM, output_dim, hidden=32, blocks=2)
+    center = CenterNetwork(EMBED_DIM, hidden=16, blocks=1,
+                           body_size=len(FLOW_BODY_INDICES),
+                           proportion_size=6,
+                           face_size=len(FLOW_FACE_INDICES))
+    tensors = {}
+    tensors.update({f"flow.{k}": v for k, v in flow.state_dict().items()})
+    tensors.update({f"center.{k}": v for k, v in center.state_dict().items()})
+    generator = torch.Generator().manual_seed(seed + 1)
+    for head, size in (("body", len(FLOW_BODY_INDICES)), ("proportions", 6),
+                       ("face", len(FLOW_FACE_INDICES))):
+        tensors[f"stats.{head}.mean"] = torch.randn(size, generator=generator) * 0.1
+        tensors[f"stats.{head}.std"] = torch.rand(size, generator=generator) * 0.1 + 0.05
+    (directory / "config.json").write_text(json.dumps(config))
+    safetensors_torch.save_file(tensors, str(directory / "weights.safetensors"))
+    return directory
+
+
+@pytest.fixture
+def flow_generator(tmp_path):
+    component = IdentityComponent.load(write_flow_component(tmp_path))
+    return IdentityGenerator(component, fake_embedder)
+
+
+def test_flow_shapes_and_owned_positions(flow_generator):
+    result = flow_generator.generate("a lean marathon runner", seed=3)
+    assert len(result.identity) == 45
+    assert result.resting_expression == [0.0] * 72
+    owned = set(FLOW_BODY_INDICES) | set(FLOW_FACE_INDICES)
+    assert all(result.identity[i] == 0.0 for i in range(45) if i not in owned)
+    assert set(result.proportions) == set(PROPORTION_NAMES)
+    assert all(abs(v) <= 0.40 for v in result.proportions.values())
+
+
+def test_flow_same_seed_reproduces(flow_generator):
+    a = flow_generator.generate("a lean marathon runner", seed=41)
+    b = flow_generator.generate("a lean marathon runner", seed=41)
+    assert a.identity == b.identity
+    assert a.proportions == b.proportions
+
+
+def test_flow_different_seeds_differ(flow_generator):
+    a = flow_generator.generate("a lean marathon runner", seed=41)
+    b = flow_generator.generate("a lean marathon runner", seed=42)
+    assert a.identity != b.identity
+
+
+def test_flow_seed_none_is_center_only(flow_generator):
+    # No generator → the model's semantic center: deterministic, and
+    # distinct from any sampled draw.
+    a = flow_generator.generate("a lean marathon runner", seed=None)
+    b = flow_generator.generate("a lean marathon runner", seed=None)
+    sampled = flow_generator.generate("a lean marathon runner", seed=0)
+    assert a.identity == b.identity
+    assert a.identity != sampled.identity
+
+
+def test_flow_default_seed_is_zero(flow_generator):
+    explicit = flow_generator.generate("a lean marathon runner", seed=0)
+    default = flow_generator.generate("a lean marathon runner")
+    assert explicit.identity == default.identity
+
+
+def test_flow_wrong_output_order_rejected(tmp_path):
+    directory = write_flow_component(tmp_path)
+    config = json.loads((directory / "config.json").read_text())
+    config["architecture"]["output_order"] = ["face", "proportions", "body"]
+    (directory / "config.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        IdentityComponent.load(directory)
+
+
+def test_flow_unknown_kind_rejected(tmp_path):
+    directory = write_flow_component(tmp_path)
+    config = json.loads((directory / "config.json").read_text())
+    config["architecture"]["kind"] = "something-else"
+    (directory / "config.json").write_text(json.dumps(config))
+    with pytest.raises(ValueError):
+        IdentityComponent.load(directory)
+
+
+def test_legacy_component_ignores_seed(generator):
+    a = generator.generate("a lean marathon runner", seed=1)
+    b = generator.generate("a lean marathon runner", seed=99)
+    assert a.identity == b.identity

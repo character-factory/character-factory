@@ -5,7 +5,8 @@ product promise: a character file plus its baked assets in, a rigged .glb
 out (SPEC.md §9). It runs everywhere — CUDA is never required here.
 
 `create` turns a description into a character file (interpretation +
-deterministic identity); `make` chains create → bake → assemble.
+sampled identity — generative, seeded); `make` chains create → bake →
+assemble.
 Interpretation runs the selected backend (`interpreter` in cache config);
 rules is an explicit degraded backend, and a failed model request changes
 backend only when the caller authorizes fallback. Provenance records which
@@ -44,8 +45,11 @@ def create(
     _with_report: bool = False,
 ) -> Character | CreationResult:
     """Description → character file: interpretation fills the symbolic
-    recipes; the identity component maps the raw prompt to body parameters
-    (deterministic, no seed — the seed governs texture recipes only)."""
+    recipes; the identity component SAMPLES body parameters from the raw
+    prompt (a generative model — the seed picks one identity from the
+    prompt's distribution, and the same seed also numbers the texture
+    recipes). The document records the drawn values, so everything from
+    the file onward stays deterministic."""
     from character_factory.identity import IdentityComponent, IdentityGenerator
     from character_factory.interpreter import INTERPRETER_VERSION, interpret
     from character_factory.preflight import require_generation_stack
@@ -72,7 +76,7 @@ def create(
         registry.ensure(base_ref),
         device=device,
     )
-    generated = generator.generate(prompt)
+    generated = generator.generate(prompt, seed=seed)
     identity = generated.identity
     resting_expression = generated.resting_expression
     del generator  # release the text encoder before any diffusion loads (§2.2)

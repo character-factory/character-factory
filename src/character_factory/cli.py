@@ -93,11 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     interpret.add_argument(
         "--backend",
         help="select a configured backend by alias (see the server's "
-             "/v0/interpreters); 'rules' forces the fallback",
-    )
-    interpret.add_argument(
-        "--rules", action="store_true",
-        help="force the deterministic rules fallback (no model)",
+             "/v0/interpreters)",
     )
     interpret.set_defaults(func=_cmd_interpret)
 
@@ -131,17 +127,11 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
     import json
 
     from character_factory.interpreter import interpret
-    from character_factory.interpreter.config import (
-        InterpreterConfig,
-        load_interpreter_config,
-    )
+    from character_factory.interpreter.config import load_interpreter_config
 
-    if args.rules:
-        config = InterpreterConfig()          # nothing configured → rules mode
-    else:
-        config = load_interpreter_config(alias=args.backend)
-        if args.model:
-            config = dataclasses.replace(config, model=args.model, endpoint=None)
+    config = load_interpreter_config(alias=args.backend)
+    if args.model:
+        config = dataclasses.replace(config, model=args.model, endpoint=None)
     interpretation, metrics = interpret(
         args.text, device=args.device, config=config
     )

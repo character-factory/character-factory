@@ -40,16 +40,14 @@ def build_mcp(service: CharacterService):
 
     @mcp.tool()
     def create_character(
-        prompt: str, interpreter: str | None = None,
-        allow_fallback: bool = False, turbo: bool = False,
+        prompt: str, interpreter: str | None = None, turbo: bool = False,
         idempotency_key: str | None = None,
     ) -> dict:
         """Submit a character-creation job. Supply idempotency_key only when
         retrying an ambiguous submission; omit it to create new work. Poll
         get_job until it reaches succeeded, failed, or cancelled."""
         return service.create_from_prompt(
-            prompt, interpreter=interpreter,
-            allow_fallback=allow_fallback, turbo=turbo,
+            prompt, interpreter=interpreter, turbo=turbo,
             idempotency_key=idempotency_key,
         )
 

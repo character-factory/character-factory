@@ -214,11 +214,8 @@ identity-class output: the identity component writes them from the raw
 prompt on *every* create, regardless of which interpreter backend ran.
 An interpreter backend may additionally emit explicit proportion fields
 (only on clear signal in the description); when it does, those values
-override the identity component's per key. The rules fallback never
-emits proportion fields — it abstains rather than guesses, so a
-rules-mode create still carries the identity component's proportions,
-never keyword-derived ones. In short: **head writes → interpreter
-overrides per key → rules abstains.**
+override the identity component's per key. In short: **head writes →
+interpreter overrides per key.**
 
 - **Default backend: a small local model, shipped as a registry component**
   like every other model — a versioned, hash-pinned artifact containing
@@ -272,11 +269,10 @@ overrides per key → rules abstains.**
   Empty or length-truncated output receives one bounded retry against the
   same backend; malformed JSON and schema-invalid documents fail immediately.
   It must never complicate the default path.
-- **Degraded mode: an explicit rules backend** (slot-prompt splitting plus a
-  conservative default hair block), used when rules is configured or
-  requested. A failed model request never changes backend silently:
-  fallback is off by default and requires `allow_fallback: true`; records
-  expose the requested backend, actual backend, reason, and warnings.
+- **No degraded mode.** There is deliberately no non-model interpretation
+  backend: an unconfigured installation or a failed model request is a
+  structured, named error, never a silent quality downgrade. Records
+  expose the requested and actual backend aliases and warnings.
 - **Endpoint diagnostics are private.** If an operator configures
   `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`, the server writes a mode-0600
   JSONL stream containing raw prompts, raw responses, HTTP status, response
@@ -894,8 +890,8 @@ character-factory/
 │   ├── __init__.py            # Character, create, bake, assemble, make
 │   ├── schema/                # format model, validation, canonical form, JSON Schema
 │   ├── registry/              # component index, fetch, cache, integrity
-│   ├── interpreter/           # Interpreter protocol, local-model + HTTP backends,
-│   │                          # rules fallback (local model: lazy import)
+│   ├── interpreter/           # Interpreter protocol, local-model + HTTP
+│   │                          # backends (local model: lazy import)
 │   ├── identity/              # raw text → body parameters       (GPU, lazy import)
 │   ├── textures/              # diffusion runner, adapter loading (GPU, lazy import)
 │   ├── hair/                  # HairProvider protocol + the vendored procedural engine

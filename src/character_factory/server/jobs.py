@@ -162,7 +162,6 @@ class JobStore:
                 "result": None,
                 "requested_interpreter": request.get("interpreter", "default"),
                 "actual_interpreter": None,
-                "fallback_reason": None,
                 "warnings": [],
                 "cancel_requested": False,
                 "created_at": now,
@@ -189,7 +188,7 @@ class JobStore:
             for key in (
                 "id", "operation", "status", "stage", "progress", "detail",
                 "error", "result", "requested_interpreter",
-                "actual_interpreter", "fallback_reason", "warnings",
+                "actual_interpreter", "warnings",
                 "created_at", "updated_at", "stage_started_at",
                 "last_heartbeat", "finished_at",
             )

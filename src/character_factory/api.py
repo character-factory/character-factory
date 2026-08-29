@@ -7,10 +7,10 @@ out (SPEC.md §9). It runs everywhere — CUDA is never required here.
 `create` turns a description into a character file (interpretation +
 sampled identity — generative, seeded); `make` chains create → bake →
 assemble.
-Interpretation runs the selected backend (`interpreter` in cache config);
-rules is an explicit degraded backend, and a failed model request changes
-backend only when the caller authorizes fallback. Provenance records which
-backend produced the document.
+Interpretation runs the selected model backend (`interpreter` in cache
+config); an unconfigured or failing backend is a hard error — there is no
+non-model interpretation. Provenance records which backend kind produced
+the document.
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ def create(
     device: str = "cuda",
     name: str | None = None,
     interpreter: str | None = None,
-    allow_fallback: bool = False,
     _with_report: bool = False,
 ) -> Character | CreationResult:
     """Description → character file: interpretation fills the symbolic
@@ -65,7 +64,6 @@ def create(
     # create UI's model selector); None means the configured default.
     interpretation, interpretation_metrics = interpret(
         prompt, registry=registry, device=device, backend=interpreter,
-        allow_fallback=allow_fallback,
     )
 
     resolved = registry.resolve_slots(sorted(interpretation.slot_prompts))
@@ -84,7 +82,7 @@ def create(
     # Skeletal proportions (§4.3): the identity component owns them (it
     # consumes the raw prompt, like everything identity-class); a writer
     # backend that explicitly emitted proportion fields overrides per key.
-    # The rules fallback never emits any. Only deviations are recorded:
+    # Only deviations are recorded:
     # zero-valued keys are dropped and an all-template result omits the
     # block entirely.
     proportions = dict(generated.proportions)
@@ -110,10 +108,7 @@ def create(
 
     # Provenance records the backend kind, never the model identity — the
     # model is configuration (a local path may even be private).
-    if interpretation.backend == "rules-fallback":
-        interpreter_version = "0.0.0+rules-fallback"
-    else:
-        interpreter_version = f"{INTERPRETER_VERSION}+{interpretation.backend}"
+    interpreter_version = f"{INTERPRETER_VERSION}+{interpretation.backend}"
     components = {
         "interpreter": {"version": interpreter_version},
         "make-figure": {"version": str(figure_entry.version)},
@@ -163,7 +158,6 @@ def create(
                 "actual_interpreter": interpretation_metrics[
                     "actual_interpreter"
                 ],
-                "fallback_reason": interpretation_metrics["fallback_reason"],
                 "warnings": [
                     {"code": "interpretation_note", "message": note}
                     for note in interpretation.notes

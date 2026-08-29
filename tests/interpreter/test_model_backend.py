@@ -123,7 +123,7 @@ def test_repair_rescales_custom_rgb_from_255_to_unit_range():
 
 def test_unrepairable_hair_is_an_interpreter_error():
     # An unconstrained backend (the endpoint) can omit whole groups; that
-    # must surface as InterpreterError so interpret() falls back to rules.
+    # must surface as InterpreterError — interpretation never degrades.
     document = good_document()
     document["hair"] = {"schema_version": 1, "seed": 0, "family": "loose_long"}
     with pytest.raises(InterpreterError, match="hair block invalid"):
@@ -147,32 +147,9 @@ def test_interpret_model_failure_fails_closed_by_default(monkeypatch):
     assert calls["ran"]
 
 
-def test_interpret_fallback_requires_explicit_authorization(monkeypatch):
-    def broken_interpret(self, prompt, guidance=None):
-        raise InterpreterError("synthetic failure")
-
-    monkeypatch.setattr(ModelInterpreter, "interpret", broken_interpret)
-    interpretation, metrics = interpret(
-        "a tall dockworker wearing a wool coat",
-        config=InterpreterConfig(model="test"),
-        device="cpu",
-        allow_fallback=True,
-    )
-    assert interpretation.backend == "rules-fallback"
-    assert any("rules fallback" in note for note in interpretation.notes)
-    assert metrics["fallback_reason"] == "synthetic failure"
-    assert metrics["requested_interpreter"] == "default"
-    assert metrics["actual_interpreter"] == "rules"
-
-
-def test_interpret_without_configuration_uses_rules_mode():
-    interpretation, metrics = interpret(
-        "a lean runner", config=InterpreterConfig(), device="cpu"
-    )
-    assert interpretation.backend == "rules-fallback"
-    assert metrics["actual_interpreter"] == "rules"
-    assert metrics["fallback_reason"] is None
-    assert "wall_seconds" in metrics
+def test_interpret_without_configuration_is_a_named_error():
+    with pytest.raises(InterpreterError, match="no interpreter model"):
+        interpret("a lean runner", config=InterpreterConfig(), device="cpu")
 
 
 def test_instruction_carries_slot_guidance_and_slot_hygiene():
@@ -190,7 +167,8 @@ def test_config_precedence_env_over_file(monkeypatch, tmp_path):
     from character_factory.interpreter import config as configuration
 
     (tmp_path / "config.json").write_text(
-        json.dumps({"interpreter": {"model": "from-file", "max_new_tokens": 99}})
+        json.dumps({"interpreter": {"default": "local-a", "backends": {
+            "local-a": {"model": "from-file", "max_new_tokens": 99}}}})
     )
     monkeypatch.setattr(
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
@@ -374,15 +352,12 @@ def test_backend_aliases_resolve_and_list(monkeypatch, tmp_path):
     cloud = configuration.load_interpreter_config(alias="cloud")
     assert cloud.endpoint == "http://host/v1"
 
-    rules = configuration.load_interpreter_config(alias="rules")
-    assert not rules.configured
-
     with pytest.raises(ValueError, match="unknown interpreter backend"):
         configuration.load_interpreter_config(alias="nope")
 
     listed = configuration.available_backends()
-    assert [row["alias"] for row in listed] == ["cloud", "local-a", "rules"]
-    assert {row["kind"] for row in listed} == {"endpoint", "local-model", "rules"}
+    assert [row["alias"] for row in listed] == ["cloud", "local-a"]
+    assert {row["kind"] for row in listed} == {"endpoint", "local-model"}
 
 
 def test_configured_instruction_replaces_the_header():
@@ -421,13 +396,6 @@ def test_out_of_range_proportion_is_clamped_with_a_note():
     result = backend_with(json.dumps(document)).interpret("x")
     assert result.proportions == {"leg_length": 0.40}
     assert any("clamped" in note for note in result.notes)
-
-
-def test_rules_fallback_never_emits_proportions():
-    from character_factory.interpreter import rules_interpret
-
-    result = rules_interpret("a towering broad-shouldered long-legged smith")
-    assert result.proportions is None
 
 
 def test_interpretation_schema_carries_bounded_integer_proportions():

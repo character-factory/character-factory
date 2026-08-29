@@ -7,6 +7,7 @@
 # --- Agent context files: PERMANENTLY ignored, never remove these rules ---
 CLAUDE.md
 AGENTS.md
+DECISIONS-NOT-TAKEN.md
 
 # --- Python ---
 __pycache__/

@@ -8,9 +8,8 @@ identities. The seed is part of the create contract; noise is drawn on
 the CPU so a (prompt, seed, component version) triple reproduces the same
 identity on every device. The character document records the drawn
 values, so the file → GLB half of the product stays fully deterministic —
-stochasticity lives at create time only. Earlier component generations
-were deterministic regressors; they still load (``architecture.kind``
-selects), and they simply ignore the seed.
+stochasticity lives at create time only. ``architecture.kind`` names the
+model generation; ``joint-rectified-flow`` is the only one.
 
 The `identity` registry component is a directory of two files:
 
@@ -78,7 +77,6 @@ class IdentityComponent:
         from character_factory.identity.model import (
             CenterNetwork,
             IdentityFlowNetwork,
-            IdentityNetwork,
             JointGenerativeIdentity,
         )
 
@@ -101,12 +99,12 @@ class IdentityComponent:
             else:
                 state[key] = tensor
 
-        kind = arch.get("kind", "dual-expert-residual")
+        kind = arch.get("kind")
         if kind == "joint-rectified-flow":
-            # The current generation: one joint GENERATIVE model — the
-            # semantic-center regressor plus the conditional rectified
-            # flow that samples a residual around it. Sampling parameters
-            # are component data; the seed arrives per generate() call.
+            # One joint GENERATIVE model — the semantic-center regressor
+            # plus the conditional rectified flow that samples a residual
+            # around it. Sampling parameters are component data; the seed
+            # arrives per generate() call.
             head_sizes = [
                 ("body", len(heads["body"]["identity_indices"])),
                 ("proportions", len(heads["proportions"]["parameters"])),
@@ -142,23 +140,6 @@ class IdentityComponent:
             center.load_state_dict(
                 {k[len("center."):]: v for k, v in state.items()
                  if k.startswith("center.")})
-        elif kind == "dual-expert-residual":
-            model = IdentityNetwork(
-                input_dim=config["embedding"]["dimensions"],
-                hidden=arch["hidden"],
-                blocks=arch["blocks"],
-                body_size=len(heads["body"]["identity_indices"]),
-                face_size=len(heads["face"]["identity_indices"]),
-                eyelid_size=(
-                    len(heads["eyelid"]["expression_indices"])
-                    if "eyelid" in heads else 0
-                ),
-                proportion_size=(
-                    len(heads["proportions"]["parameters"])
-                    if "proportions" in heads else 0
-                ),
-            )
-            model.load_state_dict(state)
         else:
             raise ValueError(f"unsupported identity architecture {kind!r}")
         model.to(device).eval()
@@ -199,13 +180,12 @@ class IdentityGenerator:
     ) -> "IdentityResult":
         """Draw one identity for an embedding.
 
-        With the current generative component the result is a SAMPLE:
-        the same embedding with different seeds yields different, equally
-        valid identities, and the character document records whichever
-        values were drawn (file → GLB stays deterministic). ``seed=None``
-        collapses to the model's semantic center — a diagnostic mode.
-        Noise is drawn on the CPU so a seed reproduces the same identity
-        on every device. Deterministic legacy components ignore the seed.
+        The result is a SAMPLE: the same embedding with different seeds
+        yields different, equally valid identities, and the character
+        document records whichever values were drawn (file → GLB stays
+        deterministic). ``seed=None`` collapses to the model's semantic
+        center — a diagnostic mode. Noise is drawn on the CPU so a seed
+        reproduces the same identity on every device.
         """
         import torch
 
@@ -214,15 +194,11 @@ class IdentityGenerator:
         with torch.no_grad():
             if embedding.dim() == 1:
                 embedding = embedding.unsqueeze(0)
-            model = self.component.model
-            if getattr(model, "stochastic", False):
-                generator = (
-                    None if seed is None
-                    else torch.Generator().manual_seed(int(seed))
-                )
-                raw = model(embedding.float(), generator=generator)
-            else:
-                raw = model(embedding.float())
+            generator = (
+                None if seed is None
+                else torch.Generator().manual_seed(int(seed))
+            )
+            raw = self.component.model(embedding.float(), generator=generator)
             values = {
                 head: (z[0] * stats[head]["std"] + stats[head]["mean"]).cpu()
                 for head, z in raw.items()
@@ -236,11 +212,6 @@ class IdentityGenerator:
         for index, value in zip(heads["face"]["identity_indices"], values["face"]):
             identity[index] = float(value)
         expression = [0.0] * config["expression_size"]
-        if "eyelid" in heads:
-            for index, value in zip(
-                heads["eyelid"]["expression_indices"], values["eyelid"]
-            ):
-                expression[index] = float(value)
         proportions: dict[str, float] = {}
         if "proportions" in heads:
             spec = heads["proportions"]

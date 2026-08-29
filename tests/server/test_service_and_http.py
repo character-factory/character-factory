@@ -281,7 +281,7 @@ def test_http_interpreters_lists_selectable_backends(client, monkeypatch, tmp_pa
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
     rows = client.get("/v0/interpreters").json()
-    assert [r["alias"] for r in rows] == ["cloud", "local-a", "rules"]
+    assert [r["alias"] for r in rows] == ["cloud", "local-a"]
     # No model identity leaves the config: aliases and kinds only.
     assert all(set(r) == {"alias", "kind"} for r in rows)
 
@@ -386,7 +386,6 @@ def test_openapi_schemas_are_real(client):
     assert body["properties"]["character"]["$ref"] \
         == "#/components/schemas/CharacterDocument"
     assert len(body["oneOf"]) == 2
-    assert body["properties"]["allow_fallback"]["default"] is False
     create_headers = {
         parameter["name"]: parameter for parameter in create["parameters"]
     }
@@ -440,7 +439,7 @@ def test_thumbnail_route_missing_is_400_then_serves(client, service, stored, tmp
 
 
 def test_prompt_create_uses_only_explicit_idempotency(client):
-    body = {"prompt": "the same person", "interpreter": "rules"}
+    body = {"prompt": "the same person"}
     first = client.post("/v0/characters", json=body)
     second = client.post("/v0/characters", json=body)
     assert second.json()["id"] != first.json()["id"]

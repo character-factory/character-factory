@@ -228,8 +228,7 @@ class CharacterService:
 
     def create_from_prompt(
         self, prompt: str, interpreter: str | None = None,
-        turbo: bool = False, allow_fallback: bool = False,
-        idempotency_key: str | None = None,
+        turbo: bool = False, idempotency_key: str | None = None,
     ) -> dict:
         """Submit a full create without running model work on the request.
 
@@ -254,7 +253,6 @@ class CharacterService:
                     "prompt": prompt,
                     "interpreter": interpreter or "default",
                     "turbo": bool(turbo),
-                    "allow_fallback": bool(allow_fallback),
                 },
                 idempotency_key=idempotency_key,
             )
@@ -342,7 +340,6 @@ class CharacterService:
                         request["prompt"], registry=self.registry,
                         device=self.device,
                         interpreter=None if requested == "default" else requested,
-                        allow_fallback=request.get("allow_fallback", False),
                         _with_report=True,
                     )
                 if not self.jobs.active(job_id):
@@ -501,7 +498,6 @@ class CharacterService:
             creation={
                 "requested_interpreter": state.get("requested_interpreter"),
                 "actual_interpreter": state.get("actual_interpreter"),
-                "fallback_reason": state.get("fallback_reason"),
                 "warnings": state.get("warnings", []),
             },
             created_at=state.get("created_at"),

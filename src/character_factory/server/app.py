@@ -79,11 +79,10 @@ def create_app(service: CharacterService):
                 "properties": {
                     "requested_interpreter": {"type": ["string", "null"]},
                     "actual_interpreter": {"type": ["string", "null"]},
-                    "fallback_reason": {"type": ["string", "null"]},
                     "warnings": {"type": "array", "items": {"type": "string"}},
                 },
                 "required": ["requested_interpreter", "actual_interpreter",
-                             "fallback_reason", "warnings"],
+                             "warnings"],
             },
             "created_at": {"type": ["string", "null"],
                            "description": "ISO 8601, set once at creation"},
@@ -155,7 +154,7 @@ def create_app(service: CharacterService):
             "properties": {
                 "alias": {"type": "string"},
                 "kind": {"type": "string",
-                         "enum": ["local-model", "endpoint", "rules"]},
+                         "enum": ["local-model", "endpoint"]},
             },
             "required": ["alias", "kind"],
         },
@@ -193,8 +192,7 @@ def create_app(service: CharacterService):
                 "queue_position": {"type": ["integer", "null"]},
                 "requested_interpreter": {"type": ["string", "null"]},
                 "actual_interpreter": {"type": ["string", "null"]},
-                "fallback_reason": {"type": ["string", "null"]},
-                    "warnings": {"type": "array", "items": _ref("Warning")},
+                "warnings": {"type": "array", "items": _ref("Warning")},
                 "result": {"type": ["object", "null"]},
                 "error": {"type": ["object", "null"], "properties": {
                     "code": {"type": "string"},
@@ -341,14 +339,6 @@ def create_app(service: CharacterService):
                                        "A bake-time option; not recorded in "
                                        "the character document.",
                     },
-                    "allow_fallback": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "Authorize a failed model interpreter "
-                                       "to use the rules backend. Without this "
-                                       "explicit opt-in, interpreter failures "
-                                       "fail the request.",
-                    },
                 },
             }}}}},
     )
@@ -362,7 +352,6 @@ def create_app(service: CharacterService):
             job = service.create_from_prompt(
                 payload["prompt"], interpreter=payload.get("interpreter"),
                 turbo=bool(payload.get("turbo", False)),
-                allow_fallback=bool(payload.get("allow_fallback", False)),
                 idempotency_key=request.headers.get("Idempotency-Key"),
             )
             response.headers["Location"] = f"/v0/jobs/{job['id']}"

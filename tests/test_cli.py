@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from character_factory.cli import main
 
 EXAMPLES = sorted(
@@ -53,18 +55,15 @@ def test_assemble_missing_assets_is_a_clean_error(tmp_path, capsys):
     assert "missing asset" in capsys.readouterr().err
 
 
-def test_interpret_rules_prints_decomposition_json_with_metrics(capsys):
-    assert main([
-        "interpret", "--rules",
-        "a 19 year old japanese girl wearing a croptop, denim shorts, "
-        "and flip flops",
-    ]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["backend"] == "rules-fallback"
-    assert "flip" in payload["textures"]["shoe"]["prompt"]
-    assert "flip" not in payload["textures"]["eye"]["prompt"]
-    assert payload["hair"]["family"]
-    assert payload["metrics"]["wall_seconds"] >= 0
+def test_interpret_without_configuration_is_a_hard_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
+    for env in ("CHARACTER_FACTORY_INTERPRETER_MODEL",
+                "CHARACTER_FACTORY_INTERPRETER_ENDPOINT"):
+        monkeypatch.delenv(env, raising=False)
+    from character_factory.interpreter.backend import InterpreterError
+
+    with pytest.raises(InterpreterError, match="no interpreter model"):
+        main(["interpret", "a lean runner"])
 
 
 def test_preflight_reports_named_causes(capsys, monkeypatch):

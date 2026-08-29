@@ -93,10 +93,14 @@ the boundaries more than the features:
   component declares (§4.2) — so capability growth (boots, say) arrives as a
   `make-shoe` version bump widening its vocabulary, never as a sibling
   component or a code change.
-- **No garment geometry at all, in fact.** Garments are generated in UV
-  space and composited onto the body surface — visually "worn," structurally
-  painted-on. Loose clothing, skirts, and anything that departs from the
-  body silhouette are out of v0 scope.
+- **Garment geometry is body-following shells, not simulated clothing.**
+  Garments are generated in UV space, and each character's baked garment
+  becomes its own skinned mesh — lifted off the body, with a cloth
+  material distinct from skin (§7). A character whose garment fails the
+  extraction certification falls back to the painted composite, recorded
+  in the manifest. The shells follow the body silhouette; loose clothing,
+  skirts, and anything that departs from the silhouette are out of v0
+  scope. Footwear remains painted in v0.
 - **No identity resampling of an existing character.** Identity is sampled
   at create time (a different seed gives a different take on the same
   description), but there is no operation that redraws the body of a
@@ -418,10 +422,9 @@ system and deliberately boring:
    layer — the normative order is skin, then garment, then shoe
    (SPEC.md §9). Result: one albedo atlas on one body mesh.
 
-   **Garment shells (feature-gated).** With the `assembly.garment_shells`
-   gate on (config or the rebuild request's `shells` override — assembly
-   behavior like turbo, never recorded in the character document), the
-   baked garment texture can additionally become geometry: its own keyed
+   **Garment shells.** The baked garment texture then becomes geometry
+   (standard assembly behavior, never recorded in the character
+   document): its own keyed
    coverage — never a canonical or per-style cut — is marched through the
    body triangles, reconstructed on the character's identity, lifted and
    faired under clamps, closed into a watertight solid, and exported as a
@@ -432,7 +435,7 @@ system and deliberately boring:
    weight audits, then a pose-envelope gate requiring zero visible
    body-through-shell poke across rest/walk/arms-raised/crouch, measured
    geometrically and by ID/depth renders). A character that fails any
-   gate keeps the painted composite — identically to the gate being off —
+   gate keeps the painted composite,
    and the manifest's `garments` block records the shipped `render_mode`
    per slot (with the rejection reason when an extraction was attempted),
    so consumers never sniff. Validators validate; nothing repairs a
@@ -473,7 +476,11 @@ system and deliberately boring:
    skinned; rigid accessories are parented to their carrier joints (eyeballs
    to the eye joints, hair to the head joint). Where UV seams force vertex
    duplication, skinning weights are carried through the duplication.
-   Materials are metallic-roughness PBR with fixed v0 constants; hair
+   Materials are metallic-roughness PBR with fixed v0 constants —
+   dielectric throughout, skin at roughness 0.5 and garment shells at
+   0.9, so cloth responds to light differently than skin by design
+   (roughness contrast is the one portable lever while surfaces are
+   albedo-only); hair
    additionally uses the glTF anisotropy extension with a standard-PBR
    fallback.
 

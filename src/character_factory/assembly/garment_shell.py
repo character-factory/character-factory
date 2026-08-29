@@ -1115,10 +1115,9 @@ def _fill(depth: np.ndarray, p0, p1, p2, z0, z1, z2) -> None:
 
 
 # --------------------------------------------------------------------------
-# the feature gate and data-supplied constants
+# data-supplied constants
 # --------------------------------------------------------------------------
 
-ENV_GATE = "CHARACTER_FACTORY_GARMENT_SHELLS"
 ENV_SEAM_BUDGET = "CHARACTER_FACTORY_GARMENT_SEAM_BUDGET"
 
 
@@ -1139,19 +1138,6 @@ def _config_section() -> dict:
         return {}
     section = document.get("assembly")
     return section if isinstance(section, dict) else {}
-
-
-def shells_enabled() -> bool:
-    """The feature gate — configuration, never code, never recipe (the
-    turbo/quantization pattern): `CHARACTER_FACTORY_GARMENT_SHELLS` in the
-    environment, else `assembly.garment_shells` in the cache config.
-    Ships default OFF."""
-    import os
-
-    value = os.environ.get(ENV_GATE)
-    if value is not None:
-        return value.strip().lower() in ("1", "true", "on", "yes")
-    return bool(_config_section().get("garment_shells", False))
 
 
 def configured_constants() -> ShellConstants:

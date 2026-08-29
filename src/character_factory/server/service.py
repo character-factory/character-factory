@@ -35,26 +35,27 @@ _ASSET_SLOTS_FILE_RE = None
 _LOG = logging.getLogger(__name__)
 
 
-def _delivery_warnings(manifest: dict, request: dict) -> list[dict]:
+def _delivery_warnings(manifest: dict) -> list[dict]:
+    """Garment shells are the standard delivery; a painted fallback is a
+    per-character quality event worth surfacing on the job."""
     warnings = []
-    if request.get("garment_shells") is True:
-        for slot, delivered in manifest.get("garments", {}).items():
-            if slot != "garment":
-                continue
-            if delivered.get("render_mode") != "shell":
-                warnings.append({
-                    "code": "requested_geometry_not_delivered",
-                    "message": (
-                        f"{slot} shell was requested but the artifact uses "
-                        "painted rendering"
-                    ),
-                    "details": {
-                        "slot": slot,
-                        "requested": "shell",
-                        "actual": delivered.get("render_mode"),
-                        "reason": delivered.get("reason"),
-                    },
-                })
+    for slot, delivered in manifest.get("garments", {}).items():
+        if slot != "garment":
+            continue
+        if delivered.get("render_mode") != "shell":
+            warnings.append({
+                "code": "geometry_not_delivered",
+                "message": (
+                    f"{slot} shell extraction fell back to painted "
+                    "rendering for this character"
+                ),
+                "details": {
+                    "slot": slot,
+                    "expected": "shell",
+                    "actual": delivered.get("render_mode"),
+                    "reason": delivered.get("reason"),
+                },
+            })
     return warnings
 
 
@@ -274,14 +275,11 @@ class CharacterService:
 
     def rebuild(
         self, character_id: str, *, stage: str = "assemble",
-        turbo: bool = False, garment_shells: bool | None = None,
-        idempotency_key: str | None = None,
+        turbo: bool = False, idempotency_key: str | None = None,
     ) -> dict:
         if stage not in {"assemble", "bake"}:
             raise ServiceError(f"unknown rebuild stage {stage!r}")
-        request = {"turbo": bool(turbo)} if stage == "bake" else {
-            "garment_shells": garment_shells
-        }
+        request = {"turbo": bool(turbo)} if stage == "bake" else {}
         return self._submit_character_job(
             stage, character_id, request, idempotency_key=idempotency_key
         )
@@ -372,14 +370,11 @@ class CharacterService:
                 job_id, "assembling", 0.8, "building the runtime GLB"
             ):
                 return
-            record = self.assemble(
-                character_id,
-                garment_shells=request.get("garment_shells"),
-            )
+            record = self.assemble(character_id)
             manifest = self.manifest(character_id)
             job_state = self.jobs.internal(job_id)
             warnings = list(job_state.get("warnings", []))
-            warnings.extend(_delivery_warnings(manifest, request))
+            warnings.extend(_delivery_warnings(manifest))
             self.jobs.update(job_id, warnings=warnings)
             state = self._state(self.library_dir / character_id)
             state.update(active_job_id=None, last_job_id=job_id)
@@ -632,12 +627,9 @@ class CharacterService:
             )
         return path
 
-    def assemble(self, character_id: str,
-                 garment_shells: bool | None = None) -> CharacterRecord:
+    def assemble(self, character_id: str) -> CharacterRecord:
         """Build the rigged scene from stored assets. Single-flight; the scene
-        file is replaced atomically and the revision bumped on success.
-        `garment_shells` overrides the configured feature gate for this
-        build only (the review app's shell-vs-painted comparison)."""
+        file is replaced atomically and the revision bumped on success."""
         from character_factory.api import AssetError, assemble
 
         directory, _ = self._supported_character(character_id)
@@ -652,7 +644,6 @@ class CharacterService:
                         directory / "assets",
                         Path(tmp) / "scene.glb",
                         registry=self.registry,
-                        garment_shells=garment_shells,
                     )
                     os.replace(built, directory / "scene.glb")
             except (AssetError, FileNotFoundError, ValueError) as error:

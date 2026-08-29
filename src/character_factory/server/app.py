@@ -487,11 +487,6 @@ def create_app(service: CharacterService):
                     "type": "boolean", "default": False,
                     "description": "For \"bake\": use the fast distilled "
                                    "base variant.",
-                }, "shells": {
-                    "type": "boolean",
-                    "description": "For \"assemble\": override the "
-                                   "configured garment-shell gate for this "
-                                   "build only (omit = the gate).",
                 }},
             }}}}},
     )
@@ -500,14 +495,10 @@ def create_app(service: CharacterService):
         payload: dict = Body(default={}),
     ):
         stage = payload.get("from", "assemble")
-        shells = payload.get("shells")
-        if shells is not None:
-            shells = bool(shells)
         job = service.rebuild(
             character_id,
             stage=stage,
             turbo=bool(payload.get("turbo", False)),
-            garment_shells=shells,
             idempotency_key=request.headers.get("Idempotency-Key"),
         )
         response.headers["Location"] = f"/v0/jobs/{job['id']}"

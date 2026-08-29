@@ -222,7 +222,6 @@ def assemble(
     *,
     registry=None,
     device: str = "cpu",
-    garment_shells: bool | None = None,
 ) -> Path:
     """Build the rigged .glb for a character from its baked assets.
 
@@ -231,11 +230,11 @@ def assemble(
     character carries an `assets` block, every file is verified against its
     pinned hash before use; a mismatch is a hard error.
 
-    `garment_shells` overrides the configured feature gate for this call
-    (None = the gate; assembly behavior like turbo, never recorded in the
-    character document). With the feature on, a character whose garment
-    extraction fails any gate silently keeps the painted composite — the
-    manifest's `garments` block records which mode shipped.
+    A character with a garment ships it as a separate skinned shell mesh
+    with its own cloth material; a character whose garment extraction
+    fails any certification gate silently keeps the painted composite —
+    the manifest's `garments` block records which mode shipped, with the
+    rejection reason.
     """
     import numpy as np
     from PIL import Image
@@ -435,12 +434,11 @@ def assemble(
                              mouth_removal])
     )
 
-    # Garment shells (feature-gated assembly behavior, never recipe): the
-    # baked garment texture may become a skinned, body-following closed
-    # solid over the painted composite. Every failed gate falls back to
+    # Garment shells (assembly behavior, never recipe): the baked garment
+    # texture becomes a skinned, body-following closed solid over the
+    # painted composite. Every failed certification gate falls back to
     # paint for this character, silently; the manifest's `garments` block
     # records the shipped mode per slot so consumers never sniff.
-    from character_factory.assembly import garment_shell as shell_module
     from character_factory.assembly.export import SkinnedAttachment
 
     skinned_attachments: list[SkinnedAttachment] = []
@@ -449,55 +447,52 @@ def assemble(
         garments_manifest["shoe"] = {"render_mode": "painted"}
     if "garment" in character.textures:
         garments_manifest["garment"] = {"render_mode": "painted"}
-        enabled = (shell_module.shells_enabled() if garment_shells is None
-                   else garment_shells)
-        if enabled:
-            shell, rejection = _prepare_garment_shell(
-                rig, character, evaluation, garment, atlas,
-                surface_vertices, surface_faces)
-            if shell is not None:
-                # The shell's texture is the baked garment with its
-                # boundary colors bled outward (atlas hygiene): boundary
-                # faces and rim insets sample cloth, never the keyed-out
-                # background. The key itself always comes from the
-                # original bytes — dilation cannot grow coverage.
-                import io as _io
+        shell, rejection = _prepare_garment_shell(
+            rig, character, evaluation, garment, atlas,
+            surface_vertices, surface_faces)
+        if shell is not None:
+            # The shell's texture is the baked garment with its
+            # boundary colors bled outward (atlas hygiene): boundary
+            # faces and rim insets sample cloth, never the keyed-out
+            # background. The key itself always comes from the
+            # original bytes — dilation cannot grow coverage.
+            import io as _io
 
-                from character_factory.assembly.garment_shell import (
-                    dilate_garment_colors,
-                )
+            from character_factory.assembly.garment_shell import (
+                dilate_garment_colors,
+            )
 
-                dilated = dilate_garment_colors(garment, shell.hard_key)
-                shell_buffer = _io.BytesIO()
-                Image.fromarray(dilated).save(shell_buffer, format="PNG")
-                shell_png = shell_buffer.getvalue()
-                skinned_attachments.append(SkinnedAttachment(
-                    name="garment",
-                    vertices=shell.vertices,
-                    faces=shell.faces,
-                    corner_uv=shell.corner_uv,
-                    joints4=shell.joints4,
-                    weights4=shell.weights4,
-                    albedo_png=shell_png,
-                ))
-                remove_faces = (
-                    shell.covered_body_faces if remove_faces is None
-                    else np.concatenate([
-                        np.asarray(remove_faces, dtype=np.int64),
-                        shell.covered_body_faces]))
-                garments_manifest["garment"] = {
-                    "render_mode": "shell",
-                    "shell": {
-                        "constants_version": shell.audit["constants_version"],
-                        "components": shell.audit["components"],
-                        "solid_vertices": int(len(shell.vertices)),
-                        "solid_faces": int(len(shell.faces)),
-                        "hidden_body_faces": int(len(shell.covered_body_faces)),
-                    },
-                }
-            else:
-                garments_manifest["garment"] = {
-                    "render_mode": "painted", "reason": rejection}
+            dilated = dilate_garment_colors(garment, shell.hard_key)
+            shell_buffer = _io.BytesIO()
+            Image.fromarray(dilated).save(shell_buffer, format="PNG")
+            shell_png = shell_buffer.getvalue()
+            skinned_attachments.append(SkinnedAttachment(
+                name="garment",
+                vertices=shell.vertices,
+                faces=shell.faces,
+                corner_uv=shell.corner_uv,
+                joints4=shell.joints4,
+                weights4=shell.weights4,
+                albedo_png=shell_png,
+            ))
+            remove_faces = (
+                shell.covered_body_faces if remove_faces is None
+                else np.concatenate([
+                    np.asarray(remove_faces, dtype=np.int64),
+                    shell.covered_body_faces]))
+            garments_manifest["garment"] = {
+                "render_mode": "shell",
+                "shell": {
+                    "constants_version": shell.audit["constants_version"],
+                    "components": shell.audit["components"],
+                    "solid_vertices": int(len(shell.vertices)),
+                    "solid_faces": int(len(shell.faces)),
+                    "hidden_body_faces": int(len(shell.covered_body_faces)),
+                },
+            }
+        else:
+            garments_manifest["garment"] = {
+                "render_mode": "painted", "reason": rejection}
 
     result = export_character_glb(
         rig,

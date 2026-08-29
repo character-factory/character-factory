@@ -181,7 +181,11 @@ class SkinnedAttachment:
     weights4: "np.ndarray"          # (V, 4) float32
     albedo_png: bytes | None = None
     double_sided: bool = True
-    roughness: float = 0.8
+    # Cloth reads as cloth against skin (body: 0.5) mostly through
+    # roughness contrast — constants only, no roughness/specular maps in
+    # v0, and glTF core pins dielectric specular, so this is the one
+    # portable lever. 0.9 = matte fabric (cotton/canvas territory).
+    roughness: float = 0.9
 
 
 def _unweld(surface, vertices: np.ndarray,
@@ -476,7 +480,7 @@ def export_character_glb(
 
     body_material: dict = {
         "name": "body",
-        "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.55},
+        "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.5},
         "doubleSided": False,
     }
     if albedo_png is not None:

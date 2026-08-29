@@ -63,10 +63,11 @@ def test_assemble_end_to_end(tmp_path):
     assert manifest["format"] == "character-factory/export-manifest"
     assert manifest["joint_count"] == 127
     assert manifest["units"] == "meters"
-    # The garments block states the shipped mode per slot — the gate is
-    # off by default, so both slots are painted, with no rejection reason
-    # (nothing was attempted).
-    assert manifest["garments"]["garment"] == {"render_mode": "painted"}
+    # The garments block states the shipped mode per slot. Shell
+    # extraction is always attempted for the garment; this synthetic
+    # texture cannot key, so it fails closed to painted with the reason.
+    assert manifest["garments"]["garment"] == {
+        "render_mode": "painted", "reason": "alpha-coverage-small"}
     assert manifest["garments"]["shoe"] == {"render_mode": "painted"}
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
@@ -163,10 +164,10 @@ def _repinned_character(tmp_path, name="marathon-runner"):
     return path
 
 
-def test_garment_shell_gate_fails_closed_to_the_painted_build(tmp_path):
-    """With the gate forced on and a garment texture that cannot key
-    (all black), the character assembles painted: geometry identical to
-    the gate-off build, the manifest recording the rejection reason."""
+def test_garment_shell_fails_closed_to_the_painted_build(tmp_path):
+    """A garment texture that cannot key (all black) assembles painted —
+    the certification ladder fails closed per character, and the manifest
+    records the rejection reason."""
     from character_factory.api import assemble
 
     assets = tmp_path / "assets"
@@ -177,20 +178,11 @@ def test_garment_shell_gate_fails_closed_to_the_painted_build(tmp_path):
     solid_png(assets / "shoe.png", (0, 0, 0))
     character_path = _repinned_character(tmp_path)
 
-    registry = source_topology_registry()
-    off = assemble(character_path, assets, tmp_path / "off.glb", registry=registry)
-    on = assemble(character_path, assets, tmp_path / "on.glb",
-                  garment_shells=True, registry=registry)
-    gltf_off, binary_off = parse_glb(off.read_bytes())
-    gltf_on, binary_on = parse_glb(on.read_bytes())
-    # Identical scene: same meshes, same binary payload — the fallback IS
-    # the painted build. Only the manifest's reason differs.
-    assert [m["name"] for m in gltf_on["meshes"]] == \
-        [m["name"] for m in gltf_off["meshes"]]
-    assert binary_on == binary_off
-    assert gltf_off["asset"]["extras"]["garments"]["garment"] == {
-        "render_mode": "painted"}
-    assert gltf_on["asset"]["extras"]["garments"]["garment"] == {
+    out = assemble(character_path, assets, tmp_path / "painted.glb",
+                   registry=source_topology_registry())
+    gltf, _ = parse_glb(out.read_bytes())
+    assert all(m["name"] != "garment" for m in gltf["meshes"])
+    assert gltf["asset"]["extras"]["garments"]["garment"] == {
         "render_mode": "painted", "reason": "alpha-coverage-small"}
 
 
@@ -227,7 +219,7 @@ def test_garment_shell_ships_when_every_gate_passes(tmp_path):
     character_path = _repinned_character(tmp_path)
 
     out = assemble(character_path, assets, tmp_path / "shelled.glb",
-                   garment_shells=True, registry=source_topology_registry())
+                   registry=source_topology_registry())
     data = out.read_bytes()
     report = validate_glb(data, expected_joints=127)
     assert report["reparse_max_error_mm"] < 1e-2

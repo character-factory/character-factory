@@ -515,21 +515,23 @@ def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
     assert "Content-Type" in response.json()["error"]
 
 
-def test_declined_geometry_override_is_a_structured_job_warning():
+def test_painted_fallback_is_a_structured_job_warning():
     warnings = _delivery_warnings(
         {"garments": {
             "garment": {"render_mode": "painted", "reason": "pose-gate"},
             "shoe": {"render_mode": "painted"},
         }},
-        {"garment_shells": True},
     )
     assert warnings == [
         {
-            "code": "requested_geometry_not_delivered",
-            "message": "garment shell was requested but the artifact uses painted rendering",
+            "code": "geometry_not_delivered",
+            "message": "garment shell extraction fell back to painted "
+                       "rendering for this character",
             "details": {
-                "slot": "garment", "requested": "shell", "actual": "painted",
+                "slot": "garment", "expected": "shell", "actual": "painted",
                 "reason": "pose-gate",
             },
         },
     ]
+    assert _delivery_warnings(
+        {"garments": {"garment": {"render_mode": "shell"}}}) == []

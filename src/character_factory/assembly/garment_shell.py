@@ -55,7 +55,7 @@ class ShellConstants:
     data, not judgment: changing any of them is a new constants version
     and re-certification, never a per-character tweak."""
 
-    version: str = "1"
+    version: str = "2"
     key_cutoff: int = 20              # max(RGB) > cutoff, over valid atlas
     key_cutoff_check: int = 16        # stability partner for the IoU gate
     opening_size: int = 3             # binary opening structure (square)
@@ -81,7 +81,14 @@ class ShellConstants:
     inner_min_cm: float = 0.12        # inner = max(min, outer_offset - backoff)
     inner_backoff_cm: float = 0.12
     rim_uv_inset: float = 0.35        # sidewall UVs pulled toward face centroid
-    erode_rings: int = 2              # covered-body erosion before face hiding
+    band_cm: float = 3.0              # skin band kept at the coverage boundary
+                                      # (surface distance; the technique's one
+                                      # tuning knob — body faces farther under
+                                      # the shell than this are deleted)
+    strict_uv_seams: bool = False     # seam-disagreeing vertices take their
+                                      # MIN corner sample: coverage never
+                                      # extrudes across a UV seam (shoes)
+    strict_seam_disagreement: float = 0.5
     coverage_min: float = 0.005       # keyed fraction of the valid atlas
     coverage_max: float = 0.90
     cutoff_stability_iou: float = 0.99      # measured 0.9977+ across seeds
@@ -244,6 +251,12 @@ def welded_field(soft: np.ndarray, surface, canonical_vertices: np.ndarray,
     raw = np.zeros(vertex_count)
     raw[referenced] = value_sum[referenced] / weight_sum[referenced]
     disagreement = np.where(referenced, high - low, 0.0)
+    if constants.strict_uv_seams:
+        # Strict seam confidence: where corner samples straddle the key
+        # (a UV seam with coverage on one side only), take the minimum —
+        # the cut never extrudes across a disagreeing seam.
+        strict = disagreement > constants.strict_seam_disagreement
+        raw[strict] = low[strict]
 
     edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]],
                             faces[:, [2, 0]]])
@@ -721,16 +734,42 @@ def transfer_weights(cut: dict, surface, outer_count: int) -> tuple[np.ndarray, 
             np.concatenate([weights, weights]).astype(np.float32))
 
 
-def covered_body_faces(values: np.ndarray, surface, adjacency,
+def covered_body_faces(values: np.ndarray, surface,
+                       canonical_vertices: np.ndarray,
                        constants: ShellConstants) -> np.ndarray:
-    """Conservative hide set: coverage eroded by welded rings; a face hides
-    only when all three vertices remain covered."""
+    """The hide set: every face fully under coverage is deleted except the
+    skin band — faces within `band_cm` surface distance of the coverage
+    boundary survive, tucked under the shell rim so skin runs
+    continuously under cloth. Geometric, not topological: a ring count
+    would scale with local tessellation (a two-ring band that is a sliver
+    on the torso is a third of a coarse foot)."""
+    from scipy import sparse
+    from scipy.sparse import csgraph
+
     covered = values >= 0.5
-    degree = np.maximum(np.asarray(adjacency.sum(axis=1)).ravel(), 1)
-    for _ in range(constants.erode_rings):
-        covered_neighbors = adjacency.dot(covered.astype(np.float64))
-        covered = covered & (covered_neighbors >= degree - 1e-9)
-    hide = covered[surface.faces].all(axis=1)
+    if not covered.any():
+        return np.zeros(0, dtype=np.int64)
+    if covered.all():
+        hide = covered[surface.faces].all(axis=1)
+        return np.where(hide)[0].astype(np.int64)
+    faces = surface.faces
+    edges = np.unique(np.sort(np.concatenate(
+        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]]), axis=1),
+        axis=0)
+    lengths = np.linalg.norm(
+        canonical_vertices[edges[:, 0]] - canonical_vertices[edges[:, 1]],
+        axis=1)
+    count = len(canonical_vertices)
+    graph = sparse.coo_matrix(
+        (np.concatenate([lengths, lengths]),
+         (np.concatenate([edges[:, 0], edges[:, 1]]),
+          np.concatenate([edges[:, 1], edges[:, 0]]))),
+        shape=(count, count)).tocsr()
+    distance = csgraph.dijkstra(
+        graph, indices=np.where(~covered)[0], min_only=True,
+        limit=float(constants.band_cm) * 4.0)
+    deep = covered & (distance > constants.band_cm)
+    hide = deep[surface.faces].all(axis=1)
     return np.where(hide)[0].astype(np.int64)
 
 
@@ -777,8 +816,8 @@ def prepare_shell(surface, garment_rgb: np.ndarray, identity_vertices: np.ndarra
                     canonical_vertices, constants)
     solid = build_solid(cut, identity_vertices, surface, constants)
     joints4, weights4 = transfer_weights(cut, surface, solid["outer_count"])
-    hidden = covered_body_faces(fields["values"], surface, fields["adjacency"],
-                                constants)
+    hidden = covered_body_faces(fields["values"], surface,
+                                canonical_vertices, constants)
 
     return PreparedShell(
         vertices=solid["vertices"],
@@ -881,19 +920,40 @@ def _config_section() -> dict:
     return section if isinstance(section, dict) else {}
 
 
-def configured_constants() -> ShellConstants:
-    """Extraction constants with their data-supplied overrides. The seam-
-    disagreement budget arrives as data (environment or
+# Per-slot calibration (data, not judgment — a change is a new constants
+# version). The garment values are the certified defaults; the shoe values
+# are footwear-scale calibration: 0.35 cm uniform clearance (no boundary
+# puff — a rim lifted extra reads as a floating shoe on a foot-sized
+# shell), a 0.15 cm rim, a 0.4 cm skin band (a toe-sliver, not a third of
+# the foot), and strict UV-seam confidence so the medial foot seam never
+# extrudes.
+SLOT_OVERRIDES: dict[str, dict] = {
+    "garment": {},
+    "shoe": {
+        "base_lift_cm": 0.35,
+        "boundary_extra_cm": 0.0,
+        "inner_min_cm": 0.15,
+        "inner_backoff_cm": 0.15,
+        "band_cm": 0.4,
+        "strict_uv_seams": True,
+    },
+}
+
+
+def configured_constants(slot: str = "garment") -> ShellConstants:
+    """One slot's extraction constants with their data-supplied overrides.
+    The seam-disagreement budget arrives as data (environment or
     `assembly.garment_shell_seam_budget`) once its derivation evidence
     lands — until then the seam detector reports and never rejects."""
     import os
 
+    overrides = dict(SLOT_OVERRIDES.get(slot, {}))
     budget = os.environ.get(ENV_SEAM_BUDGET)
     if budget is None:
         budget = _config_section().get("garment_shell_seam_budget")
-    if budget is None:
-        return ShellConstants()
-    return ShellConstants(seam_disagreement_budget=float(budget))
+    if budget is not None:
+        overrides["seam_disagreement_budget"] = float(budget)
+    return ShellConstants(**overrides)
 
 
 # --------------------------------------------------------------------------

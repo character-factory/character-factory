@@ -256,15 +256,23 @@ def test_weights_follow_the_source_surface():
     assert used == {0, 1}
 
 
-def test_covered_body_faces_are_conservative():
+def test_covered_body_faces_keep_a_geometric_skin_band():
     rig, _ = cylinder_rig()
     shell = prepare(band_texture())
     hidden = set(shell.covered_body_faces.tolist())
     assert hidden, "a solid band must hide some covered faces"
-    # No hidden face touches an uncovered vertex, and the two-ring erosion
-    # keeps a visible overlap band: faces at the band edge stay.
+    # The retained skin band is a surface DISTANCE (band_cm), not a ring
+    # count: faces within the band of the coverage boundary stay.
     band_faces = shell.outer_face_count
     assert len(hidden) < band_faces
+
+
+def test_skin_band_scales_with_band_cm():
+    # A wider band keeps more body; a near-zero band deletes almost the
+    # whole covered set. Geometric behavior, independent of tessellation.
+    narrow = prepare(band_texture(), constants=gs.ShellConstants(band_cm=0.05))
+    wide = prepare(band_texture(), constants=gs.ShellConstants(band_cm=6.0))
+    assert len(narrow.covered_body_faces) > len(wide.covered_body_faces)
 
 
 def test_extraction_is_deterministic():

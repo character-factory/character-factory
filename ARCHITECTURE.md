@@ -435,9 +435,14 @@ system and deliberately boring:
    surface where the shell is: no doubled geometry, no z-fighting, and
    body-through-cloth clipping is impossible where cloth covers, because
    there is no body there. The one intentional overlap is a narrow skin
-   band retained at the coverage boundary (the erosion rings), tucked
+   band retained at the coverage boundary — a surface distance
+   (`band_cm`, per-slot data: centimeters for garments, millimeters for
+   shoes), tucked
    under the shell's rim so skin runs continuously under cloth from any
-   angle; the band width is the technique's tuning knob. The shoe shell
+   angle; the band width is the technique's tuning knob. Clearance and
+   rim depth are per-slot calibration data too — a shoe lifts a uniform
+   0.35 cm with no boundary puff and cuts with strict UV-seam
+   confidence, where a garment carries a softer, boundary-eased lift. The shoe shell
    extracts identically from the baked overlay's own alpha (authoritative
    occupancy — no luminance keying), confined to the atlas's feet
    region, and carries the same cloth-class material. Extraction is a

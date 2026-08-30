@@ -444,7 +444,7 @@ def assemble(
         garments_manifest[slot] = {"render_mode": "painted"}
         shelled[slot] = False
         shell, rejection = _prepare_shell(
-            rig, character, evaluation, rgb, surface_vertices,
+            rig, character, evaluation, rgb, surface_vertices, slot=slot,
             coverage_alpha=coverage_alpha, excluded=excluded)
         if shell is None:
             garments_manifest[slot] = {
@@ -531,7 +531,7 @@ def assemble(
 
 
 def _prepare_shell(rig, character, evaluation, rgb, surface_vertices,
-                   coverage_alpha=None, excluded=None):
+                   slot="garment", coverage_alpha=None, excluded=None):
     """Extract one slot's shell on this character, fail-closed.
 
     Returns (PreparedShell, None) or (None, reason). Structural gates
@@ -543,7 +543,7 @@ def _prepare_shell(rig, character, evaluation, rgb, surface_vertices,
     from character_factory.assembly import garment_shell as shell_module
 
     surface = rig.render if rig.render is not None else rig
-    constants = shell_module.configured_constants()
+    constants = shell_module.configured_constants(slot)
     canonical = rig.evaluate(
         [0.0] * len(character.identity),
         [0.0] * len(character.resting_expression))

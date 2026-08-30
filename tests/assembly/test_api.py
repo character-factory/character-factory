@@ -76,6 +76,21 @@ def test_assemble_end_to_end(tmp_path):
     material = gltf["materials"][0]["pbrMetallicRoughness"]
     assert material["baseColorTexture"]["index"] == 0
 
+    # Grounding describes what ships: with the barefoot sole deleted
+    # under the shoe shell, the declared plane is the minimum over ALL
+    # render geometry — the shoe sole — never the truncated body's edge.
+    from character_factory.assembly.gltf import read_accessor as _ra_g
+
+    minima = {}
+    for mesh in gltf["meshes"]:
+        if mesh["name"] in ("body", "garment", "shoe"):
+            pos = _ra_g(gltf, binary,
+                        mesh["primitives"][0]["attributes"]["POSITION"])
+            minima[mesh["name"]] = float(pos[:, 1].min())
+    plane = gltf["asset"]["extras"]["grounding"]["plane_height_m"]
+    assert abs(plane - min(minima.values())) < 1e-5
+    assert minima["shoe"] == min(minima.values())  # the shoe is the floor
+
     from character_factory.assembly.gltf import read_accessor as _ra
 
     # The full assembly: eyes attached to the eye joints, hair to the head.
@@ -119,6 +134,7 @@ def test_assemble_is_deterministic(tmp_path):
 
 def test_barefoot_character_needs_no_footwear_asset(tmp_path):
     from character_factory.api import assemble
+    from character_factory.assembly.gltf import read_accessor as _ra_g
 
     assets = tmp_path / "assets"
     assets.mkdir()
@@ -129,6 +145,13 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
         EXAMPLES / "freediver.char.json", assets, tmp_path / "diver.glb"
     )
     assert np.frombuffer(out.read_bytes()[:4], dtype=np.uint32)[0] == 0x46546C67
+    # Barefoot grounding semantics are unchanged: the plane is the body's
+    # own sole.
+    gltf, binary = parse_glb(out.read_bytes())
+    body = next(m for m in gltf["meshes"] if m["name"] == "body")
+    pos = _ra_g(gltf, binary, body["primitives"][0]["attributes"]["POSITION"])
+    plane = gltf["asset"]["extras"]["grounding"]["plane_height_m"]
+    assert abs(plane - float(pos[:, 1].min())) < 1e-5
 
 
 def test_mouth_interior_refused_without_rig_mouth_data(tmp_path):

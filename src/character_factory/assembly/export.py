@@ -270,15 +270,21 @@ def _humanoid_map(rig: RigDefinition) -> dict:
 
 
 def _grounding_contract(
-    rig: RigDefinition, skeleton, positions: np.ndarray, humanoid: dict
+    rig: RigDefinition, skeleton, positions: np.ndarray, humanoid: dict,
+    ground_y: float | None = None,
 ) -> dict:
     """Ground plane and stable foot-joint offsets in scene space.
 
     The foot joint is not mislabeled as the anatomical sole. Its explicit
-    offset to the measured body ground plane gives importers a
+    offset to the measured ground plane gives importers a
     proportion-aware baseline without inventing contact frames.
+    `ground_y` is the minimum over ALL shipped render geometry — body and
+    skinned shells alike: a shoe-wearing character stands on its shoe
+    soles (the barefoot sole is deleted), a barefoot character on its
+    feet. Falls back to the body minimum when not supplied.
     """
-    ground_y = float(positions[:, 1].min())
+    if ground_y is None:
+        ground_y = float(positions[:, 1].min())
     root_name = rig.metadata["roles"]["root"]
     root_y = float(skeleton.positions[rig.joint_index(root_name), 1] * SCALE)
     mapping = humanoid.get("map", {})
@@ -670,15 +676,20 @@ def export_character_glb(
         parent_node = nodes[attachment.parent_joint + 1]
         parent_node.setdefault("children", []).append(node_index)
 
-    # 7b. Skinned attachments: full-skin extra meshes (garment shells).
-    # Their winding is authored (closed solids arrive coherent) and their
-    # per-corner UVs get the same UV-seam split glTF forces on the body.
+    # 7b. Skinned attachments: full-skin extra meshes (garment and shoe
+    # shells). Their winding is authored (closed solids arrive coherent)
+    # and their per-corner UVs get the same UV-seam split glTF forces on
+    # the body. Shells participate in grounding: with the body faces
+    # under a shoe deleted, the shoe sole IS the character's lowest
+    # rendered geometry, and the declared plane must describe what ships.
+    render_min_y = float(positions[:, 1].min())
     for skinned, rest_cm in zip(skinned_attachments, baked_skinned):
         s_pos, s_uv, s_joints, s_weights, s_indices = _split_corner_uv(
             rest_cm, np.asarray(skinned.faces, dtype=np.int64),
             np.asarray(skinned.corner_uv, dtype=np.float64),
             np.asarray(skinned.joints4), np.asarray(skinned.weights4))
         s_positions = (s_pos * SCALE).astype(np.float32)
+        render_min_y = min(render_min_y, float(s_positions[:, 1].min()))
         s_normals = _vertex_normals(
             s_positions.astype(np.float64), s_indices).astype(np.float32)
         attributes = {
@@ -766,7 +777,8 @@ def export_character_glb(
             "drives": {"joint_local_trs": "all", "morph_targets": []},
             "contact_frames": [],
         },
-        "grounding": _grounding_contract(rig, skeleton, positions, humanoid),
+        "grounding": _grounding_contract(
+            rig, skeleton, positions, humanoid, ground_y=render_min_y),
         "schema_version_contract": (
             "Check `format` first, then `schema_version`. A minor bump is "
             "additive: known fields keep their shape and meaning, and "

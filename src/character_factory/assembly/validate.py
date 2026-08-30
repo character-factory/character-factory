@@ -78,9 +78,18 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
     grounding = manifest.get("grounding")
     if grounding:
         declared_ground = float(grounding["plane_height_m"])
+        # The plane describes what ships: the minimum over every skinned
+        # render mesh — the body AND its shells. A shoe-wearing character
+        # stands on its shoe soles (the barefoot sole is deleted).
         rest_ground = float(positions[:, 1].min())
+        for node in gltf["nodes"]:
+            if node.get("skin") is not None and node.get("mesh") is not None:
+                prim = gltf["meshes"][node["mesh"]]["primitives"][0]
+                mesh_pos = read_accessor(
+                    gltf, binary, prim["attributes"]["POSITION"])
+                rest_ground = min(rest_ground, float(mesh_pos[:, 1].min()))
         assert abs(rest_ground - declared_ground) < 1e-6, (
-            "declared ground plane does not match the exported rest mesh"
+            "declared ground plane does not match the exported rest geometry"
         )
         report["rest_ground_error_mm"] = abs(rest_ground - declared_ground) * 1000
 
@@ -199,7 +208,18 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
         blend = min(max(blend, 0.0), 1.0)
         return (1.0 - blend) * output[upper - 1] + blend * output[upper]
 
-    def substituted_skin(at: float) -> np.ndarray:
+    def _pose(joint_mats, mesh_positions, mesh_joints4, mesh_weights4):
+        mesh_homogeneous = np.concatenate(
+            [mesh_positions, np.ones((len(mesh_positions), 1))], axis=1)
+        skinned = np.zeros_like(mesh_positions)
+        for influence in range(4):
+            mats = joint_mats[mesh_joints4[:, influence]]
+            skinned += mesh_weights4[:, influence : influence + 1] * np.einsum(
+                "vij,vj->vi", mats, mesh_homogeneous
+            )[:, :3]
+        return skinned
+
+    def _idle_joint_matrices(at: float) -> np.ndarray:
         animated_nodes = copy.deepcopy(gltf["nodes"])
         for node, path, times, output in channel_data:
             value = sample(times, output, at)
@@ -207,14 +227,26 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
                 value = value / np.linalg.norm(value)
             animated_nodes[node][path] = [float(v) for v in value]
         globals_animated = _global_matrices({**gltf, "nodes": animated_nodes})
-        joint_mats = np.stack([globals_animated[n] for n in joints]) @ ibms
-        skinned = np.zeros_like(positions)
-        for influence in range(4):
-            mats = joint_mats[joints4[:, influence]]
-            skinned += weights4[:, influence : influence + 1] * np.einsum(
-                "vij,vj->vi", mats, homogeneous
-            )[:, :3]
-        return skinned
+        return np.stack([globals_animated[n] for n in joints]) @ ibms
+
+    def substituted_skin(at: float) -> np.ndarray:
+        return _pose(_idle_joint_matrices(at), positions, joints4, weights4)
+
+    # Every skinned render mesh participates in grounding (the shoe sole
+    # is the floor of a shoe-wearing character; the body's own sole is
+    # deleted underneath it).
+    skinned_meshes = []
+    for node in gltf["nodes"]:
+        if node.get("skin") is not None and node.get("mesh") is not None:
+            prim = gltf["meshes"][node["mesh"]]["primitives"][0]
+            skinned_meshes.append((
+                read_accessor(gltf, binary,
+                              prim["attributes"]["POSITION"]).astype(np.float64),
+                read_accessor(gltf, binary,
+                              prim["attributes"]["JOINTS_0"]).astype(np.int64),
+                read_accessor(gltf, binary,
+                              prim["attributes"]["WEIGHTS_0"]).astype(np.float64),
+            ))
 
     # 1. t=0: the substituted clip must BE the rest pose.
     rest_error_m = float(np.abs(substituted_skin(0.0) - positions).max())
@@ -249,13 +281,18 @@ def validate_glb(data: bytes, *, expected_joints: int | None = None) -> dict:
     peak_m = 0.0
     ground_drift_m = 0.0
     for at in sorted(key_times):
-        posed = substituted_skin(at)
+        joint_mats = _idle_joint_matrices(at)
+        posed = _pose(joint_mats, positions, joints4, weights4)
         deviation = float(np.abs(posed - positions).max())
         peak_m = max(peak_m, deviation)
         if grounding:
+            posed_min = min(
+                float(_pose(joint_mats, p, j, w)[:, 1].min())
+                for p, j, w in skinned_meshes
+            )
             ground_drift_m = max(
                 ground_drift_m,
-                abs(float(posed[:, 1].min()) - float(grounding["plane_height_m"])),
+                abs(posed_min - float(grounding["plane_height_m"])),
             )
     report["idle_clip_peak_deviation_mm"] = peak_m * 1000.0
     assert peak_m < 0.05, (

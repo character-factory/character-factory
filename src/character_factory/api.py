@@ -43,12 +43,14 @@ def create(
     interpreter: str | None = None,
     _with_report: bool = False,
 ) -> Character | CreationResult:
-    """Description → character file: interpretation fills the symbolic
-    recipes; the identity component SAMPLES body parameters from the raw
-    prompt (a generative model — the seed picks one identity from the
+    """Description → character file: the interpreter writes every
+    component's prompt in that component's trained format — per-slot
+    texture prompts, the hair block, and the figure prompt — and the
+    identity component SAMPLES body parameters from the figure prompt (a
+    generative model: the seed picks one identity from the figure
     prompt's distribution, and the same seed also numbers the texture
-    recipes). The document records the drawn values, so everything from
-    the file onward stays deterministic."""
+    recipes). The document records the drawn values and the figure
+    prompt, so everything from the file onward stays deterministic."""
     from character_factory.identity import IdentityComponent, IdentityGenerator
     from character_factory.interpreter import INTERPRETER_VERSION, interpret
     from character_factory.preflight import require_generation_stack
@@ -74,7 +76,7 @@ def create(
         registry.ensure(base_ref),
         device=device,
     )
-    generated = generator.generate(prompt, seed=seed)
+    generated = generator.generate(interpretation.figure, seed=seed)
     identity = generated.identity
     resting_expression = generated.resting_expression
     del generator  # release the text encoder before any diffusion loads (§2.2)
@@ -142,6 +144,7 @@ def create(
             "hair": hair,
             "provenance": {
                 "prompt": prompt,
+                "figure_prompt": interpretation.figure,
                 "generator": f"character-factory/"
                              f"{__import__('character_factory').__version__}",
                 "components": components,

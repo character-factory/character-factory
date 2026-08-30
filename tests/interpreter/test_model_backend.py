@@ -40,6 +40,8 @@ def full_hair(**overrides) -> dict:
 
 def good_document() -> dict:
     return {
+        "figure": {"prompt": "a slight young woman, five foot three, "
+                             "slim build, soft oval face"},
         "textures": {
             "skin": {"prompt": "fair light skin, MST 2, 19 years old"},
             "eye": {"prompt": "dark brown iris, off-white sclera"},
@@ -221,7 +223,8 @@ def test_endpoint_backend_speaks_openai_chat(monkeypatch):
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     strict_schema = response_format["json_schema"]["schema"]
-    assert set(strict_schema["required"]) == {"textures", "hair", "proportions"}
+    assert set(strict_schema["required"]) == {
+        "figure", "textures", "hair", "proportions"}
     assert seen["body"]["max_completion_tokens"] >= 1800
     assert "temperature" not in seen["body"]   # hosted models reject overrides
     assert seen["auth"] == "Bearer k"
@@ -416,7 +419,8 @@ def test_endpoint_schema_makes_optional_fields_nullable_and_required():
     from character_factory.interpreter.schema import endpoint_interpretation_schema
 
     schema = endpoint_interpretation_schema()
-    assert set(schema["required"]) == {"textures", "hair", "proportions"}
+    assert set(schema["required"]) == {
+        "figure", "textures", "hair", "proportions"}
     textures = schema["properties"]["textures"]
     assert set(textures["required"]) == {"skin", "eye", "garment", "shoe"}
     assert textures["properties"]["shoe"]["anyOf"][1] == {"type": "null"}

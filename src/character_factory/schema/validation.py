@@ -355,12 +355,18 @@ class _Checker:
             self.error("provenance", "must be an object")
             return
         self.check_keys(
-            prov, {"prompt", "generator", "components", "created", "notes"}, "provenance"
+            prov,
+            {"prompt", "figure_prompt", "generator", "components", "created",
+             "notes"},
+            "provenance"
         )
         if "prompt" not in prov:
             self.error("provenance.prompt", "required field is missing (may be null)")
         elif prov["prompt"] is not None and not isinstance(prov["prompt"], str):
             self.error("provenance.prompt", "must be a string or null")
+        if "figure_prompt" in prov and not isinstance(
+                prov.get("figure_prompt"), str):
+            self.error("provenance.figure_prompt", "must be a string")
         self.expect_str(prov, "generator", "provenance")
         components = prov.get("components")
         if components is None:

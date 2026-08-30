@@ -9,9 +9,11 @@ the side-by-side bench. There is no non-model interpretation mode: an
 unconfigured or failing backend is a hard, named error, never a silent
 quality downgrade.
 
-Identity never consumes interpreter output: the raw description goes to
-the identity network unchanged (SPEC.md §7); interpretation conditions
-the texture recipes and the hair block only.
+The interpreter writes every component's prompt, in that component's
+trained format: per-slot texture prompts, the semantic hair block, and
+the figure prompt that conditions identity generation. The raw
+description is what the user said; the component prompts are what each
+model was trained to read.
 """
 
 from __future__ import annotations
@@ -34,6 +36,10 @@ INTERPRETER_VERSION = "0.1.0"
 class Interpretation:
     slot_prompts: dict[str, str]
     hair: dict | None
+    # The body-generation prompt, written by the backend in the figure
+    # component's trained format — identity conditions on this, never on
+    # the raw description.
+    figure: str | None = None
     backend: str = "model"
     notes: list[str] = field(default_factory=list)
     # Explicit skeletal-proportion overrides (§4.3), name → value in the
@@ -110,6 +116,13 @@ def _slot_guidance(registry=None) -> dict[str, str]:
         except RegistryError:
             continue   # a slot nothing serves simply gets no guidance
     guidance: dict[str, str] = {}
+    try:
+        figure_entry = registry.get("make-figure")
+        fields = figure_entry.document.get("interpretation", {}).get("fields")
+        if isinstance(fields, str):
+            guidance["figure"] = fields
+    except RegistryError:
+        pass   # no installed figure component: generic guidance only
     for slot, entry in resolved.items():
         document = entry.document
         fields = document.get("interpretation", {}).get("fields")

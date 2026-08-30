@@ -454,18 +454,22 @@ descriptive, not instructions to a reader.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
+| `figure_prompt` | string | no | The body-generation prompt the interpreter wrote for the figure component (the text the identity model actually conditioned on). Descriptive, like `prompt`. |
 | `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
-| `components` | object | yes | Map from **component name** to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `make-figure` (which produced `body.identity` and `body.resting_expression`) and one entry per texture component in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts and the hair block, like any other generative component. The hair provider's entry (the first-party default is `make-wig`) records its version once geometry has been synthesized — the `hair` block itself carries no component field, because it is semantic vocabulary, not a texture slot. |
+| `components` | object | yes | Map from **component name** to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `make-figure` (which produced `body.identity` and `body.resting_expression`) and one entry per texture component in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts, the figure prompt, and the hair block, like any other generative component. The hair provider's entry (the first-party default is `make-wig`) records its version once geometry has been synthesized — the `hair` block itself carries no component field, because it is semantic vocabulary, not a texture slot. |
 | `created` | string | no | RFC 3339 timestamp. |
 | `notes` | string | no | Free text. |
 
 Identity generation is stochastic: the identity component samples body
-parameters from the prompt's distribution, seeded by the creating
-pipeline. The drawn values are written into `body.identity` and
-`body.resting_expression`, so the character file — not the prompt — is the
-reproducible artifact; `provenance.prompt` is a descriptive record of what
-the character was sampled *from*, not a regeneration recipe on its own.
-Implementations MUST treat the parameter arrays in `body`, not the prompt,
+parameters from the distribution of `provenance.figure_prompt` — the
+body-generation prompt the interpreter wrote in the figure component's
+trained format — seeded by the creating pipeline. The drawn values are
+written into `body.identity` and
+`body.resting_expression`, so the character file — not any prompt — is
+the reproducible artifact; `provenance.prompt` is a descriptive record
+of what the user asked for, and `provenance.figure_prompt` of what the
+figure model was shown. Implementations MUST treat the parameter arrays
+in `body`, not the prompts,
 as authoritative.
 
 ## 8. `assets` — pinning generated images

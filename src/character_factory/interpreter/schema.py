@@ -54,8 +54,13 @@ def interpretation_schema() -> dict:
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["textures", "hair"],
+        "required": ["figure", "textures", "hair"],
         "properties": {
+            # The body-generation prompt: the interpreter writes it in the
+            # figure component's trained format, exactly like every texture
+            # slot gets its component's format. Identity conditions on
+            # THIS, never on the raw description.
+            "figure": slot_prompt,
             "textures": {
                 "type": "object",
                 "additionalProperties": False,

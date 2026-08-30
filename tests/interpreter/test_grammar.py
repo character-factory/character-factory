@@ -34,6 +34,7 @@ def walk(parser, text: str) -> tuple[bool, int]:
 
 def valid_interpretation() -> dict:
     return {
+        "figure": {"prompt": "an average adult of medium height and build"},
         "textures": {
             "skin": {"prompt": "medium skin tone, adult"},
             "eye": {"prompt": "brown iris"},

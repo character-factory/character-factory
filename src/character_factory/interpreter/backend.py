@@ -422,16 +422,18 @@ class ModelInterpreter:
         trace_id = secrets.token_hex(12) if self.config.endpoint is not None else None
         try:
             if self.config.endpoint is not None and self.generate is None:
-                slots, hair, notes, proportions = self._interpret_endpoint(
-                    instruction, prompt, schema, trace_id
-                )
+                figure, slots, hair, notes, proportions = (
+                    self._interpret_endpoint(
+                        instruction, prompt, schema, trace_id
+                    ))
             else:
                 if self.generate is not None:
                     raw = self.generate(instruction, prompt, schema)
                 else:
                     raw = self._generate_local(instruction, prompt, schema)
                 document = _parse_json(raw)
-                slots, hair, notes, proportions = _validate(document, prompt)
+                figure, slots, hair, notes, proportions = _validate(
+                    document, prompt)
         except InterpreterError:
             raise
         except Exception as error:
@@ -440,6 +442,7 @@ class ModelInterpreter:
         self._record_memory()
 
         return Interpretation(
+            figure=figure,
             slot_prompts=slots,
             hair=hair,
             backend=self.metrics.backend,
@@ -522,13 +525,19 @@ def build_instruction(slot_guidance: dict[str, str],
 
     if header is None:
         header = (
-            "You turn one character description into texture-generation "
-            "prompts for a rigged 3D human, one prompt per texture slot, "
-            "plus a hair block. Respond with a single JSON object and "
-            "nothing else."
+            "You turn one character description into generation prompts "
+            "for a rigged 3D human: one body-generation prompt (the "
+            "\"figure\"), one prompt per texture slot, and a hair block. "
+            "Respond with a single JSON object and nothing else."
         )
     lines = [
         header,
+        "",
+        "The figure prompt generates the body and face shape: one dense "
+        "physique-first sentence — sex/age, height, build, body fat and "
+        "musculature, face structure. No name, no clothing, no backstory, "
+        "no scene or style words. When the description gives no build, "
+        "write an unremarkable average one.",
         "",
         f"Texture slots (keys are singular, exactly these): "
         f"required {', '.join(vocab.REQUIRED_SLOTS)}; "
@@ -556,7 +565,8 @@ def build_instruction(slot_guidance: dict[str, str],
         "hip_width, leg_length. Omit the object — and any key — you have "
         "no clear signal for; never write 0.",
         "",
-        'Output shape: {"textures": {"<slot>": {"prompt": "…"}, …}, '
+        'Output shape: {"figure": {"prompt": "…"}, '
+        '"textures": {"<slot>": {"prompt": "…"}, …}, '
         '"hair": {…}} — slot keys at the textures level, each holding one '
         '"prompt" string.',
     ]
@@ -605,7 +615,7 @@ def _drop_nulls(value):
 _BALD_WORDS = ("bald", "shaved head", "hairless")
 
 
-def _validate(document: dict, prompt: str) -> tuple[dict, dict | None, list]:
+def _validate(document: dict, prompt: str):
     """Shape-check the decoded interpretation and decide baldness.
 
     The grammar already constrains structure when decoding is constrained;
@@ -614,6 +624,11 @@ def _validate(document: dict, prompt: str) -> tuple[dict, dict | None, list]:
     slots and mapping an explicitly bald description to hair = null."""
     from character_factory.schema import vocab
 
+    figure_entry = document.get("figure")
+    figure = figure_entry.get("prompt") if isinstance(figure_entry, dict) else None
+    if not isinstance(figure, str) or not figure.strip():
+        raise InterpreterError("interpretation has no figure prompt")
+    figure = " ".join(figure.split())
     textures = document.get("textures")
     if not isinstance(textures, dict):
         raise InterpreterError("interpretation has no textures object")
@@ -668,7 +683,7 @@ def _validate(document: dict, prompt: str) -> tuple[dict, dict | None, list]:
             if hundredths != 0.0:
                 proportions[name] = hundredths / 100.0
         proportions = proportions or None
-    return slots, hair, notes, proportions
+    return figure, slots, hair, notes, proportions
 
 
 def _repair_hair(hair: dict, notes: list) -> dict:

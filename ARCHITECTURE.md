@@ -18,14 +18,14 @@ Character Factory turns a text description into a rigged, textured, realtime
 "a lean marathon runner with cropped dark hair and green eyes, teal running vest"
         │
         ▼
-  interpretation                (a small local language model maps the description to
-        │                        per-slot texture prompts + the semantic hair block;
-        │                        the raw description also passes through untouched)
+  interpretation                (a language model writes every component's prompt in
+        │                        that component's trained format: per-slot texture
+        │                        prompts, the semantic hair block, and the figure prompt)
         ▼
-  identity generation           (raw text → 45 body/face shape coefficients + 72 resting-
-        │                        expression values on the MHR parametric body — SAMPLED
-        │                        from a generative model; the create seed picks one
-        │                        identity from the description's distribution)
+  identity generation           (figure prompt → 45 body/face shape coefficients + 72
+        │                        resting-expression values on the MHR parametric body —
+        │                        SAMPLED from a generative model; the create seed picks
+        │                        one identity from the figure prompt's distribution)
         ▼
   texture generation            (skin, eye, garment, optional shoe: UV-space
         │                        images from a FLUX.2 Klein 4B base model with
@@ -48,14 +48,17 @@ provenance. The GLB is a build artifact; the character file is the source.
 Two properties are load-bearing:
 
 - **Identity is generative, and the document records the draw.** The
-  identity model consumes the raw user description — never an interpreter
-  rewrite of it — and SAMPLES one identity from that description's
-  distribution: a single joint model (a semantic-center regressor plus a
-  conditional rectified flow over one body+proportions+face state), seeded
-  by the create seed, with noise drawn on the CPU so a (description, seed,
-  component version) triple reproduces the same body on every device. The
-  drawn values land in the character file, so the file remains an honest,
-  fully-determined recipe — stochasticity exists at create time only.
+  interpreter writes a figure prompt — a dense physique description in
+  the figure component's trained format, exactly as every texture slot
+  gets its component's format — and the identity model SAMPLES one
+  identity from that prompt's distribution: a single joint model (a
+  semantic-center regressor plus a conditional rectified flow over one
+  body+proportions+face state), seeded by the create seed, with noise
+  drawn on the CPU so a (figure prompt, seed, component version) triple
+  reproduces the same body on every device. The drawn values AND the
+  figure prompt land in the character file, so the file remains an
+  honest, fully-determined recipe — stochasticity exists at create time
+  only.
 - **Everything downstream of generation is symbolic.** Textures are recipes
   (prompt + seed + component version), hair is a semantic vocabulary, the
   body is 117 floats. Regeneration and hand-editing are both first-class.
@@ -211,8 +214,8 @@ existing character and "give her a ponytail," the interpreter returns an
 updated hair block and leaves everything else alone.
 
 **Skeletal proportions have a fixed precedence stack.** Proportions are
-identity-class output: the identity component writes them from the raw
-prompt on *every* create, regardless of which interpreter backend ran.
+identity-class output: the identity component writes them from the
+figure prompt on *every* create.
 An interpreter backend may additionally emit explicit proportion fields
 (only on clear signal in the description); when it does, those values
 override the identity component's per key. In short: **head writes →

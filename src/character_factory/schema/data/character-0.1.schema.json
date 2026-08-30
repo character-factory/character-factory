@@ -944,6 +944,9 @@
             "null"
           ]
         },
+        "figure_prompt": {
+          "type": "string"
+        },
         "generator": {
           "type": "string"
         },

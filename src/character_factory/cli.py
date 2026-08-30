@@ -138,6 +138,7 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
     print(json.dumps(
         {
             "backend": interpretation.backend,
+            "figure": interpretation.figure,
             "textures": {
                 slot: {"prompt": prompt}
                 for slot, prompt in interpretation.slot_prompts.items()

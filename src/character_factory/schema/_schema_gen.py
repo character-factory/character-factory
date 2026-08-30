@@ -198,6 +198,7 @@ def build_json_schema() -> dict:
                 "required": ["prompt", "generator", "components"],
                 "properties": {
                     "prompt": {"type": ["string", "null"]},
+                    "figure_prompt": {"type": "string"},
                     "generator": {"type": "string"},
                     "components": {
                         "type": "object",

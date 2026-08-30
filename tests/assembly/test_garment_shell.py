@@ -121,15 +121,16 @@ def test_full_coverage_fails_closed():
     assert excinfo.value.reason == "alpha-coverage-large"
 
 
-def test_cutoff_instability_fails_closed():
-    # Half the band solidly bright, a comparable region sitting between the
-    # two cutoffs: the 16/20 keys disagree and the mask is untrustworthy.
+def test_cutoff_instability_is_audit_data_not_a_gate():
+    # Half the band solidly bright, a comparable region between the two
+    # cutoffs: dark fabric legitimately hovers there, so the 16/20 IoU is
+    # recorded for visibility and the shell ships from the normative key.
     rgb = np.zeros((TEXTURE, TEXTURE, 3), dtype=np.uint8)
     rgb[30:60, :] = 180
     rgb[60:90, :] = 18
-    with pytest.raises(gs.ShellRejected) as excinfo:
-        prepare(rgb)
-    assert excinfo.value.reason == "alpha-cutoff-unstable"
+    shell = prepare(rgb)
+    assert shell.audit["cutoff_stability_iou"] < 0.99
+    assert len(shell.faces) > 0
 
 
 def test_garment_living_in_excluded_regions_fails_closed():

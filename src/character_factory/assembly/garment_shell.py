@@ -3,9 +3,10 @@
 Turns a character's own baked garment albedo into a closed, skinned,
 body-following garment solid — the cut topology comes from *that
 texture's* keyed coverage, never from a canonical or per-style cut. The
-painted composite remains underneath (a conservative covered-body face
-set is omitted at export); a character whose extraction fails any gate
-falls back to the painted composite, silently.
+body faces under the coverage are omitted at export (a narrow skin band
+survives at the boundary); the shell is the only surface where the
+shell is. An extraction that fails a structural gate raises — the
+caller surfaces a defined error, never a silent quality downgrade.
 
 Contract highlights (SPEC-independent — assembly behavior, like turbo):
 
@@ -40,9 +41,9 @@ __all__ = [
 
 
 class ShellRejected(Exception):
-    """This character's garment cannot ship as a shell; the painted
-    composite is the correct result. `reason` is a stable machine-
-    readable code (recorded in the manifest)."""
+    """This slot's texture cannot produce the required shell geometry.
+    `reason` is a stable machine-readable code; the caller surfaces it in
+    a defined error."""
 
     def __init__(self, reason: str, detail: str = ""):
         self.reason = reason
@@ -91,7 +92,6 @@ class ShellConstants:
     strict_seam_disagreement: float = 0.5
     coverage_min: float = 0.005       # keyed fraction of the valid atlas
     coverage_max: float = 0.90
-    cutoff_stability_iou: float = 0.99      # measured 0.9977+ across seeds
     excluded_removed_max: float = 0.25  # keyed fraction the excluded-region
                                         # masking may remove before the mask
                                         # itself is judged untrustworthy
@@ -123,8 +123,8 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
     region contract — garment never paints in the head region; the shoe
     is confined to the feet region) subtracts from the
     key exactly as the compositor's region contract does for paint, so
-    the shell keys the same effective coverage the painted path
-    composites. Region masking is atlas contract, never content repair.
+    the shell keys the effective coverage the region contract declares.
+    Region masking is atlas contract, never content repair.
     `coverage_alpha` replaces luminance keying with an authoritative
     coverage channel (the shoe overlay's alpha — its generator paints
     real occupancy, so no cutoff estimation applies and the
@@ -177,8 +177,11 @@ def prepare_alpha(rgb: np.ndarray, atlas_valid: np.ndarray,
     union = int((hard | check).sum())
     intersection = int((hard & check).sum())
     stability = intersection / max(union, 1)
-    if stability < constants.cutoff_stability_iou:
-        raise ShellRejected("alpha-cutoff-unstable", f"IoU {stability:.6f}")
+    # Cutoff stability is REPORT-ONLY: dark fabrics legitimately hover
+    # near the luminance cutoffs (a plum wool coat measures ~0.97, a
+    # brown habit ~0.93), and the cut always derives from the one
+    # normative cutoff regardless. The IoU lands in the audit for
+    # visibility; it rejects nothing.
     soft = ndimage.gaussian_filter(
         hard.astype(np.float32), sigma=constants.alpha_sigma_px)
     np.clip(soft, 0.0, 1.0, out=soft)
@@ -803,8 +806,7 @@ def prepare_shell(surface, garment_rgb: np.ndarray, identity_vertices: np.ndarra
     Works for any slot whose coverage lives in the body atlas: garments
     (luminance-keyed) and shoes (`coverage_alpha` from the baked
     overlay). Raises ShellRejected (with a stable reason code) on any
-    gate; the caller falls back to the painted composite for this
-    character.
+    gate; the caller surfaces the reason as a defined error.
     """
     constants = constants or ShellConstants()
     alpha = prepare_alpha(garment_rgb, atlas_valid, constants,

@@ -272,7 +272,7 @@ three required, one optional:
 | `skin` | yes | The body's canonical UV atlas | Full-body skin albedo: body, face, hands, feet, scalp. |
 | `eye` | yes | The eyeball surface (its own concentric UV layout) | One eye albedo (iris, sclera). The single `eye` recipe applies to **both** eyes. |
 | `garment` | yes | The body's canonical UV atlas | Clothing painted over an unoccupied (black) background; coverage is recovered from the image itself at assembly time via a calibrated luminance key. |
-| `shoe` | no | The generating component's single-shoe canvas (a fixed layout the component declares and ships mapping data for) | One shoe, painted once; at assembly the component's **foot chart** maps the canvas onto the atlas's foot regions of *both* feet (the second foot is mirrored by the chart — the image is never mirrored by hand) and composites above the garment layer (§9). **All footwear composites into the foot regions**; capability growth (say, boots) arrives as a new version of the slot's component widening its declared vocabulary, never as a sibling slot or component. A barefoot character simply has no `shoe` key. |
+| `shoe` | no | The generating component's single-shoe canvas (a fixed layout the component declares and ships mapping data for) | One shoe, painted once; at assembly the component's **foot chart** maps the canvas onto the atlas's foot regions of *both* feet (the second foot is mirrored by the chart — the image is never mirrored by hand), and the mapped coverage becomes the shoe mesh (§9). **All footwear derives from the foot regions**; capability growth (say, boots) arrives as a new version of the slot's component widening its declared vocabulary, never as a sibling slot or component. A barefoot character simply has no `shoe` key. |
 
 An optional slot that is not used MUST be omitted entirely — an explicit
 `null` is invalid for texture slots (unlike `hair`, which is a required key
@@ -498,17 +498,22 @@ artifact, without prescribing an implementation.
 1. **Body.** Evaluate the rig (§4.1) with `body.identity`,
    `body.resting_expression`, and a rest body pose. The result is the body
    mesh and the rest skeleton.
-2. **Surface.** Apply the `skin` albedo to the body's canonical UV atlas.
+2. **Surface.** Apply the `skin` albedo to the body's canonical UV atlas
+   — the body's albedo is the skin image, and only the skin image.
    Recover garment coverage from the `garment` albedo (luminance-keyed
-   occupancy over the black background) and composite covered texels over
-   the skin image. If a `shoe` slot is present, map its single-shoe canvas
-   onto both feet through the generating component's foot-chart data
+   occupancy over the black background); the covered region becomes a
+   separate body-following garment mesh carrying the garment texture,
+   and the body faces under it are omitted (a narrow skin band survives
+   at the coverage boundary). If a `shoe` slot is present, map its
+   single-shoe canvas onto both feet through the generating component's
+   foot-chart data
    (style-aware occupancy: open styles keep only their straps, the shaft
-   region is cut to the style's height) and composite the result above the
-   garment layer. The compositing order is normative:
-   **skin, then garment, then shoe** — shoe occludes garment (socks under
-   shoes), garment occludes skin. The final composited image is the body's
-   albedo.
+   region is cut to the style's height); the mapped coverage becomes a
+   shoe mesh the same way. The layering order is normative:
+   **skin, then garment, then shoe** — shoe geometry occludes garment
+   (socks under shoes), garment occludes skin. A slot texture whose
+   coverage cannot produce valid geometry is a defined assembly error,
+   never a silent quality downgrade.
 3. **Eyes.** Apply the `eye` albedo to both eyeball meshes, placed in the
    rig's eye sockets.
 4. **Mouth** (`"mouth-interior"` topology only). Remove the rig version's

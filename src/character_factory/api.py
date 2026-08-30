@@ -226,19 +226,19 @@ def assemble(
 
     Garments and shoes ship as separate skinned shell meshes with their
     own cloth material, and the body faces underneath are omitted — the
-    body mesh renders skin only (a narrow skin band survives at each
-    shell's coverage boundary). A slot whose extraction fails a
-    structural gate silently keeps the painted composite; the manifest's
-    `garments` block records which mode shipped, with the rejection
-    reason.
+    body mesh renders skin, only ever skin (a narrow skin band survives
+    at each shell's coverage boundary). There is no painted mode: a slot
+    whose extraction fails a structural gate is a defined AssetError
+    naming the reason, so the broken bake gets fixed instead of shipping
+    a garment lit as skin.
     """
     import io
 
     import numpy as np
     from PIL import Image
 
-    from character_factory.assembly.composite import AtlasDefinition, composite_albedo
-    from character_factory.registry import ComponentNotPublished, Registry
+    from character_factory.assembly.composite import AtlasDefinition
+    from character_factory.registry import Registry
 
     if not isinstance(character, Character):
         character = Character.load(character)
@@ -252,16 +252,11 @@ def assemble(
     skin = layer("skin")
     garment = layer("garment")
 
-    assets_component: Path | None
-    try:
-        assets_component = registry.ensure("assembly-assets")
-        atlas = AtlasDefinition.load(assets_component)
-    except (ComponentNotPublished, FileNotFoundError):
-        # Pre-publish fallback: composite without region masks or eyes.
-        # Correct compositing order and keying still apply; masks, the
-        # eyeball asset, and placement data arrive with assembly-assets.
-        assets_component = None
-        atlas = AtlasDefinition(resolution=skin.shape[0])
+    # assembly-assets is a hard requirement of the character contract —
+    # region masks, the eyeball asset, placement data, and the mouth
+    # interior all live in it. There is no reduced-quality assembly.
+    assets_component = registry.ensure("assembly-assets")
+    atlas = AtlasDefinition.load(assets_component)
 
     from character_factory.assembly import (
         Attachment,
@@ -320,48 +315,54 @@ def assemble(
         surface_faces = rig.render.faces
 
     # Eyes: socket faces removed, eyeballs fitted to the rims, each parented
-    # to its eye joint, textured with the slot's albedo.
-    if assets_component is not None and (assets_component / "eye_placement.json").is_file():
-        import dataclasses
+    # to its eye joint, textured with the slot's albedo. Placement data is
+    # part of the assets contract — a component without it cannot build a
+    # complete character.
+    if not (assets_component / "eye_placement.json").is_file():
+        raise ValueError(
+            "the resolved assembly-assets component carries no eye "
+            "placement data; the character contract requires eyes"
+        )
+    import dataclasses
 
-        from character_factory.assembly.eyes import socket_backing
+    from character_factory.assembly.eyes import socket_backing
 
-        eye_assets = EyeAssets.load(assets_component)
-        eye_png = _load_asset(assets_dir, "eye", character).read_bytes()
-        if rig.render is not None:
-            # A render LOD carries its own hand-authored aperture: the
-            # selection cannot be transferred by mapping the source one.
-            eye_assets = dataclasses.replace(
-                eye_assets, socket_faces=rig.render.eye_faces)
-        remove_faces = eye_assets.socket_faces
-        for placed in place_eyes(surface_vertices, surface_faces, eye_assets):
-            attachments.append(
-                Attachment(
-                    name=f"eye_{placed.side}",
-                    vertices=placed.vertices,
-                    faces=placed.faces,
-                    uv=placed.uv,
-                    parent_joint=rig.role_index(f"{placed.side}_eye"),
-                    albedo_png=eye_png,
-                    roughness=0.15,   # cornea is glossy
-                )
+    eye_assets = EyeAssets.load(assets_component)
+    eye_png = _load_asset(assets_dir, "eye", character).read_bytes()
+    if rig.render is not None:
+        # A render LOD carries its own hand-authored aperture: the
+        # selection cannot be transferred by mapping the source one.
+        eye_assets = dataclasses.replace(
+            eye_assets, socket_faces=rig.render.eye_faces)
+    remove_faces = eye_assets.socket_faces
+    for placed in place_eyes(surface_vertices, surface_faces, eye_assets):
+        attachments.append(
+            Attachment(
+                name=f"eye_{placed.side}",
+                vertices=placed.vertices,
+                faces=placed.faces,
+                uv=placed.uv,
+                parent_joint=rig.role_index(f"{placed.side}_eye"),
+                albedo_png=eye_png,
+                roughness=0.15,   # cornea is glossy
             )
-            # The dark occluder skirt behind the eyeball: without it the
-            # rim-to-eyeball gap (measured ~1.5 mm) reads straight through
-            # the head. Skull-parented: eyelid morphs close in front of it.
-            backing_v, backing_f = socket_backing(placed.rim, placed.gaze)
-            attachments.append(
-                Attachment(
-                    name=f"eye_{placed.side}_backing",
-                    vertices=backing_v,
-                    faces=backing_f,
-                    uv=None,
-                    parent_joint=rig.role_index("head"),
-                    base_color=(0.055, 0.032, 0.03, 1.0),
-                    double_sided=True,
-                    roughness=0.9,
-                )
+        )
+        # The dark occluder skirt behind the eyeball: without it the
+        # rim-to-eyeball gap (measured ~1.5 mm) reads straight through
+        # the head. Skull-parented: eyelid morphs close in front of it.
+        backing_v, backing_f = socket_backing(placed.rim, placed.gaze)
+        attachments.append(
+            Attachment(
+                name=f"eye_{placed.side}_backing",
+                vertices=backing_v,
+                faces=backing_f,
+                uv=None,
+                parent_joint=rig.role_index("head"),
+                base_color=(0.055, 0.032, 0.03, 1.0),
+                double_sided=True,
+                roughness=0.9,
             )
+        )
 
     # Hair: synthesized by the provider from the character's semantic block
     # and the evaluated body, parented to the head joint.
@@ -428,28 +429,27 @@ def assemble(
     # the garment texture and the shoe overlay — becomes its own skinned,
     # body-following closed solid with cloth material, and the body faces
     # under it are omitted (a narrow skin band survives at the coverage
-    # boundary so skin runs continuously under the rim). The body albedo
-    # carries only the layers that did NOT ship as geometry, so with
-    # shells shipped the body mesh is skin alone. A slot whose extraction
-    # fails a structural gate keeps the painted composite, reason in the
-    # manifest.
+    # boundary so skin runs continuously under the rim). The body mesh is
+    # ONLY EVER SKIN: its albedo is the skin texture, nothing composited.
+    # There is no painted mode — a slot whose extraction fails a
+    # structural gate is a defined error, and the failed bake gets fixed.
     from character_factory.assembly import garment_shell as shell_module
     from character_factory.assembly.export import SkinnedAttachment
 
     skinned_attachments: list[SkinnedAttachment] = []
     garments_manifest: dict = {}
-    shelled: dict[str, bool] = {}
 
-    def _attempt(slot: str, rgb, coverage_alpha, excluded) -> None:
-        garments_manifest[slot] = {"render_mode": "painted"}
-        shelled[slot] = False
+    def _shell(slot: str, rgb, coverage_alpha, excluded) -> None:
         shell, rejection = _prepare_shell(
             rig, character, evaluation, rgb, surface_vertices, slot=slot,
             coverage_alpha=coverage_alpha, excluded=excluded)
         if shell is None:
-            garments_manifest[slot] = {
-                "render_mode": "painted", "reason": rejection}
-            return
+            raise AssetError(
+                f"{slot} shell extraction failed ({rejection}): the baked "
+                f"{slot} texture cannot produce the required geometry — "
+                "re-bake the slot or edit the recipe; the body is never "
+                "painted"
+            )
         # The shell's texture is the baked slot image with its boundary
         # colors bled outward (atlas hygiene): boundary faces and rim
         # insets sample real material, never keyed-out background. The
@@ -473,7 +473,6 @@ def assemble(
             else np.concatenate([
                 np.asarray(remove_faces, dtype=np.int64),
                 shell.covered_body_faces]))
-        shelled[slot] = True
         garments_manifest[slot] = {
             "render_mode": "shell",
             "shell": {
@@ -485,31 +484,20 @@ def assemble(
             },
         }
 
-    resolution = skin.shape[0]
-    scaled_atlas = atlas.at_resolution(resolution)
     if "garment" in character.textures:
-        _attempt("garment", garment, None, scaled_atlas.head_mask)
+        # Region masks scale to each slot texture's own resolution.
+        _shell("garment", garment, None,
+               atlas.at_resolution(garment.shape[0]).head_mask)
     if shoe_overlay is not None:
         # The shoe's coverage is the overlay's own alpha (authoritative);
         # the atlas region contract confines it to the feet region.
-        shoe_excluded = (
-            ~scaled_atlas.feet_mask if scaled_atlas.feet_mask is not None
-            else None)
-        _attempt("shoe", shoe_overlay[:, :, :3], shoe_overlay[:, :, 3],
-                 shoe_excluded)
+        feet = atlas.at_resolution(shoe_overlay.shape[0]).feet_mask
+        _shell("shoe", shoe_overlay[:, :, :3], shoe_overlay[:, :, 3],
+               ~feet if feet is not None else None)
 
-    # The body albedo: only what still renders ON the body. With both
-    # shells shipped this is pure skin — the skin band at every shell rim
-    # shows skin, never painted-on garment.
-    albedo = composite_albedo(
-        skin,
-        np.zeros_like(garment) if shelled.get("garment") else garment,
-        None if shelled.get("shoe") else shoe_overlay,
-        scaled_atlas,
-    )
-
+    # The body's albedo is the skin texture, verbatim.
     png = io.BytesIO()
-    Image.fromarray(albedo).save(png, format="PNG")
+    Image.fromarray(skin).save(png, format="PNG")
 
     result = export_character_glb(
         rig,

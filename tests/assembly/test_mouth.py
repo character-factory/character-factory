@@ -303,11 +303,13 @@ def _assemble_example(tmp_path):
     # written against rather than following what the index serves today.
     registry = source_topology_registry()
 
+    from tests.assembly.test_api import band_garment_png
+
     assets = tmp_path / "assets-mouth-interior"
     assets.mkdir(exist_ok=True)
-    for slot, color in (("skin", (170, 132, 105)), ("eye", (90, 60, 40)),
-                        ("garment", (0, 0, 0))):
+    for slot, color in (("skin", (170, 132, 105)), ("eye", (90, 60, 40))):
         Image.new("RGB", (64, 64), color).save(assets / f"{slot}.png")
+    band_garment_png(assets / "garment.png")
     document = jsonlib.loads((EXAMPLES / "storyteller.char.json").read_text())
     resolved = registry.resolve_slots(sorted(document["textures"]))
     for slot, recipe in document["textures"].items():

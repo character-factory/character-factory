@@ -14,7 +14,6 @@ import pytest
 from character_factory.server.service import (
     CharacterService,
     ServiceError,
-    _delivery_warnings,
 )
 
 EXAMPLES = Path(__file__).parents[2] / "examples" / "characters"
@@ -512,30 +511,3 @@ def test_openapi_and_runtime_describe_binary_resources(client, service, stored):
     )
     assert response.status_code == 400
     assert "Content-Type" in response.json()["error"]
-
-
-def test_painted_fallback_is_a_structured_job_warning():
-    warnings = _delivery_warnings(
-        {"garments": {
-            "garment": {"render_mode": "painted", "reason": "cut-empty"},
-            "shoe": {"render_mode": "shell"},
-        }},
-    )
-    assert warnings == [
-        {
-            "code": "geometry_not_delivered",
-            "message": "garment shell extraction fell back to painted "
-                       "rendering for this character",
-            "details": {
-                "slot": "garment", "expected": "shell", "actual": "painted",
-                "reason": "cut-empty",
-            },
-        },
-    ]
-    # Shoes warn identically; delivered shells never warn.
-    assert [w["details"]["slot"] for w in _delivery_warnings(
-        {"garments": {"garment": {"render_mode": "shell"},
-                      "shoe": {"render_mode": "painted", "reason": "x"}}}
-    )] == ["shoe"]
-    assert _delivery_warnings(
-        {"garments": {"garment": {"render_mode": "shell"}}}) == []

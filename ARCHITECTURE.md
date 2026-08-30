@@ -404,25 +404,23 @@ system and deliberately boring:
 1. **Rig evaluation.** The MHR TorchScript rig (Apache 2.0, fetched as a
    registry component, ~700 MB, CPU-capable) maps identity + rest pose +
    resting expression to 18,439 vertices and a 127-joint skeleton.
-2. **UV compositing.** The garment image's coverage is recovered by a
+2. **Coverage recovery.** The body albedo is the skin texture, verbatim
+   — nothing is ever composited onto the body. The garment image's
+   coverage is recovered by a
    calibrated luminance key against its black background (dark garments are
-   protected by a value floor in the generator), cleaned against a small
-   library of coverage templates, feathered, and composited over the skin
-   image; the head region is masked from garment coverage. The `shoe`
+   protected by a value floor in the generator) with the head region
+   masked out; it drives the garment shell's cut, not paint. The `shoe`
    image, when present, is a single-shoe canvas: the component's foot
    chart (per-texcoord canvas coordinates shipped with the model, because
    the canvas layout is part of each version's output contract)
-   bakes it onto the foot islands of both feet — the second foot through
+   bakes it into atlas space over the foot islands of both feet — the
+   second foot through
    the chart's horizontal mirror — with style-aware occupancy (open styles
    keep only their straps; the shaft is cut to the style's declared
-   height), and the resulting RGBA overlay composites above the garment
-   layer — the normative order is skin, then garment, then shoe
-   (SPEC.md §9). That is the *painted* composite — the fallback form.
-   When slots ship as shells (the standard outcome, next step), their
-   layers are left out of the body albedo entirely: with garment and
-   shoe both shipped as geometry, the body mesh carries pure skin, and
-   the narrow skin band retained at each shell's coverage boundary shows
-   skin — never painted-on garment — at the rim.
+   height); the resulting RGBA overlay's alpha drives the shoe shell's
+   cut, confined to the feet region (SPEC.md §9). Where the shells
+   overlap in depth, geometry layers naturally: shoe over garment over
+   the skin band at each rim.
 
    **Garment shells.** The baked garment texture then becomes geometry
    (standard assembly behavior, never recorded in the character
@@ -450,10 +448,10 @@ system and deliberately boring:
    fail-closed ladder of structural gates (alpha quality, seam-crack
    detection, topology, closed-solid and weight audits) — a shell that
    builds as a valid solid ships; posing behavior is the consumer's to
-   see, not a reason to withhold geometry. A slot that fails a
-   structural gate keeps the painted composite,
-   and the manifest's `garments` block records the shipped `render_mode`
-   per slot (with the rejection reason when an extraction was attempted),
+   see, not a reason to withhold geometry. There is no painted fallback:
+   a slot that fails a structural gate is a defined assembly error
+   naming the reason, and the broken bake gets fixed. The manifest's
+   `garments` block records each slot's shell inventory,
    so consumers never sniff. Validators validate; nothing repairs a
    nonconforming mask. The v0.1 boundary treatment is the feathered
    soft-threshold cut (crossings refined against the texture's own alpha)
@@ -569,8 +567,8 @@ of conventions chosen so the artifact imports and retargets correctly:
   Minor versions are additive, while a field-shape or meaning change bumps
   the major. A consumer that pins a tested contract rejects any other
   version loudly instead of inferring from field shapes. The per-slot
-  `garments` block declares `render_mode: "shell" | "painted"` for each
-  garment-class slot, with the shell inventory or rejection reason. The jaw
+  `garments` block declares `render_mode: "shell"` for each
+  garment-class slot, with its shell inventory. The jaw
   block states its contract explicitly: rotation sign (positive about the
   local axis opens, in the file's right-handed glTF frame — handedness
   conversion at import flips it) and the two jaw compositions

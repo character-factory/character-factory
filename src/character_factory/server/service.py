@@ -35,28 +35,6 @@ _ASSET_SLOTS_FILE_RE = None
 _LOG = logging.getLogger(__name__)
 
 
-def _delivery_warnings(manifest: dict) -> list[dict]:
-    """Garment shells are the standard delivery; a painted fallback is a
-    per-character quality event worth surfacing on the job."""
-    warnings = []
-    for slot, delivered in manifest.get("garments", {}).items():
-        if delivered.get("render_mode") != "shell":
-            warnings.append({
-                "code": "geometry_not_delivered",
-                "message": (
-                    f"{slot} shell extraction fell back to painted "
-                    "rendering for this character"
-                ),
-                "details": {
-                    "slot": slot,
-                    "expected": "shell",
-                    "actual": delivered.get("render_mode"),
-                    "reason": delivered.get("reason"),
-                },
-            })
-    return warnings
-
-
 class ServiceError(ValueError):
     """A client-caused failure (bad input, unknown id, conflicting state)."""
 
@@ -366,10 +344,8 @@ class CharacterService:
             ):
                 return
             record = self.assemble(character_id)
-            manifest = self.manifest(character_id)
             job_state = self.jobs.internal(job_id)
             warnings = list(job_state.get("warnings", []))
-            warnings.extend(_delivery_warnings(manifest))
             self.jobs.update(job_id, warnings=warnings)
             state = self._state(self.library_dir / character_id)
             state.update(active_job_id=None, last_job_id=job_id)

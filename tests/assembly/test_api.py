@@ -26,6 +26,26 @@ def solid_png(path: Path, color, size=64):
     Image.new("RGB", (size, size), color).save(path)
 
 
+def band_garment_png(path, resolution=1024, color=(140, 60, 60)):
+    """A fitted torso-band garment synthesized from the real rig's own
+    geometry, so it keys cleanly and extracts on any identity."""
+    from PIL import Image
+
+    from character_factory.assembly import garment_shell as gs
+    from character_factory.assembly.rig import load_rig
+
+    rig = load_rig(_real_rig_dir())
+    v = rig.evaluate([0.0] * 45, [0.0] * 72).vertices
+    band = ((v[rig.faces][:, :, 1] > 95)
+            & (v[rig.faces][:, :, 1] < 135)).all(axis=1)
+    mask = np.full((resolution, resolution), -np.inf)
+    for face in rig.texcoords[rig.texcoord_faces][band] * (resolution - 1):
+        gs._fill(mask, face[0], face[1], face[2], 1.0, 1.0, 1.0)
+    rgb = np.zeros((resolution, resolution, 3), dtype=np.uint8)
+    rgb[mask > -np.inf] = color
+    Image.fromarray(rgb).save(path)
+
+
 def test_assemble_end_to_end(tmp_path):
     from character_factory.api import assemble
 
@@ -33,7 +53,7 @@ def test_assemble_end_to_end(tmp_path):
     assets.mkdir()
     solid_png(assets / "skin.png", (180, 140, 110))
     solid_png(assets / "eye.png", (90, 60, 40))
-    solid_png(assets / "garment.png", (0, 0, 0))       # nothing keyed
+    band_garment_png(assets / "garment.png")
     solid_png(assets / "shoe.png", (0, 0, 0))
     # Re-pin the example's texture components to what the active registry
     # resolves — the example pins release versions; a staged local index
@@ -63,13 +83,10 @@ def test_assemble_end_to_end(tmp_path):
     assert manifest["format"] == "character-factory/export-manifest"
     assert manifest["joint_count"] == 127
     assert manifest["units"] == "meters"
-    # The garments block states the shipped mode per slot. The all-black
-    # garment texture cannot key (luminance path) and fails closed to
-    # painted; the shoe overlay's alpha is authoritative occupancy, so
-    # even a black canvas bakes real coverage — black shoes, shipped as a
-    # shell (two feet, upper + sole islands).
-    assert manifest["garments"]["garment"] == {
-        "render_mode": "painted", "reason": "alpha-coverage-small"}
+    # Every slot ships as a shell — there is no painted mode. The shoe
+    # overlay's alpha is authoritative occupancy, so even a black canvas
+    # bakes real coverage: black shoes, two feet, upper + sole islands.
+    assert manifest["garments"]["garment"]["render_mode"] == "shell"
     shoe_entry = manifest["garments"]["shoe"]
     assert shoe_entry["render_mode"] == "shell"
     assert shoe_entry["shell"]["hidden_body_faces"] > 0
@@ -109,13 +126,13 @@ def test_assemble_end_to_end(tmp_path):
                          ("c_head", "hair")):
         assert names[child] in gltf["nodes"][names[joint]]["children"]
     # The body primitive removes 64 eye faces, the 288-face mouth portal,
-    # and the faces under the shoe shell, then appends the 806-face socket
+    # and the faces under both shells, then appends the 806-face socket
     # strip. It still skins exactly (validated above).
     body = next(m for m in gltf["meshes"] if m["name"] == "body")
     indices = _ra(gltf, binary, body["primitives"][0]["indices"])
-    assert (len(indices) // 3
-            == 36874 - 64 - 288 + 806
-            - shoe_entry["shell"]["hidden_body_faces"])
+    hidden = (shoe_entry["shell"]["hidden_body_faces"]
+              + manifest["garments"]["garment"]["shell"]["hidden_body_faces"])
+    assert len(indices) // 3 == 36874 - 64 - 288 + 806 - hidden
 
 
 def test_assemble_is_deterministic(tmp_path):
@@ -125,7 +142,7 @@ def test_assemble_is_deterministic(tmp_path):
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
     solid_png(assets / "eye.png", (90, 60, 40))
-    solid_png(assets / "garment.png", (0, 0, 0))
+    band_garment_png(assets / "garment.png")
     character = Character.load(EXAMPLES / "freediver.char.json")
     first = assemble(character, assets, tmp_path / "a.glb").read_bytes()
     second = assemble(character, assets, tmp_path / "b.glb").read_bytes()
@@ -140,7 +157,7 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
     solid_png(assets / "eye.png", (90, 60, 40))
-    solid_png(assets / "garment.png", (0, 0, 0))
+    band_garment_png(assets / "garment.png")
     out = assemble(
         EXAMPLES / "freediver.char.json", assets, tmp_path / "diver.glb"
     )
@@ -172,7 +189,7 @@ def test_mouth_interior_refused_without_rig_mouth_data(tmp_path):
     assets.mkdir()
     solid_png(assets / "skin.png", (128, 128, 128))
     solid_png(assets / "eye.png", (90, 60, 40))
-    solid_png(assets / "garment.png", (0, 0, 0))
+    band_garment_png(assets / "garment.png")
     document = jsonlib.loads((EXAMPLES / "freediver.char.json").read_text())
     document["body"]["topology"] = "mouth-interior"
     with pytest.raises(ValueError, match="mouth data"):
@@ -193,11 +210,10 @@ def _repinned_character(tmp_path, name="marathon-runner"):
     return path
 
 
-def test_garment_shell_fails_closed_to_the_painted_build(tmp_path):
-    """A garment texture that cannot key (all black) assembles painted —
-    the certification ladder fails closed per character, and the manifest
-    records the rejection reason."""
-    from character_factory.api import assemble
+def test_unextractable_garment_is_a_defined_error(tmp_path):
+    """A garment texture that cannot key (all black) is a broken bake:
+    assembly raises a named AssetError — the body is never painted."""
+    from character_factory.api import AssetError, assemble
 
     assets = tmp_path / "assets"
     assets.mkdir()
@@ -207,24 +223,17 @@ def test_garment_shell_fails_closed_to_the_painted_build(tmp_path):
     solid_png(assets / "shoe.png", (0, 0, 0))
     character_path = _repinned_character(tmp_path)
 
-    out = assemble(character_path, assets, tmp_path / "painted.glb",
-                   registry=source_topology_registry())
-    gltf, _ = parse_glb(out.read_bytes())
-    assert all(m["name"] != "garment" for m in gltf["meshes"])
-    assert gltf["asset"]["extras"]["garments"]["garment"] == {
-        "render_mode": "painted", "reason": "alpha-coverage-small"}
-    # The shoe fails closed independently of the garment — but a black
-    # canvas is real occupancy to the overlay baker, so the shoe ships.
-    assert gltf["asset"]["extras"]["garments"]["shoe"]["render_mode"] == "shell"
-    assert any(m["name"] == "shoe" for m in gltf["meshes"])
+    with pytest.raises(AssetError, match="alpha-coverage-small"):
+        assemble(character_path, assets, tmp_path / "broken.glb",
+                 registry=source_topology_registry())
 
 
 def test_garment_shell_ships_when_every_gate_passes(tmp_path):
     """The full path on the real rig: a fitted torso-band garment texture
     (synthesized from the body's own geometry, so it keys cleanly)
-    extracts, certifies across the pose set, and ships as a skinned
-    closed solid riding the body's skin — with the painted composite
-    still underneath and the covered body faces omitted."""
+    extracts and ships as a skinned
+    closed solid riding the body's skin, with the covered body faces
+    omitted."""
     from PIL import Image
 
     from character_factory.api import assemble

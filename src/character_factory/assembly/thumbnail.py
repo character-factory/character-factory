@@ -150,8 +150,11 @@ def render_thumbnail(
             inside = (w0 >= 0) & (w1 >= 0) & (w2 >= 0)
             if not inside.any():
                 continue
-            # perspective-correct interpolation via 1/z
-            iz = w2 * inv_z[tri[0]] + w0 * inv_z[tri[1]] + w1 * inv_z[tri[2]]
+            # perspective-correct interpolation via 1/z. Edge-function
+            # weights belong to the OPPOSITE corner: the v0->v1 edge
+            # function (w0) weights v2, v1->v2 (w1) weights v0, and the
+            # remainder (w2) weights v1.
+            iz = w1 * inv_z[tri[0]] + w2 * inv_z[tri[1]] + w0 * inv_z[tri[2]]
             depth = 1.0 / np.maximum(iz, 1e-12)
             rows = ys[inside].astype(np.int64)
             cols = xs[inside].astype(np.int64)
@@ -159,7 +162,7 @@ def render_thumbnail(
             if not nearer.any():
                 continue
             rows, cols = rows[nearer], cols[nearer]
-            b0, b1, b2 = (w[inside][nearer] for w in (w2, w0, w1))
+            b0, b1, b2 = (w[inside][nearer] for w in (w1, w2, w0))
             d = depth[inside][nearer]
 
             def lerp(values):

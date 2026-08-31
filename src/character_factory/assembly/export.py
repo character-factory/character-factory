@@ -226,13 +226,27 @@ def _split_corner_uv(vertices: np.ndarray, faces: np.ndarray,
 
 
 def _vertex_normals(positions: np.ndarray, indices: np.ndarray) -> np.ndarray:
-    normals = np.zeros_like(positions)
+    """Smooth vertex normals, welded by POSITION.
+
+    Exported meshes carry vertices split per (position, UV-corner) pair —
+    the split glTF forces at texture seams. Shading must not see those
+    splits: an organic surface wants one normal per point in space, so
+    face normals accumulate onto position groups and every co-located
+    vertex shares the result. Without this, UV-seam-split regions (the
+    whole of a shell, whose corners rarely share exact UVs) shade
+    per-face — faceted."""
+    key = np.ascontiguousarray(np.round(positions * 1e5).astype(np.int64))
+    packed = key.view([("x", np.int64), ("y", np.int64), ("z", np.int64)]).ravel()
+    _, group = np.unique(packed, return_inverse=True)
+    group = np.asarray(group).reshape(-1)
+    accum = np.zeros((int(group.max()) + 1, 3), dtype=positions.dtype)
     triangles = positions[indices]
     face_normals = np.cross(
         triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
     )
     for corner in range(3):
-        np.add.at(normals, indices[:, corner], face_normals)
+        np.add.at(accum, group[indices[:, corner]], face_normals)
+    normals = accum[group]
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
     lengths[lengths == 0] = 1.0
     return normals / lengths

@@ -339,6 +339,13 @@ def create_app(service: CharacterService):
                                        "A bake-time option; not recorded in "
                                        "the character document.",
                     },
+                    "seed": {
+                        "type": "integer",
+                        "description": "Generation seed. Honored when given; "
+                                       "otherwise the server draws one at "
+                                       "random and records it in the "
+                                       "document's provenance.seed.",
+                    },
                 },
             }}}}},
     )
@@ -352,6 +359,7 @@ def create_app(service: CharacterService):
             job = service.create_from_prompt(
                 payload["prompt"], interpreter=payload.get("interpreter"),
                 turbo=bool(payload.get("turbo", False)),
+                seed=payload.get("seed"),
                 idempotency_key=request.headers.get("Idempotency-Key"),
             )
             response.headers["Location"] = f"/v0/jobs/{job['id']}"

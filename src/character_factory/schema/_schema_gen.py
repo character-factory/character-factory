@@ -199,6 +199,7 @@ def build_json_schema() -> dict:
                 "properties": {
                     "prompt": {"type": ["string", "null"]},
                     "figure_prompt": {"type": "string"},
+                    "seed": {"type": "integer"},
                     "generator": {"type": "string"},
                     "components": {
                         "type": "object",

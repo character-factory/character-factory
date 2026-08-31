@@ -455,6 +455,7 @@ descriptive, not instructions to a reader.
 | --- | --- | --- | --- |
 | `prompt` | string or null | yes | The original free-text character description the file was generated from. `null` for hand-authored or edited files. |
 | `figure_prompt` | string | no | The body-generation prompt the interpreter wrote for the figure component (the text the identity model actually conditioned on). Descriptive, like `prompt`. |
+| `seed` | integer | no | The creation seed the generating pipeline used (given by the caller, or drawn at random by the server when unspecified). Slot and hair seeds derive from it. Descriptive. |
 | `generator` | string | yes | The producing software and version, as `<name>/<version>`. |
 | `components` | object | yes | Map from **component name** to `{ "version": string, "sha256": string (optional) }` for every generative component that produced values in this file — at minimum `make-figure` (which produced `body.identity` and `body.resting_expression`) and one entry per texture component in use. An `interpreter` entry records the component that mapped the free-text description onto the per-slot prompts, the figure prompt, and the hair block, like any other generative component. The hair provider's entry (the first-party default is `make-wig`) records its version once geometry has been synthesized — the `hair` block itself carries no component field, because it is semantic vocabulary, not a texture slot. |
 | `created` | string | no | RFC 3339 timestamp. |

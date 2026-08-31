@@ -356,8 +356,8 @@ class _Checker:
             return
         self.check_keys(
             prov,
-            {"prompt", "figure_prompt", "generator", "components", "created",
-             "notes"},
+            {"prompt", "figure_prompt", "seed", "generator", "components",
+             "created", "notes"},
             "provenance"
         )
         if "prompt" not in prov:
@@ -367,6 +367,9 @@ class _Checker:
         if "figure_prompt" in prov and not isinstance(
                 prov.get("figure_prompt"), str):
             self.error("provenance.figure_prompt", "must be a string")
+        if "seed" in prov and (not isinstance(prov.get("seed"), int)
+                               or isinstance(prov.get("seed"), bool)):
+            self.error("provenance.seed", "must be an integer")
         self.expect_str(prov, "generator", "provenance")
         components = prov.get("components")
         if components is None:

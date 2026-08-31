@@ -947,6 +947,9 @@
         "figure_prompt": {
           "type": "string"
         },
+        "seed": {
+          "type": "integer"
+        },
         "generator": {
           "type": "string"
         },

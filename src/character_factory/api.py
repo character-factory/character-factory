@@ -36,7 +36,7 @@ class CreationResult:
 def create(
     prompt: str,
     *,
-    seed: int = 0,
+    seed: int | None = None,
     registry=None,
     device: str = "cuda",
     name: str | None = None,
@@ -56,6 +56,14 @@ def create(
     from character_factory.preflight import require_generation_stack
     from character_factory.registry import Registry
 
+    # No seed means a fresh one: the server rolls it, and it travels with
+    # the generation (provenance.seed) — an unspecified seed is never a
+    # silently shared constant across a cast.
+    if seed is None:
+        import secrets
+
+        seed = secrets.randbelow(vocab.SEED_MAX + 1)
+    seed = int(seed)
     # Fail in seconds with a named cause (missing dependency, CPU-only
     # torch, dead or too-old driver) instead of minutes into a model load.
     require_generation_stack(device)
@@ -145,6 +153,7 @@ def create(
             "provenance": {
                 "prompt": prompt,
                 "figure_prompt": interpretation.figure,
+                "seed": seed,
                 "generator": f"character-factory/"
                              f"{__import__('character_factory').__version__}",
                 "components": components,
@@ -174,7 +183,7 @@ def make(
     prompt: str,
     out_dir: str | Path,
     *,
-    seed: int = 0,
+    seed: int | None = None,
     registry=None,
     device: str = "cuda",
 ) -> Path:

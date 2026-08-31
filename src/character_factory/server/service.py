@@ -204,15 +204,30 @@ class CharacterService:
 
     def create_from_prompt(
         self, prompt: str, interpreter: str | None = None,
-        turbo: bool = False, idempotency_key: str | None = None,
+        turbo: bool = False, seed: int | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
         """Submit a full create without running model work on the request.
 
         Unkeyed calls always create new work. An explicit idempotency key makes
-        an ambiguous transport retry return its original job.
+        an ambiguous transport retry return its original job. `seed` is
+        honored when given; otherwise one is drawn HERE, at submit time, so
+        the job request pins it and a retried job replays identically. The
+        document records it either way (provenance.seed).
         """
         if not isinstance(prompt, str) or not prompt.strip():
             raise ServiceError("prompt must be a non-empty string")
+        from character_factory.schema import vocab
+
+        drawn = seed is None
+        if drawn:
+            import secrets
+
+            seed = secrets.randbelow(vocab.SEED_MAX + 1)
+        elif not isinstance(seed, int) or isinstance(seed, bool) \
+                or not (0 <= seed <= vocab.SEED_MAX):
+            raise ServiceError(
+                f"seed must be an integer in [0, {vocab.SEED_MAX}]")
         if interpreter is not None:
             from character_factory.interpreter.config import (
                 load_interpreter_config,
@@ -229,8 +244,10 @@ class CharacterService:
                     "prompt": prompt,
                     "interpreter": interpreter or "default",
                     "turbo": bool(turbo),
+                    "seed": int(seed),
                 },
                 idempotency_key=idempotency_key,
+                fingerprint_exclude=("seed",) if drawn else (),
             )
         except JobConflict as error:
             raise ServiceConflict(str(error)) from error
@@ -315,6 +332,7 @@ class CharacterService:
                     result = create(
                         request["prompt"], registry=self.registry,
                         device=self.device,
+                        seed=request.get("seed"),
                         interpreter=None if requested == "default" else requested,
                         _with_report=True,
                     )

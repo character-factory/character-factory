@@ -125,8 +125,15 @@ class JobStore:
         *,
         idempotency_key: str | None = None,
         force_new: bool = False,
+        fingerprint_exclude: tuple = (),
     ) -> dict:
-        fingerprint = self._fingerprint(operation, request)
+        # `fingerprint_exclude` names request fields the SERVER filled in
+        # (a drawn seed): they execute with the job but are not part of
+        # the caller's request identity, so an idempotent replay matches
+        # and returns the original job — original seed included.
+        fingerprinted = {k: v for k, v in request.items()
+                         if k not in fingerprint_exclude}
+        fingerprint = self._fingerprint(operation, fingerprinted)
         if force_new:
             job_id = uuid.uuid4().hex[:24]
         elif idempotency_key is not None:

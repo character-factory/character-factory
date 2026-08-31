@@ -41,13 +41,15 @@ def build_mcp(service: CharacterService):
     @mcp.tool()
     def create_character(
         prompt: str, interpreter: str | None = None, turbo: bool = False,
-        idempotency_key: str | None = None,
+        seed: int | None = None, idempotency_key: str | None = None,
     ) -> dict:
         """Submit a character-creation job. Supply idempotency_key only when
-        retrying an ambiguous submission; omit it to create new work. Poll
-        get_job until it reaches succeeded, failed, or cancelled."""
+        retrying an ambiguous submission; omit it to create new work. Omit
+        seed for a fresh random one (recorded in provenance.seed); pass one
+        to reproduce. Poll get_job until it reaches succeeded, failed, or
+        cancelled."""
         return service.create_from_prompt(
-            prompt, interpreter=interpreter, turbo=turbo,
+            prompt, interpreter=interpreter, turbo=turbo, seed=seed,
             idempotency_key=idempotency_key,
         )
 

@@ -222,8 +222,15 @@ class ModelInterpreter:
             {"role": "user", "content": description},
         ]
         if getattr(tokenizer, "chat_template", None):
+            # Grammar-constrained output has no room for a hidden reasoning
+            # block, so tell templates that offer one to close it in the
+            # prefix. Left open, a reasoning model writes the JSON "inside"
+            # the block and then can only pad: the close tag is illegal
+            # under the grammar and EOS never comes. Templates without the
+            # switch ignore the argument.
             text = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages, tokenize=False, add_generation_prompt=True,
+                enable_thinking=False,
             )
         else:
             text = f"{instruction}\n\nDescription: {description}\n\nJSON: "
@@ -244,11 +251,31 @@ class ModelInterpreter:
                 do_sample=False,
                 prefix_allowed_tokens_fn=prefix_fn,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                eos_token_id=self._stop_ids(),
                 **generate_kwargs,
             )
         return tokenizer.decode(
             output[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
         )
+
+    def _stop_ids(self) -> list[int]:
+        """Every token generation should stop on: the model's configured
+        EOS plus the tokenizer's end-of-turn token. Some model releases ship
+        without a generation config, leaving the model stopping only on
+        end-of-text while the chat template ends turns with a different
+        token; the grammar allows that end-of-turn token after the closing
+        brace and nothing but whitespace afterwards, so the model emits it,
+        generation carries on, and the call pads to the token budget."""
+        configured = self._model.generation_config.eos_token_id
+        if configured is None:
+            configured = []
+        elif isinstance(configured, int):
+            configured = [configured]
+        ids = list(configured)
+        end_of_turn = self._tokenizer.eos_token_id
+        if end_of_turn is not None and end_of_turn not in ids:
+            ids.append(end_of_turn)
+        return ids
 
     def _generate_endpoint(
         self,

@@ -628,3 +628,30 @@ def test_endpoint_multi_mode_uses_strict_per_call_schemas_and_drops_nulls(
     assert result.hair["color"] == {"family": "black"}
     assert result.proportions is None
     assert result.slot_prompts["shoe"].startswith("flip flops")
+
+
+@pytest.mark.parametrize(
+    ("configured", "end_of_turn", "expected"),
+    [
+        (7, 9, [7, 9]),          # model stops on end-of-text only
+        ([7, 9], 9, [7, 9]),     # already listed: no duplicate
+        (None, 9, [9]),          # no generation config at all
+        (7, None, [7]),          # tokenizer without an EOS
+    ],
+)
+def test_local_generation_stops_on_the_end_of_turn_token(
+    configured, end_of_turn, expected
+):
+    # A model whose generation config stops only on end-of-text while
+    # its chat template ends turns with a different token would otherwise
+    # emit that token after the closing brace and pad to the budget.
+    class Model:
+        class generation_config:
+            eos_token_id = configured
+
+    class Tokenizer:
+        eos_token_id = end_of_turn
+
+    backend = ModelInterpreter(InterpreterConfig(model="x", mode="multi"))
+    backend._model, backend._tokenizer = Model(), Tokenizer()
+    assert backend._stop_ids() == expected

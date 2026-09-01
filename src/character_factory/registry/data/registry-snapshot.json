@@ -77,7 +77,7 @@
     "revision": "main"
    },
    "interpretation": {
-    "fields": "comma-separated fields: state a natural-language skin tone when the description specifies or implies a complexion (like 'light-medium neutral-toned skin' or 'deep warm-toned skin'; an optional 'MST <1-10>' code may FOLLOW it) \u2014 but when the description gives no complexion at all, OMIT tone words entirely and let the skin model choose a coherent one; never derive tone from nationality or ancestry alone; then age, gender presentation, ancestry, brow character, facial structure, lips, pores/wrinkles, optional skin conditions; never clothing, hair, or body-shape/silhouette words"
+    "fields": "comma-separated fields: ALWAYS state a natural-language skin tone first (like 'light-medium neutral-toned skin' or 'deep warm-toned skin'; an optional 'MST <1-10>' code may FOLLOW it) \u2014 use the description's own complexion when it gives one; otherwise CHOOSE a demographically plausible tone for the stated nationality, ancestry, or ethnicity, with natural person-to-person variation; a tone may be left unstated only when the description explicitly asks for that. Then: age, gender presentation, ancestry, brow character, facial structure, lips, pores/wrinkles, optional skin conditions \u2014 and when the description gives no facial features, invent SPECIFIC plausible ones fitting the character's demographics, age, and life, never generic placeholders; never clothing, hair, or body-shape/silhouette words"
    },
    "description": "Full-body skin albedo on the body's canonical UV atlas."
   },
@@ -151,7 +151,7 @@
     "revision": "main"
    },
    "interpretation": {
-    "fields": "the clothing worn on the body (garments only \u2014 footwear belongs to the shoe slot), each item with its textile/material character, comma-separated"
+    "fields": "the outfit worn on the body (garments only \u2014 footwear belongs to the shoe slot): a complete outfit \u2014 top and bottom, or one full-body garment \u2014 inventing pieces appropriate to the character when the description does not specify clothing; when it does, follow it exactly and add nothing beyond it; each item with its textile/material character, comma-separated"
    },
    "description": "Garment albedo painted over an unoccupied background; its keyed coverage becomes the character's garment shell mesh."
   },
@@ -216,7 +216,7 @@
     }
    },
    "interpretation": {
-    "fields": "the footwear's design/construction, material, color palette, and finish or pattern, comma-separated; boots and shafted styles are supported \u2014 name the style plainly (flip flops, sandals, loafers, sneakers, high tops, ankle boots, mid boots, tall boots)"
+    "fields": "the footwear's design/construction, material, color palette, and finish or pattern, comma-separated \u2014 chosen to suit the character when the description names none; boots and shafted styles are supported \u2014 name the style plainly (flip flops, sandals, loafers, sneakers, high tops, ankle boots, mid boots, tall boots)"
    },
    "description": "Footwear painted on the component's one-foot canvas; its foot chart maps the canvas onto both feet, and the mapped coverage becomes the character's shoe shell mesh. Supported styles range from below-ankle shoes to tall boots (the shaft is cut to each style's declared height), declared here so the interpreter clamps footwear prompts accordingly."
   },

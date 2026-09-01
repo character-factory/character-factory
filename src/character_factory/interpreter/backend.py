@@ -528,7 +528,15 @@ def build_instruction(slot_guidance: dict[str, str],
             "You turn one character description into generation prompts "
             "for a rigged 3D human: one body-generation prompt (the "
             "\"figure\"), one prompt per texture slot, and a hair block. "
-            "Respond with a single JSON object and nothing else."
+            "Respond with a single JSON object and nothing else.\n"
+            "\n"
+            "The downstream component models are NOT intelligent. They "
+            "cannot reason about the character, infer what was meant, or "
+            "fill gaps sensibly — each one renders exactly and only what "
+            "its prompt literally states, and anything you leave unsaid "
+            "is left to chance. YOU are the only reasoning step in the "
+            "pipeline: decide everything about this character, then spell "
+            "every decision out explicitly in the component's own terms."
         )
     lines = [
         header,
@@ -536,14 +544,23 @@ def build_instruction(slot_guidance: dict[str, str],
         "The figure prompt generates the body and face shape: one dense "
         "physique-first sentence — sex/age, height, build, body fat and "
         "musculature, face structure. No name, no clothing, no backstory, "
-        "no scene or style words. When the description gives no build, "
-        "write an unremarkable average one.",
+        "no scene or style words. When the description leaves physique or "
+        "face unstated, DERIVE them from who the character is — "
+        "occupation, discipline, age, demographics: an Olympic sprinter "
+        "gets an elite sprinter's build, an elderly scholar an elderly "
+        "scholar's. Specific and plausible, never a generic average.",
         "",
         f"Texture slots (keys are singular, exactly these): "
         f"required {', '.join(vocab.REQUIRED_SLOTS)}; "
-        f"optional {', '.join(vocab.OPTIONAL_SLOTS)}. "
-        "Omit an optional slot entirely when the description gives it "
-        "nothing (a barefoot character has no shoe key).",
+        f"optional {', '.join(vocab.OPTIONAL_SLOTS)}. ",
+        "Characters default to a complete, appropriate outfit: when the "
+        "description does not specify clothing or footwear, invent a top "
+        "garment, a bottom garment, and shoes that suit who the "
+        "character is. When the description DOES specify the outfit, "
+        "follow it exactly — a swimsuit stays a swimsuit, a barefoot or "
+        "unclothed character gets no invented coverage (omit the shoe "
+        "slot for bare feet; the skin texture renders no graphic "
+        "nudity). Never add pieces the description rules out.",
         "Each slot prompt describes only that surface — never mention "
         "another slot's content: no clothing words in the skin prompt, no "
         "footwear in the eye prompt, and footwear appears ONLY in the shoe "

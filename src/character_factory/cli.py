@@ -95,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="select a configured backend by alias (see the server's "
              "/v0/interpreters)",
     )
+    interpret.add_argument(
+        "--mode", choices=("auto", "single", "multi"),
+        help="how the model is asked: one instruction (single) or one call "
+             "per component (multi); auto picks multi for local models "
+             "(also CHARACTER_FACTORY_INTERPRETER_MODE)",
+    )
     interpret.set_defaults(func=_cmd_interpret)
 
     preflight = commands.add_parser(
@@ -132,6 +138,8 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
     config = load_interpreter_config(alias=args.backend)
     if args.model:
         config = dataclasses.replace(config, model=args.model, endpoint=None)
+    if args.mode:
+        config = dataclasses.replace(config, mode=args.mode)
     interpretation, metrics = interpret(
         args.text, device=args.device, config=config
     )
@@ -144,8 +152,9 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
                 for slot, prompt in interpretation.slot_prompts.items()
             },
             "hair": interpretation.hair,
+            "proportions": interpretation.proportions,
             "notes": interpretation.notes,
-            "metrics": metrics,
+            "metrics": metrics,   # includes mode and, in multi, seconds per call
         },
         indent=2,
     ))

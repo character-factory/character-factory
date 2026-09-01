@@ -129,7 +129,11 @@ is safe to stop in.
   their own account. Agents verify only.
 - **Verify:** `scripts/flip-verify.py step1` (anonymous). Expected: one
   `ok` line per artifact, byte count and `sha256 verified`, ending
-  `all N declared artifacts fetch and verify (anonymous)`.
+  `all N declared artifacts fetch and verify (anonymous)`. The one
+  declared exception is the `interpreter` component, whose upstream
+  repository is gated behind its license terms by design: anonymously
+  its lines read `gated upstream refuses anonymous access as declared`,
+  and its bytes were verified by the authenticated precondition run.
 - **Stop-rule:** any `FAIL` line halts the sequence — a 401/403 means a
   repo is still private; a hash or byte-count mismatch means the staged
   upload is not the approved artifact, and **nothing else happens until
@@ -320,7 +324,7 @@ step; exit 0 is the only pass.
 
 | Subcommand | Verifies | Flip step |
 |---|---|---|
-| `step1 [--authenticated]` | every registry-declared artifact fetches (anonymously by default) and matches its pinned sha256 and byte count | 1 |
+| `step1 [--authenticated]` | every registry-declared artifact fetches (anonymously by default) and matches its pinned sha256 and byte count; an entry declaring a gated upstream must refuse anonymous access instead | 1 |
 | `step2 [--authenticated]` | cold-cache resolution (`CHARACTER_FACTORY_HOME` pointed at an empty directory) + the marathon-runner example assembles to a valid GLB on CPU | 2 |
 | `step3 [--expect-sha SHA]` | anonymous `git clone` succeeds, `LICENSE`/`NOTICE` present, public HEAD is the flip sha | 3 |
 | `step4` | fresh venv → `pip install character-factory` → `validate`, `preflight`, and a cold-cache assemble through the *installed* package | 4 |

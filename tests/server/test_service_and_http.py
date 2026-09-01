@@ -120,7 +120,8 @@ def test_components_view(service):
                    "tall_boot"]
     }
     assert rows["body-rig"]["published"] is True     # launch snapshot
-    assert rows["interpreter"]["published"] is False  # default model pending
+    assert rows["interpreter"]["published"] is True  # default model pinned upstream
+    assert rows["make-wig"]["published"] is False    # engine weights pending
 
 
 def test_validate_passthrough(service):

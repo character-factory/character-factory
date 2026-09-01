@@ -18,6 +18,14 @@ FLUX.2 Klein 4B, Black Forest Labs
   The base image-generation model used by the texture components (fetched
   from its upstream repository, pinned to an exact revision).
 
+Gemma 4 E4B, Google
+  https://huggingface.co/google/gemma-4-e4b-it
+  Provided under the Gemma Terms of Use (https://ai.google.dev/gemma/terms).
+  The default interpreter language model (fetched from its upstream
+  repository as the `interpreter` component, pinned to an exact revision;
+  the repository is gated behind those terms, which the user accepts with
+  the upstream host, and nothing from it is redistributed here).
+
 UnityEyes2
   https://github.com/alexanderdsmith/UnityEyes2
   Copyright (c) 2018 Erroll Wood; updates copyright (c) 2026 A. Smith,

@@ -221,18 +221,44 @@ An interpreter backend may additionally emit explicit proportion fields
 override the identity component's per key. In short: **head writes →
 interpreter overrides per key.**
 
-- **Default backend: a small local model, shipped as a registry component**
-  like every other model — a versioned, hash-pinned artifact containing
-  quantized weights, the system prompt, few-shot examples, and a decoding
-  grammar derived from the hair block's JSON Schema. Inference is
-  grammar-constrained decoding at temperature 0, with schema validation as a
-  repair loop. The runtime is **in-process and Python-native**: installed by
-  pip as part of this package's dependencies, no external daemon to start,
-  no runtime with account linkage or telemetry. It rides the same
-  torch/transformers stack the generation extra already requires (with a
-  pure-Python constrained-decoding layer), so it adds no build step and no
-  new platform to the matrix — interpretation runs where generation runs.
-  The all-in-one install stays intact: no external LLM server.
+- **Default backend: a small local model, named by a registry component**
+  like every other model. The `interpreter` component pins an exact
+  upstream revision of an instruction-tuned ~4B-effective-parameter model
+  (Google's Gemma 4 E4B at launch; the entry records the license and the
+  fact that the upstream repository is gated behind its terms), and every
+  artifact is hash-pinned. Inference is grammar-constrained greedy decoding
+  against a grammar derived from the interpretation schema, with schema
+  validation as a repair loop. The runtime is **in-process and
+  Python-native**: installed by pip as part of this package's
+  dependencies, no external daemon to start, no runtime with account
+  linkage or telemetry. It rides the same torch/transformers stack the
+  generation extra already requires (with a pure-Python
+  constrained-decoding layer), so it adds no build step and no new
+  platform to the matrix — interpretation runs where generation runs. The
+  all-in-one install stays intact: no external LLM server.
+- **Two modes ask the same model differently.** `single` sends one
+  instruction (the registry's per-slot guidance folded in) and decodes
+  the whole interpretation document in one pass. `multi` asks one narrow
+  question per component — figure, skin, eye, garment, shoe, hair,
+  proportions — each with the raw description verbatim, a literal
+  template for that component's trained format, and a per-call grammar,
+  and assembles the document from the answers; the same validator judges
+  it whole. The split is what makes a ~4B model usable: under the single
+  instruction it drops slots, echoes the description, and invents hair
+  families it was never shown; asked seven questions it answers each one
+  specifically (the hair call carries the full closed vocabulary inline).
+  It costs seven generations instead of one (60–90 s per description on
+  a 24 GB-class card with the default model, against ≈45 s single), and it
+  is the wrong trade for a hosted frontier model, which gains nothing from
+  the split and loses the descriptive richness the single instruction
+  elicits. So `mode: auto` (the default) resolves to `multi` for local
+  models and `single` for endpoints; either can be forced per backend.
+  The call templates live in `interpreter/multi.py` and are bound to the
+  launch component versions the way the registry's per-slot guidance is —
+  and they are changed against the bench, never by taste: a small model
+  satisfies a hedged instruction ("add a skin condition only when there
+  is a reason") and takes an abstract one loosely, so the templates are
+  literal, with named slots and no conditional clauses.
 - **Load order is a rule, not a habit:** the interpreter loads, runs, and
   **releases its memory before the base image model loads** (or runs
   CPU-only). Keeping both resident is easy to do by accident with an
@@ -256,9 +282,12 @@ interpreter overrides per key.**
   component has no notion of its own vocabulary.
 - **The model choice is config, not code.** The backend accepts a registry
   component id or a local weights path; nothing in the codebase names a
-  model. Swapping candidates must take under a minute, and the step is
-  invokable standalone — `character-factory interpret "<text>"` emits the
-  decomposition JSON without running any generation — so candidate models
+  model — the default is the registry component id `interpreter`, and the
+  model behind it is registry data. Swapping candidates must take under a
+  minute, and the step is invokable standalone —
+  `character-factory interpret "<text>" [--mode single|multi]` emits the
+  decomposition JSON without running any generation, with wall time,
+  peak memory, and (in multi mode) seconds per call — so candidate models
   can be compared side by side on real prompts.
 - **Grammar-derivation note for the implementer:** the constraint layer's
   JSON-Schema support has a known limitation — non-string `const` values
@@ -271,12 +300,21 @@ interpreter overrides per key.**
   larger model. Endpoint output uses strict JSON-Schema response formatting
   where the endpoint supports it and still passes through the same validator.
   Empty or length-truncated output receives one bounded retry against the
-  same backend; malformed JSON and schema-invalid documents fail immediately.
-  It must never complicate the default path.
+  same backend with a tripled completion budget (reasoning-capable
+  endpoints spend hidden tokens inside the same limit); malformed JSON and
+  schema-invalid documents fail immediately. It must never complicate the
+  default path. **For speed and quality it is the recommended
+  configuration when one is available:** a current hosted frontier model
+  (the launch bench used an OpenAI GPT-5.6-class model) in single mode
+  interprets a description in ≈10–15 s against the local default's 60–90 s,
+  and writes richer garment prompts — the one place the local default
+  visibly lags on screen.
 - **No degraded mode.** There is deliberately no non-model interpretation
-  backend: an unconfigured installation or a failed model request is a
-  structured, named error, never a silent quality downgrade. Records
-  expose the requested and actual backend aliases and warnings.
+  backend: a default model that cannot be fetched (the upstream is gated;
+  `CHARACTER_FACTORY_AUTH_TOKEN` carries the access token) or a failed
+  model request is a structured, named error, never a silent quality
+  downgrade. Records expose the requested and actual backend aliases and
+  warnings.
 - **Endpoint diagnostics are private.** If an operator configures
   `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`, the server writes a mode-0600
   JSONL stream containing raw prompts, raw responses, HTTP status, response
@@ -623,7 +661,7 @@ throughout, matching the texture slot keys they serve.
 
 | Component | Contents | Approx. size |
 | --- | --- | --- |
-| `interpreter` | Quantized small language model + system prompt + few-shot examples + decoding grammar (§2.2; the specific model is being selected through this pipeline and arrives as registry data) | ~1–3 GB |
+| `interpreter` | The default local language model (§2.2): an exact upstream revision of Gemma 4 E4B instruction-tuned, run in-process in bfloat16 with the multi-call plan and decoding grammar in this package; the upstream repository is gated behind Google's Gemma Terms of Use | ~15 GB |
 | `make-figure` | Text → body/face parameter heads + normalization stats | ~10 MB |
 | `make-skin` | Texture adapter for the `skin` slot's albedo (body atlas) | ~90 MB |
 | `make-eye` | Texture adapter for the `eye` slot's albedo (eyeball layout) | ~90 MB |
@@ -634,9 +672,10 @@ throughout, matching the texture slot keys they serve.
 | `assembly-assets` | Eyeball and mouth-interior meshes, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
 
-First-run download for full generation ≈ 18–20 GB (the final figure depends
-on the interpreter model choice). Assembly-only use (no generation) needs
-only `body-rig` + `assembly-assets` ≈ 720 MB.
+First-run download for full generation ≈ 32 GB with the default local
+interpreter, ≈ 17 GB with an endpoint interpreter configured instead.
+Assembly-only use (no generation) needs only `body-rig` +
+`assembly-assets` ≈ 720 MB.
 
 Everything upstream is **pinned by content hash, never by a floating
 "latest"**: the base model is fetched from its upstream repository (it is
@@ -759,19 +798,25 @@ character and seeds per mode:
   reserved** with the expandable-segments CUDA allocator, at roughly
   twice the bake time (~265 s). Every GPU stage is strictly serialized
   and releases its memory before the next loads, and no other stage
-  peaks higher, so **the complete pipeline — interpretation, identity,
-  all texture slots, assembly — runs on a 12 GB card** under `nf4`.
-  8 GB is not supported.
+  peaks higher, so **the complete pipeline — identity, all texture
+  slots, assembly — runs on a 12 GB card** under `nf4`, with
+  interpretation on an endpoint or a smaller local model (the default
+  interpreter model needs ≈16 GB on its own; see below). 8 GB is not
+  supported.
 
 The pipeline loads the base model once and swaps ~90 MB adapters between
 slots, and identity generation reuses the same text encoder, so the floor
 is set by the base model, not by the number of components. On
 Ada-generation and newer NVIDIA hardware, fp8 weight formats should bring
 the full-precision footprint down further; that is anticipated but
-unmeasured, and no number is claimed for it in v0. The
-interpreter does not raise the floor: it runs first and releases its VRAM
-before the diffusion stack loads (or runs CPU-only) — the two are never
-resident together.
+unmeasured, and no number is claimed for it in v0. The interpreter runs
+first and releases its VRAM before the diffusion stack loads — the two
+are never resident together — so it never adds to the diffusion peak.
+**It does set its own floor:** the default local model measured ≈16 GB
+peak allocated in bfloat16, above the 12 GB `nf4` bake. A 12 GB card runs the
+complete pipeline with an endpoint interpreter configured (§2.2), or a
+smaller local model; a quantized default interpreter is unmeasured and
+no number is claimed for it in v0.
 
 On an unsuitable machine the pipeline degrades honestly: `create`, `bake`,
 and `make` probe device and free VRAM up front and exit with a message

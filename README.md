@@ -56,7 +56,19 @@ Measured numbers, not aspirations (details in
 - **Generation: 24 GB of VRAM runs the default full-precision pipeline**
   (~132 s of diffusion per character). **12 GB works with `nf4`
   quantization** (measured under 10 GB reserved, roughly twice the bake
-  time). 8 GB is not supported.
+  time) and an endpoint interpreter. 8 GB is not supported.
+- **Interpretation — the language model that turns your description into
+  each component's prompt — runs locally by default:** the registry's
+  `interpreter` component names Gemma 4 E4B (Google, gated behind its
+  terms: accept them and set `CHARACTER_FACTORY_AUTH_TOKEN` to an access
+  token), ≈15 GB to download, ≈16 GB of VRAM, one to one and a half
+  minutes per description asked one component at a time. **For speed and quality,
+  point it at an OpenAI-compatible endpoint instead** — a current hosted
+  frontier model (an OpenAI GPT-5.6-class model in our bench) takes
+  10–15 s and writes noticeably richer clothing — with
+  `CHARACTER_FACTORY_INTERPRETER_ENDPOINT`, `_MODEL`, and `_API_KEY`, or
+  `interpreter.backends` in the cache `config.json`
+  ([ARCHITECTURE.md §2.2](ARCHITECTURE.md)).
 - **Assembly without generation runs anywhere** — including CPU-only
   machines and macOS: validate, assemble, and serve existing character
   files with no GPU at all.

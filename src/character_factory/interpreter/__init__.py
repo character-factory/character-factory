@@ -5,9 +5,15 @@ default runs locally, in-process (ARCHITECTURE §2.2). Which model is pure
 configuration (`interpreter.backends` in the cache config, or the
 environment) — a registry component id or a local weights path — so
 candidates swap in seconds and `character-factory interpret` doubles as
-the side-by-side bench. There is no non-model interpretation mode: an
-unconfigured or failing backend is a hard, named error, never a silent
-quality downgrade.
+the side-by-side bench. With nothing configured the registry's
+``interpreter`` component is the model. There is no non-model
+interpretation mode: a failing backend is a hard, named error, never a
+silent quality downgrade.
+
+How the model is asked is the `mode`: one instruction for the whole
+document (``single``, what a hosted frontier model does best) or one
+narrow call per component (``multi``, what a small local model does
+best — `interpreter/multi.py`). ``auto``, the default, picks by backend.
 
 The interpreter writes every component's prompt, in that component's
 trained format: per-slot texture prompts, the semantic hair block, and
@@ -60,10 +66,10 @@ def interpret(
     `backend` selects a configured backend by alias (the create UI's
     model selector); without it the configured default applies. The model
     is loaded, run, and released inside this call: no interpreter VRAM
-    survives into the diffusion stages (ARCHITECTURE §2.2). An
-    unconfigured installation or a failed model request raises
-    InterpreterError — interpretation quality is the model's job, and
-    there is nothing acceptable to degrade to.
+    survives into the diffusion stages (ARCHITECTURE §2.2). A model that
+    cannot be fetched or a failed model request raises InterpreterError —
+    interpretation quality is the model's job, and there is nothing
+    acceptable to degrade to.
     """
     from character_factory.interpreter.backend import (
         InterpreterError,
@@ -87,7 +93,8 @@ def interpret(
     start = time.monotonic()
     runner = ModelInterpreter(config, registry=registry, device=device)
     try:
-        interpretation = runner.interpret(prompt, _slot_guidance(registry))
+        interpretation = runner.interpret(
+            prompt, _slot_guidance(registry), _vocabulary(registry))
         metrics = runner.metrics.as_dict()
     finally:
         runner.close()   # release before any diffusion loads (§2.2)
@@ -95,6 +102,29 @@ def interpret(
     metrics.setdefault("actual_interpreter", actual_alias)
     metrics["wall_seconds"] = time.monotonic() - start
     return interpretation, metrics
+
+
+def _vocabulary(registry=None) -> dict[str, dict]:
+    """Installed components' declared vocabularies by slot (registry
+    `constraints.vocabulary`), for the multi-call plan — the shoe call
+    lists the styles the installed footwear component supports."""
+    from character_factory.registry import Registry, RegistryError
+
+    try:
+        registry = registry or Registry.default()
+    except Exception:
+        return {}
+    vocabulary: dict[str, dict] = {}
+    for slot in vocab.ALL_SLOTS:
+        try:
+            resolved = registry.resolve_slots([slot])
+        except RegistryError:
+            continue
+        for name, entry in resolved.items():
+            declared = entry.document.get("constraints", {}).get("vocabulary", {})
+            if isinstance(declared, dict) and declared:
+                vocabulary[name] = declared
+    return vocabulary
 
 
 def _slot_guidance(registry=None) -> dict[str, str]:

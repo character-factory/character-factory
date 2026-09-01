@@ -32,6 +32,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 import venv
 from pathlib import Path
@@ -79,6 +80,10 @@ def step1(authenticated: bool) -> int:
         if not entry.artifacts:
             print(f"     {entry.ref}: no artifacts declared (unpublished entry)")
             continue
+        # An upstream that gates its repository behind terms (declared as
+        # `upstream.gated`) refuses anonymous fetches by design; anonymously
+        # the check is that it refuses, and the bytes verify authenticated.
+        gated = bool(entry.document.get("upstream", {}).get("gated"))
         for artifact in entry.artifacts:
             try:
                 url = resolve_url(entry, artifact["path"])
@@ -96,6 +101,15 @@ def step1(authenticated: bool) -> int:
                     while chunk := response.read(_CHUNK):
                         digest.update(chunk)
                         received += len(chunk)
+            except urllib.error.HTTPError as error:
+                if gated and not authenticated and error.code in (401, 403):
+                    checked += 1
+                    ok(f"{entry.ref}/{artifact['path']} gated upstream refuses "
+                       f"anonymous access as declared (HTTP {error.code})")
+                    continue
+                failures += 1
+                print(f"FAIL {entry.ref}/{artifact['path']}: fetch failed: {error}")
+                continue
             except Exception as error:  # noqa: BLE001 — every cause is a finding
                 failures += 1
                 print(f"FAIL {entry.ref}/{artifact['path']}: fetch failed: {error}")

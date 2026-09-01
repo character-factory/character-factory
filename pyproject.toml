@@ -42,7 +42,7 @@ character-factory = "character_factory.cli:main"
 # first-class, WSL2 supported. The base install stays dependency-free so the
 # schema tools, registry, and assembler-only flows work everywhere.
 generation = [
-  "transformers>=4.44",
+  "transformers>=5.5",
   "diffusers>=0.35",
   "safetensors>=0.4",
   "lm-format-enforcer>=0.10",

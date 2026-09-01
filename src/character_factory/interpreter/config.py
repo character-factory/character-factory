@@ -8,25 +8,37 @@ selector; the SaaS offers tiers the same way) — the alias→model mapping
 is local configuration, so no model identity ever appears in code or in
 a character's provenance.
 
+With nothing configured, the default is the registry's ``interpreter``
+component: the blessed local model, fetched and hash-verified like any
+other component. The model behind that id is registry data.
+
+``mode`` chooses how the model is asked: ``single`` (one instruction, one
+JSON document) or ``multi`` (one narrow question per component — see
+``interpreter/multi.py``). The default ``auto`` is ``multi`` for local
+models and ``single`` for endpoints, which is where each does its best
+work.
+
 The ``interpreter`` object in the cache root's ``config.json``:
 
     {
       "interpreter": {
         "default": "local-a",
-        "instruction": "…optional system-prompt override…",
+        "mode": "auto",
+        "instruction": "…optional system-prompt override (single mode)…",
         "backends": {
           "local-a": {"model": "<registry id or weights path>"},
           "cloud":   {"endpoint": "https://…/v1", "model": "…",
-                      "api_key": "…"},
+                      "api_key": "…", "mode": "single"},
           }
       }
     }
 
 Environment overrides
-(``CHARACTER_FACTORY_INTERPRETER_MODEL`` / ``_ENDPOINT`` / ``_API_KEY``)
-take precedence over the file and describe the default backend. An
-installation with no backend configured cannot interpret: there is no
-non-model mode.
+(``CHARACTER_FACTORY_INTERPRETER_MODEL`` / ``_ENDPOINT`` / ``_API_KEY`` /
+``_MODE``) take precedence over the file and describe the default
+backend. There is no non-model mode: when the default component cannot
+be fetched and nothing else is configured, interpretation is a hard,
+named error.
 
 Endpoint operators may set ``CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`` to a
 protected JSONL path. That diagnostic log contains raw prompts and endpoint
@@ -48,6 +60,8 @@ from dataclasses import dataclass
 from character_factory.registry.store import cache_dir
 
 __all__ = [
+    "DEFAULT_MODEL_COMPONENT",
+    "MODES",
     "InterpreterConfig",
     "available_backends",
     "load_interpreter_config",
@@ -57,7 +71,13 @@ __all__ = [
 ENV_MODEL = "CHARACTER_FACTORY_INTERPRETER_MODEL"
 ENV_ENDPOINT = "CHARACTER_FACTORY_INTERPRETER_ENDPOINT"
 ENV_API_KEY = "CHARACTER_FACTORY_INTERPRETER_API_KEY"
+ENV_MODE = "CHARACTER_FACTORY_INTERPRETER_MODE"
 ENV_AUDIT_LOG = "CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG"
+
+# The registry component that names the blessed local model. The id is
+# code; the model behind it is data.
+DEFAULT_MODEL_COMPONENT = "interpreter"
+MODES = ("auto", "single", "multi")
 
 
 @dataclass(frozen=True)
@@ -69,10 +89,25 @@ class InterpreterConfig:
     instruction: str | None = None   # system-prompt override (data, not code)
     repetition_penalty: float = 1.0  # >1 damps greedy repetition loops
     audit_log: str | None = None     # protected JSONL; never served over HTTP
+    mode: str = "auto"               # auto | single | multi
+
+    def __post_init__(self):
+        if self.mode not in MODES:
+            raise ValueError(
+                f"interpreter mode must be one of {', '.join(MODES)}; got {self.mode!r}"
+            )
 
     @property
     def configured(self) -> bool:
         return self.model is not None or self.endpoint is not None
+
+    @property
+    def effective_mode(self) -> str:
+        """`auto` resolved for this backend: multi-call for a local model,
+        the single instruction for an endpoint."""
+        if self.mode != "auto":
+            return self.mode
+        return "single" if self.endpoint is not None else "multi"
 
 
 def _file_section() -> dict:
@@ -91,7 +126,8 @@ def _file_section() -> dict:
     return section
 
 
-def _config_from(values: dict, instruction: str | None) -> InterpreterConfig:
+def _config_from(values: dict, instruction: str | None,
+                 mode: str | None = None) -> InterpreterConfig:
     return InterpreterConfig(
         model=values.get("model"),
         endpoint=values.get("endpoint"),
@@ -100,6 +136,7 @@ def _config_from(values: dict, instruction: str | None) -> InterpreterConfig:
         instruction=values.get("instruction") or instruction,
         repetition_penalty=float(values.get("repetition_penalty", 1.0)),
         audit_log=os.environ.get(ENV_AUDIT_LOG) or values.get("audit_log"),
+        mode=os.environ.get(ENV_MODE) or values.get("mode") or mode or "auto",
     )
 
 
@@ -110,12 +147,12 @@ def resolve_interpreter_config(
 
     With no alias (or the alias ``default``): the default backend —
     environment overrides first, then the entry the file's `default` names
-    in the `backends` table. With any other alias: that entry of the
-    `backends` table. An installation with nothing configured resolves to
-    an unconfigured config; `interpret` raises on it.
+    in the `backends` table, then the registry's ``interpreter`` component.
+    With any other alias: that entry of the `backends` table.
     """
     section = _file_section()
     instruction = section.get("instruction")
+    mode = section.get("mode")
     backends = section.get("backends", {})
     if not isinstance(backends, dict):
         raise ValueError("interpreter 'backends' must be a JSON object")
@@ -126,7 +163,7 @@ def resolve_interpreter_config(
             f"{', '.join(sorted(backends)) or '(none)'}"
         )
     if alias is not None and alias in backends:
-        return alias, _config_from(backends[alias], instruction)
+        return alias, _config_from(backends[alias], instruction, mode)
 
     env = {
         "model": os.environ.get(ENV_MODEL),
@@ -135,12 +172,14 @@ def resolve_interpreter_config(
     }
     if env["model"] or env["endpoint"]:
         return "default", _config_from(
-            {**{k: v for k, v in env.items() if v}}, instruction
+            {**{k: v for k, v in env.items() if v}}, instruction, mode
         )
     default = section.get("default")
     if default and default in backends:
-        return default, _config_from(backends[default], instruction)
-    return "default", InterpreterConfig(instruction=instruction)
+        return default, _config_from(backends[default], instruction, mode)
+    return "default", _config_from(
+        {"model": DEFAULT_MODEL_COMPONENT}, instruction, mode
+    )
 
 
 def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:

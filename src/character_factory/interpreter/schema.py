@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 
-__all__ = ["endpoint_interpretation_schema", "interpretation_schema"]
+__all__ = ["endpoint_interpretation_schema", "endpoint_schema", "interpretation_schema"]
 
 
 def interpretation_schema() -> dict:
@@ -82,7 +82,14 @@ def endpoint_interpretation_schema() -> dict:
     interpretation validator runs. The character-facing interpretation
     contract remains unchanged.
     """
-    return _strict_object_schema(interpretation_schema())
+    return endpoint_schema(interpretation_schema())
+
+
+def endpoint_schema(schema: dict) -> dict:
+    """Any output schema of ours in the strict form an OpenAI-compatible
+    endpoint enforces (see `endpoint_interpretation_schema`): every
+    property required, optionals nullable, no additional properties."""
+    return _strict_object_schema(schema)
 
 
 def _strict_object_schema(value: dict) -> dict:

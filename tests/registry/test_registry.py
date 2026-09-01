@@ -109,10 +109,24 @@ def test_snapshot_body_rig_is_hash_pinned():
 
 def test_unpublished_component_fails_clearly(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
-    # The interpreter's blessed default model is not yet published:
-    # declared with no artifacts, so the failure names itself.
+    # The hair engine's weights are not yet published: declared with no
+    # artifacts, so the failure names itself.
     with pytest.raises(ComponentNotPublished, match="declares no artifacts"):
-        Registry.default().ensure("interpreter")
+        Registry.default().ensure("make-wig")
+
+
+def test_snapshot_interpreter_default_model_is_pinned_upstream():
+    # The default interpreter model is registry data: an exact upstream
+    # revision with every artifact hash-pinned, and the gating recorded
+    # where a reader looks first.
+    entry = Registry.default().get("interpreter")
+    assert entry.document["source"]["hf_repo"]
+    assert len(entry.document["source"]["revision"]) == 40
+    paths = {a["path"] for a in entry.artifacts}
+    assert {"config.json", "model.safetensors", "tokenizer.json"} <= paths
+    assert all(len(a["sha256"]) == 64 and a["bytes"] > 0 for a in entry.artifacts)
+    assert entry.document["upstream"]["gated"] is True
+    assert "CHARACTER_FACTORY_AUTH_TOKEN" in entry.document["description"]
 
 
 # --- resolution -----------------------------------------------------------------

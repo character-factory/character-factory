@@ -55,15 +55,27 @@ def test_assemble_missing_assets_is_a_clean_error(tmp_path, capsys):
     assert "missing asset" in capsys.readouterr().err
 
 
-def test_interpret_without_configuration_is_a_hard_error(monkeypatch, tmp_path):
+def test_interpret_without_configuration_uses_the_registry_default(
+    monkeypatch, tmp_path
+):
+    # Nothing configured: the registry's `interpreter` component is the
+    # model. Here its fetch fails (no network in tests), and the error
+    # names the component and the way out — never a silent downgrade.
     monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
     for env in ("CHARACTER_FACTORY_INTERPRETER_MODEL",
                 "CHARACTER_FACTORY_INTERPRETER_ENDPOINT"):
         monkeypatch.delenv(env, raising=False)
     from character_factory.interpreter.backend import InterpreterError
+    from character_factory.registry import Registry
 
-    with pytest.raises(InterpreterError, match="no interpreter model"):
+    def refuse(self, *args, **kwargs):
+        raise OSError("no network")
+
+    monkeypatch.setattr(Registry, "ensure", refuse)
+    with pytest.raises(InterpreterError, match="'interpreter' is not available") as excinfo:
         main(["interpret", "a lean runner"])
+    assert "CHARACTER_FACTORY_AUTH_TOKEN" in str(excinfo.value)
+    assert excinfo.value.retryable is False
 
 
 def test_preflight_reports_named_causes(capsys, monkeypatch):

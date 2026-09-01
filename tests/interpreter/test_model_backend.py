@@ -53,8 +53,9 @@ def good_document() -> dict:
 
 
 def backend_with(output, config=None) -> ModelInterpreter:
+    # Single mode: one instruction, one whole document from the generator.
     return ModelInterpreter(
-        config or InterpreterConfig(model="test"),
+        config or InterpreterConfig(model="test", mode="single"),
         generate=lambda instruction, description, schema: output,
     )
 
@@ -135,7 +136,7 @@ def test_unrepairable_hair_is_an_interpreter_error():
 def test_interpret_model_failure_fails_closed_by_default(monkeypatch):
     calls = {}
 
-    def broken_interpret(self, prompt, guidance=None):
+    def broken_interpret(self, prompt, *args, **kwargs):
         calls["ran"] = True
         raise InterpreterError("synthetic failure")
 
@@ -426,3 +427,204 @@ def test_endpoint_schema_makes_optional_fields_nullable_and_required():
     assert textures["properties"]["shoe"]["anyOf"][1] == {"type": "null"}
     proportions = schema["properties"]["proportions"]["anyOf"][0]
     assert set(proportions["required"]) == set(proportions["properties"])
+
+
+# --- multi-call mode ------------------------------------------------------------
+
+
+def multi_answers(**overrides) -> dict:
+    """What each call of the plan answers, keyed by call name."""
+    answers = {
+        "figure": {"prompt": "a slight young woman, five foot three, slim build"},
+        "skin": {"prompt": "fair cool-toned skin, 19 years old"},
+        "eye": {"prompt": "dark brown iris, ivory sclera"},
+        "garment": {"prompt": "white cotton crop top, blue denim shorts"},
+        "shoe": {"prompt": "flip flops, thin straps, rubber, black"},
+        "hair": full_hair(),
+        "proportions": {},
+    }
+    answers.update(overrides)
+    return answers
+
+
+def multi_backend(answers, config=None) -> ModelInterpreter:
+    """A generator that answers by the call's instruction: the plan's
+    calls are told apart by the words that open them."""
+    seen = []
+
+    def generate(instruction, description, schema):
+        head = instruction.split("\n", 1)[0].lower()
+        for name, cue in (("figure", "body and face shape"), ("skin", "skin"),
+                          ("eye", "eyes"), ("garment", "wears on their body"),
+                          ("shoe", "footwear"), ("hair", "hairstyle"),
+                          ("proportions", "skeletal build")):
+            if cue in head:
+                seen.append((name, description, schema))
+                return json.dumps(answers[name])
+        raise AssertionError(f"unrecognized call: {head}")
+
+    backend = ModelInterpreter(
+        config or InterpreterConfig(model="test"), generate=generate)
+    backend.seen = seen
+    return backend
+
+
+def test_local_model_defaults_to_multi_call_and_assembles_the_document():
+    backend = multi_backend(multi_answers(proportions={"leg_length": 25}))
+    result = backend.interpret("a 19 year old wearing flip flops")
+    assert backend.metrics.mode == "multi"
+    assert [name for name, _, _ in backend.seen] == [
+        "figure", "skin", "eye", "garment", "shoe", "hair", "proportions"]
+    assert all(desc == "a 19 year old wearing flip flops" for _, desc, _ in backend.seen)
+    assert result.figure.startswith("a slight young woman")
+    assert result.slot_prompts == {
+        "skin": "fair cool-toned skin, 19 years old",
+        "eye": "dark brown iris, ivory sclera",
+        "garment": "white cotton crop top, blue denim shorts",
+        "shoe": "flip flops, thin straps, rubber, black",
+    }
+    assert result.hair["family"] == "loose_long"
+    assert result.proportions == {"leg_length": 0.25}
+    assert set(backend.metrics.calls) == {
+        "figure", "skin", "eye", "garment", "shoe", "hair", "proportions"}
+
+
+def test_multi_call_schemas_are_per_call_and_empty_shoe_is_dropped():
+    backend = multi_backend(multi_answers(shoe={"prompt": ""}))
+    result = backend.interpret("a barefoot swimmer")
+    schemas = dict((name, schema) for name, _, schema in backend.seen)
+    assert schemas["figure"]["required"] == ["prompt"]
+    assert "family" in schemas["hair"]["properties"]
+    assert "leg_length" in schemas["proportions"]["properties"]
+    assert "shoe" not in result.slot_prompts
+    assert result.proportions is None
+
+
+def test_multi_call_skips_the_hair_call_for_a_bald_description():
+    backend = multi_backend(multi_answers())
+    result = backend.interpret("a bald middle-aged man")
+    assert "hair" not in [name for name, _, _ in backend.seen]
+    assert result.hair is None
+    assert any("bald" in note for note in result.notes)
+
+
+def test_multi_call_validates_the_assembled_document():
+    backend = multi_backend(multi_answers(eye={"prompt": "   "}))
+    with pytest.raises(InterpreterError, match="'eye' has no prompt"):
+        backend.interpret("someone")
+
+
+def test_multi_call_plan_carries_the_installed_vocabulary():
+    from character_factory.interpreter.multi import build_calls, hair_vocabulary_lines
+
+    calls = {call.name: call for call in build_calls(
+        {"shoe": {"styles": ["below_ankle", "tall_boot"]}})}
+    assert "flip flops" in calls["shoe"].instruction
+    assert "tall boots" in calls["shoe"].instruction
+    assert "ankle boots" not in calls["shoe"].instruction
+    assert "family: " in hair_vocabulary_lines()
+    assert "loose_long" in calls["hair"].instruction
+    assert "Never footwear" in calls["garment"].instruction
+    # a call that never sees the vocabulary shows every launch style
+    assert "mid boots" in {c.name: c for c in build_calls()}["shoe"].instruction
+
+
+def test_mode_resolution_auto_by_backend_and_env(monkeypatch, tmp_path):
+    from character_factory.interpreter import config as configuration
+
+    assert InterpreterConfig(model="x").effective_mode == "multi"
+    assert InterpreterConfig(model="x", endpoint="http://h/v1").effective_mode == "single"
+    assert InterpreterConfig(model="x", mode="single").effective_mode == "single"
+    with pytest.raises(ValueError, match="mode"):
+        InterpreterConfig(model="x", mode="triple")
+
+    (tmp_path / "config.json").write_text(json.dumps({"interpreter": {
+        "default": "cloud", "mode": "multi",
+        "backends": {
+            "cloud": {"endpoint": "http://host/v1", "model": "tier-1"},
+            "local-a": {"model": "some/weights", "mode": "single"},
+        },
+    }}))
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
+                configuration.ENV_MODE):
+        monkeypatch.delenv(env, raising=False)
+    assert configuration.load_interpreter_config().effective_mode == "multi"
+    assert configuration.load_interpreter_config("local-a").effective_mode == "single"
+    monkeypatch.setenv(configuration.ENV_MODE, "single")
+    assert configuration.load_interpreter_config().effective_mode == "single"
+
+
+def test_unconfigured_installation_resolves_to_the_registry_component(
+    monkeypatch, tmp_path
+):
+    from character_factory.interpreter import config as configuration
+
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
+                configuration.ENV_MODE):
+        monkeypatch.delenv(env, raising=False)
+    alias, config = configuration.resolve_interpreter_config()
+    assert alias == "default"
+    assert config.model == configuration.DEFAULT_MODEL_COMPONENT
+    assert config.endpoint is None
+    assert config.effective_mode == "multi"
+
+
+def test_endpoint_multi_mode_uses_strict_per_call_schemas_and_drops_nulls(
+    monkeypatch
+):
+    answers = multi_answers()
+    answers["hair"] = {**full_hair(), "color": {"family": "black", "rgb": None}}
+    answers["proportions"] = {name: None for name in (
+        "spine_length", "neck_length", "shoulder_width", "arm_length",
+        "hip_width", "leg_length")}
+    requests = []
+
+    class FakeResponse:
+        status = 200
+        headers = {}
+
+        def __init__(self, content):
+            self.content = content
+
+        def read(self):
+            return json.dumps({"choices": [{"finish_reason": "stop", "message": {
+                "content": json.dumps(self.content)}}]}).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        body = json.loads(request.data.decode())
+        requests.append(body)
+        head = body["messages"][0]["content"].split("\n", 1)[0].lower()
+        for name, cue in (("figure", "body and face shape"), ("skin", "skin"),
+                          ("eye", "eyes"), ("garment", "wears on their body"),
+                          ("shoe", "footwear"), ("hair", "hairstyle"),
+                          ("proportions", "skeletal build")):
+            if cue in head:
+                return FakeResponse(answers[name])
+        raise AssertionError(head)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    backend = ModelInterpreter(InterpreterConfig(
+        model="served-name", endpoint="http://localhost:1", mode="multi"))
+    result = backend.interpret("a 19 year old wearing flip flops")
+    assert backend.metrics.mode == "multi"
+    assert len(requests) == 7
+    schemas = [r["response_format"]["json_schema"]["schema"] for r in requests]
+    assert schemas[0]["required"] == ["prompt"]
+    assert schemas[0]["additionalProperties"] is False
+    hair_schema = schemas[5]
+    assert set(hair_schema["required"]) == set(hair_schema["properties"])
+    assert result.hair["color"] == {"family": "black"}
+    assert result.proportions is None
+    assert result.slot_prompts["shoe"].startswith("flip flops")

@@ -7,6 +7,13 @@ no telemetry — `transformers` in this process, like every other generation
 stage (ARCHITECTURE §2.2). An OpenAI-compatible endpoint can be selected
 instead through the `endpoint` config field.
 
+Two modes ask the same model differently: ``single`` sends one instruction
+and decodes the whole interpretation document; ``multi`` sends one narrow
+call per component (`interpreter/multi.py`) and assembles the document
+from the answers. The config's `effective_mode` picks (multi for local
+models, single for endpoints, unless configured otherwise); validation
+is the same function either way.
+
 The backend releases its weights (and CUDA cache) in `close()`; callers
 must close before any diffusion pipeline loads — interpretation and
 texture generation never hold VRAM at the same time.
@@ -23,8 +30,15 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from character_factory.interpreter.config import InterpreterConfig
-from character_factory.interpreter.schema import interpretation_schema
+from character_factory.interpreter.config import (
+    DEFAULT_MODEL_COMPONENT,
+    InterpreterConfig,
+)
+from character_factory.interpreter.multi import build_calls
+from character_factory.interpreter.schema import (
+    endpoint_schema,
+    interpretation_schema,
+)
 
 __all__ = ["InterpreterError", "InterpreterMetrics", "ModelInterpreter"]
 
@@ -72,8 +86,10 @@ class EndpointResult:
 @dataclass
 class InterpreterMetrics:
     backend: str
+    mode: str = "single"
     load_seconds: float = 0.0
     generate_seconds: float = 0.0
+    calls: dict[str, float] | None = None   # multi mode: seconds per call
     peak_gpu_bytes: int | None = None
     peak_rss_bytes: int | None = None
 
@@ -124,12 +140,27 @@ class ModelInterpreter:
         from character_factory.registry import Registry
 
         registry = self.registry or Registry.default()
-        return str(registry.ensure(source))
+        try:
+            return str(registry.ensure(source))
+        except Exception as error:
+            hint = ""
+            if source == DEFAULT_MODEL_COMPONENT:
+                hint = (
+                    "; the default model is gated upstream: accept its terms "
+                    "and set CHARACTER_FACTORY_AUTH_TOKEN to a token for that "
+                    "account, or configure another backend "
+                    "(CHARACTER_FACTORY_INTERPRETER_MODEL / _ENDPOINT)"
+                )
+            raise InterpreterError(
+                f"interpreter model {source!r} is not available: {error}{hint}",
+                retryable=False,
+            ) from error
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
         start = time.monotonic()
+        weights = self._weights_dir()   # a missing model fails before any import
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -139,7 +170,6 @@ class ModelInterpreter:
         if self.device != "cpu" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        weights = self._weights_dir()
         self._tokenizer = AutoTokenizer.from_pretrained(weights)
         self._model = AutoModelForCausalLM.from_pretrained(
             weights,
@@ -168,6 +198,7 @@ class ModelInterpreter:
     # -- generation ---------------------------------------------------------
 
     def _generate_local(self, instruction: str, description: str, schema: dict) -> str:
+        self._ensure_loaded()
         import torch
         from lmformatenforcer import JsonSchemaParser
 
@@ -185,7 +216,6 @@ class ModelInterpreter:
             build_transformers_prefix_allowed_tokens_fn,
         )
 
-        self._ensure_loaded()
         tokenizer = self._tokenizer
         messages = [
             {"role": "system", "content": instruction},
@@ -232,10 +262,13 @@ class ModelInterpreter:
         import urllib.error
         import urllib.request
 
-        from character_factory.interpreter.schema import (
-            endpoint_interpretation_schema,
-        )
-
+        # Reasoning-capable endpoints account for hidden reasoning and
+        # visible JSON inside the same limit. The old 900-token floor could
+        # be exhausted entirely before content was emitted; a retry after a
+        # truncated or empty answer triples the budget.
+        budget = max(self.config.max_new_tokens, 1800)
+        if attempt > 1:
+            budget *= 3
         body = {
             "model": self.config.model or "default",
             "messages": [
@@ -247,13 +280,10 @@ class ModelInterpreter:
                 "json_schema": {
                     "name": "character_interpretation",
                     "strict": True,
-                    "schema": endpoint_interpretation_schema(),
+                    "schema": endpoint_schema(schema),
                 },
             },
-            # Reasoning-capable endpoints account for hidden reasoning and
-            # visible JSON inside the same limit. The old 900-token floor
-            # could be exhausted entirely before content was emitted.
-            "max_completion_tokens": max(self.config.max_new_tokens, 1800),
+            "max_completion_tokens": budget,
         }
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:
@@ -398,19 +428,22 @@ class ModelInterpreter:
 
     # -- interpretation -----------------------------------------------------
 
-    def interpret(self, prompt: str, slot_guidance: dict[str, str] | None = None):
+    def interpret(
+        self,
+        prompt: str,
+        slot_guidance: dict[str, str] | None = None,
+        vocabulary: dict[str, dict] | None = None,
+    ):
         """Description → Interpretation. Raises InterpreterError on any
-        failure; the caller decides whether to fall back to rules mode."""
+        failure; the caller decides whether to fall back to rules mode.
+
+        `slot_guidance` (registry per-slot guidance) feeds the single
+        instruction; `vocabulary` (installed components' declared
+        vocabularies by slot) feeds the multi-call plan."""
         from character_factory.interpreter import Interpretation
 
-        schema = interpretation_schema()
-        instruction = build_instruction(
-            slot_guidance or {},
-            header=self.config.instruction,
-            # Endpoint output is constrained directly by its strict response
-            # schema; repeating that schema in the prompt wastes context.
-            schema=None,
-        )
+        mode = self.config.effective_mode
+        self.metrics.mode = mode
         start = time.monotonic()
         try:
             import torch
@@ -421,19 +454,12 @@ class ModelInterpreter:
             pass
         trace_id = secrets.token_hex(12) if self.config.endpoint is not None else None
         try:
-            if self.config.endpoint is not None and self.generate is None:
-                figure, slots, hair, notes, proportions = (
-                    self._interpret_endpoint(
-                        instruction, prompt, schema, trace_id
-                    ))
+            if mode == "multi":
+                figure, slots, hair, notes, proportions = self._interpret_multi(
+                    prompt, vocabulary, trace_id)
             else:
-                if self.generate is not None:
-                    raw = self.generate(instruction, prompt, schema)
-                else:
-                    raw = self._generate_local(instruction, prompt, schema)
-                document = _parse_json(raw)
-                figure, slots, hair, notes, proportions = _validate(
-                    document, prompt)
+                figure, slots, hair, notes, proportions = self._interpret_single(
+                    prompt, slot_guidance, trace_id)
         except InterpreterError:
             raise
         except Exception as error:
@@ -450,14 +476,75 @@ class ModelInterpreter:
             proportions=proportions,
         )
 
-    def _interpret_endpoint(
-        self, instruction: str, prompt: str, schema: dict, trace_id: str
+    def _interpret_single(self, prompt, slot_guidance, trace_id):
+        schema = interpretation_schema()
+        instruction = build_instruction(
+            slot_guidance or {},
+            header=self.config.instruction,
+            # Endpoint output is constrained directly by its strict response
+            # schema; repeating that schema in the prompt wastes context.
+            schema=None,
+        )
+        if self.config.endpoint is not None and self.generate is None:
+            return self._endpoint_document(
+                instruction, prompt, schema, trace_id,
+                validate=lambda document: _validate(document, prompt),
+            )
+        if self.generate is not None:
+            raw = self.generate(instruction, prompt, schema)
+        else:
+            raw = self._generate_local(instruction, prompt, schema)
+        return _validate(_parse_json(raw), prompt)
+
+    def _interpret_multi(self, prompt, vocabulary, trace_id):
+        """Run the call plan and assemble one interpretation document from
+        the answers; the shared validator then judges it whole. A bald
+        description skips the hair call — the validator would discard the
+        answer anyway."""
+        bald = any(word in prompt.lower() for word in _BALD_WORDS)
+        document: dict = {"textures": {}}
+        self.metrics.calls = {}
+        for call in build_calls(vocabulary):
+            if call.name == "hair" and bald:
+                continue
+            started = time.monotonic()
+            if self.config.endpoint is not None and self.generate is None:
+                value = self._endpoint_document(
+                    call.instruction, prompt, call.schema, trace_id,
+                    validate=lambda document: document, name=call.name,
+                )
+            else:
+                if self.generate is not None:
+                    raw = self.generate(call.instruction, prompt, call.schema)
+                else:
+                    raw = self._generate_local(call.instruction, prompt, call.schema)
+                value = _drop_nulls(_parse_json(raw))
+            self.metrics.calls[call.name] = round(time.monotonic() - started, 2)
+            if call.name == "figure":
+                document["figure"] = value
+            elif call.name == "hair":
+                document["hair"] = value
+            elif call.name == "proportions":
+                document["proportions"] = value or None
+            else:
+                document["textures"][call.name] = value
+        return _validate(document, prompt)
+
+    def _endpoint_document(
+        self, instruction: str, prompt: str, schema: dict, trace_id: str,
+        *, validate, name: str | None = None,
     ):
+        """One endpoint question, asked up to twice: the first attempt's
+        answer is retried only when it was empty or cut off; a refusal, a
+        content filter, or an invalid document is final. `validate` turns
+        the decoded (null-stripped) document into the value returned."""
         for attempt in (1, 2):
             result = self._generate_endpoint(
                 instruction, prompt, schema,
                 trace_id=trace_id, attempt=attempt,
             )
+            if name is not None:
+                result.audit["call"] = name
             classification = None
             retryable = True
             if result.refusal:
@@ -477,7 +564,7 @@ class ModelInterpreter:
                     classification = "invalid_json"
                 else:
                     try:
-                        validated = _validate(document, prompt)
+                        validated = validate(document)
                     except InterpreterError:
                         classification = "schema_invalid"
                     else:

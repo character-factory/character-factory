@@ -119,7 +119,8 @@ def test_components_view(service):
         "styles": ["below_ankle", "high_top", "ankle_boot", "mid_boot",
                    "tall_boot"]
     }
-    assert rows["body-rig"]["published"] is False
+    assert rows["body-rig"]["published"] is True     # launch snapshot
+    assert rows["interpreter"]["published"] is False  # default model pending
 
 
 def test_validate_passthrough(service):

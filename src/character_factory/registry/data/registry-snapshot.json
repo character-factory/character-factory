@@ -1,8 +1,8 @@
 {
  "format": "character-factory/registry",
  "registry_version": "0.1",
- "generated": "2026-08-24T00:00:00Z",
- "note": "Pre-release snapshot. Entries whose source is null are declared but not yet published; fetching them fails with a clear error. Sources, artifact lists, and inference metadata are completed as components publish.",
+ "generated": "2026-09-01T00:00:00Z",
+ "note": "Launch snapshot. Entries whose source is null are declared but not yet published; fetching them fails with a clear error.",
  "components": [
   {
    "name": "interpreter",
@@ -13,90 +13,196 @@
    },
    "artifacts": [],
    "source": null,
-   "description": "Small local language model + system prompt + few-shot examples + decoding grammar. Maps a free-text description to per-slot texture prompts and the semantic hair block. Model selection is in progress; the blessed default arrives as registry data."
+   "description": "Language-model interpretation: maps a free-text description to the figure prompt, per-slot texture prompts, and the semantic hair block, each in its component's format. The blessed default model arrives as registry data; any configured local model or OpenAI-compatible endpoint works meanwhile."
   },
   {
    "name": "make-figure",
-   "version": "0.0.2",
+   "version": "0.1.1",
    "kind": "identity",
    "requires": {
     "base_model": "flux2-klein-4b",
     "schema": ">=0.1 <1.0"
    },
-   "artifacts": [],
-   "source": null,
-   "description": "Text to body: deterministic prompt-to-parameters heads plus normalization statistics and owned-position index maps. Consumes the base model's text encoder."
+   "artifacts": [
+    {
+     "path": "config.json",
+     "sha256": "c3da88bdc1ad198bd922ed0588e5b1d0e54b8444f18bfe5d494a780a331fd60d",
+     "bytes": 1186
+    },
+    {
+     "path": "weights.safetensors",
+     "sha256": "3e8a870e2a84f6abad700ae22c5066b486df29e2bbd49c87d13bf311d8e55fb9",
+     "bytes": 33959032
+    }
+   ],
+   "source": {
+    "hf_repo": "character-factory/make-figure",
+    "revision": "main"
+   },
+   "description": "Text-to-identity, generative: samples 45 identity coefficients plus six skeletal-proportion controls from the prompt's distribution (joint rectified flow around a semantic center; seeded, CPU-noise reproducible); resting expression is authored as exact zeros.",
+   "interpretation": {
+    "fields": "one dense physique-first sentence in plain modern English: sex/age words first, then height, overall build and body fat, musculature, and face/head structure (jaw, cheeks, brow). Physique vocabulary only \u2014 no name, occupation, clothing, era, scene, or style words."
+   }
   },
   {
    "name": "make-skin",
-   "version": "0.0.3",
+   "version": "0.0.4",
    "kind": "texture-adapter",
    "slot": "skin",
+   "map": "albedo",
    "requires": {
-    "base_model": "flux2-klein-4b",
+    "base_model": "flux2-klein-base-4b",
     "schema": ">=0.1 <1.0"
    },
    "inference": {
+    "prompt_template": "MHR face albedo texture map, neutral delit lighting, {prompt}",
     "steps": 20,
     "guidance": 4.0,
     "resolution": 1024
    },
-   "artifacts": [],
-   "source": null,
-   "description": "Full-body skin albedo on the body's canonical UV atlas.",
-   "map": "albedo"
+   "artifacts": [
+    {
+     "path": "config.json",
+     "sha256": "c281165d41b53c33f0a1af8c3021be079db6d6c1e245b6aedc93d6a20bb9815c",
+     "bytes": 256
+    },
+    {
+     "path": "weights.safetensors",
+     "sha256": "450327cae5f49d210eeee19c65e1bf367a2bdd6cddae4359d8a450a3e9fe42fc",
+     "bytes": 92426712
+    }
+   ],
+   "source": {
+    "hf_repo": "character-factory/make-skin",
+    "revision": "main"
+   },
+   "interpretation": {
+    "fields": "comma-separated fields: state a natural-language skin tone when the description specifies or implies a complexion (like 'light-medium neutral-toned skin' or 'deep warm-toned skin'; an optional 'MST <1-10>' code may FOLLOW it) \u2014 but when the description gives no complexion at all, OMIT tone words entirely and let the skin model choose a coherent one; never derive tone from nationality or ancestry alone; then age, gender presentation, ancestry, brow character, facial structure, lips, pores/wrinkles, optional skin conditions; never clothing, hair, or body-shape/silhouette words"
+   },
+   "description": "Full-body skin albedo on the body's canonical UV atlas."
   },
   {
    "name": "make-eye",
    "version": "0.1.0",
    "kind": "texture-adapter",
    "slot": "eye",
+   "map": "albedo",
    "requires": {
-    "base_model": "flux2-klein-4b",
+    "base_model": "flux2-klein-base-4b",
     "schema": ">=0.1 <1.0"
    },
    "inference": {
+    "prompt_template": "Full UV eye albedo texture map, {prompt}",
     "steps": 20,
     "guidance": 4.0,
     "resolution": 1024
    },
-   "artifacts": [],
-   "source": null,
-   "description": "The eye albedo (iris and sclera), applied to both eyes on the eyeball's concentric UV layout.",
-   "map": "albedo"
+   "artifacts": [
+    {
+     "path": "config.json",
+     "sha256": "51b1b7cfbfb7015a77322c30cf50d1861a45844bdf3668ca5c9a67f10613e3f3",
+     "bytes": 250
+    },
+    {
+     "path": "weights.safetensors",
+     "sha256": "601aaa5fc7e42f504c1682895159df45276c164865a924444fb0549526a9c2e4",
+     "bytes": 92426536
+    }
+   ],
+   "source": {
+    "hf_repo": "character-factory/make-eye",
+    "revision": "main"
+   },
+   "interpretation": {
+    "fields": "comma-separated fields: iris color, radial fiber character, limbal ring, pupil, sclera tone, sclera veins; conservative natural defaults for anything unstated"
+   },
+   "description": "Eye albedo (iris/sclera) applied to both placed eyeballs."
   },
   {
    "name": "make-garment",
    "version": "0.1.0",
    "kind": "texture-adapter",
    "slot": "garment",
+   "map": "albedo",
    "requires": {
-    "base_model": "flux2-klein-4b",
+    "base_model": "flux2-klein-base-4b",
     "schema": ">=0.1 <1.0"
    },
    "inference": {
-    "steps": 20,
+    "prompt_template": "mhrgarment, form-fitting garment uv texture map. Clothing requested: {prompt}.",
+    "steps": 25,
     "guidance": 4.0,
     "resolution": 1024
    },
-   "artifacts": [],
-   "source": null,
-   "description": "Clothing over an unoccupied background on the body's canonical UV atlas; coverage recovered by luminance key at assembly.",
-   "map": "albedo"
+   "artifacts": [
+    {
+     "path": "config.json",
+     "sha256": "a424c39ad86fcb171a640238d56d5a64753a68775bae19ef43fca96a845644e6",
+     "bytes": 254
+    },
+    {
+     "path": "weights.safetensors",
+     "sha256": "c0771df795fc9c8fbb511e330d1ee71e1dd07462696940135f37e8cad742f52b",
+     "bytes": 92426688
+    }
+   ],
+   "source": {
+    "hf_repo": "character-factory/make-garment",
+    "revision": "main"
+   },
+   "interpretation": {
+    "fields": "the clothing worn on the body (garments only \u2014 footwear belongs to the shoe slot), each item with its textile/material character, comma-separated"
+   },
+   "description": "Garment albedo painted over an unoccupied background; its keyed coverage becomes the character's garment shell mesh."
   },
   {
    "name": "make-shoe",
    "version": "0.0.2",
    "kind": "texture-adapter",
    "slot": "shoe",
+   "map": "albedo",
    "requires": {
-    "base_model": "flux2-klein-4b",
+    "base_model": "flux2-klein-base-4b",
     "schema": ">=0.1 <1.0"
    },
    "inference": {
+    "prompt_template": "mhrshoe, canonical one-foot shoe UV albedo texture, {prompt}, fixed layout with {shaft_clause}, upper-foot island at upper right, sole island at lower right, dark charcoal outside",
     "steps": 25,
     "guidance": 4.0,
-    "resolution": 1024
+    "resolution": 1024,
+    "shaft_clause_empty": "empty leg or shaft island on the left",
+    "shaft_clause_shafted": "{percent}% shaft height, leg or shaft island on the left"
+   },
+   "artifacts": [
+    {
+     "path": "config.json",
+     "sha256": "be6b43f48299964a9d03928244febe72b481ff9f02f51c9b85240a32ede1719c",
+     "bytes": 251
+    },
+    {
+     "path": "foot_chart.json",
+     "sha256": "2a54a3311fee22c1c7503d27c7f2c82604f336cb8d77e46573d243a4548cc9cd",
+     "bytes": 3018
+    },
+    {
+     "path": "foot_chart.npz",
+     "sha256": "bee1da25dd50d86fdc781ba341e7b92e91e4f192b0d3f41ec354fbae4196bdc6",
+     "bytes": 31816
+    },
+    {
+     "path": "foot_chart_mask.png",
+     "sha256": "d4dce95cb947cfe0f4939e67f7609a87ae234c9db128c80d60fabb33388c170f",
+     "bytes": 12101
+    },
+    {
+     "path": "weights.safetensors",
+     "sha256": "fa5ea516d1f3d006917b81e8463f83728bf7e67cef28688f9e455475a05633cd",
+     "bytes": 92426752
+    }
+   ],
+   "source": {
+    "hf_repo": "character-factory/make-shoe",
+    "revision": "main"
    },
    "constraints": {
     "vocabulary": {
@@ -109,31 +215,59 @@
      ]
     }
    },
-   "artifacts": [],
-   "source": null,
-   "description": "Footwear on the foot ('shoe') regions of the body's canonical UV atlas, composited above garments. Supported styles range from below-ankle shoes to tall boots (the shaft is cut to each style's declared height), declared here so the interpreter clamps footwear prompts accordingly.",
-   "map": "albedo"
+   "interpretation": {
+    "fields": "the footwear's design/construction, material, color palette, and finish or pattern, comma-separated; boots and shafted styles are supported \u2014 name the style plainly (flip flops, sandals, loafers, sneakers, high tops, ankle boots, mid boots, tall boots)"
+   },
+   "description": "Footwear painted on the component's one-foot canvas; its foot chart maps the canvas onto both feet, and the mapped coverage becomes the character's shoe shell mesh. Supported styles range from below-ankle shoes to tall boots (the shaft is cut to each style's declared height), declared here so the interpreter clamps footwear prompts accordingly."
   },
   {
    "name": "body-rig",
-   "version": "1.0.1",
+   "version": "1.2.1",
    "kind": "body-rig",
    "requires": {
     "schema": ">=0.1 <1.0"
    },
    "artifacts": [
     {
-     "path": "mhr_model.pt",
-     "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc",
-     "bytes": 696110248
+     "path": "expression_morphs.npz",
+     "sha256": "81baf76ad5ade99fcd7c34c4f3c791ee5807d592591d41b1aa99621be73d839e",
+     "bytes": 1596893
+    },
+    {
+     "path": "expression_morphs_lod3.npz",
+     "sha256": "2c28301618b30166d332619d5687f51d03f36fcffc5bc7153b0c06192b15e135",
+     "bytes": 463083
     },
     {
      "path": "lod1.fbx",
      "sha256": "d66fbca815bcde6532f728f1f63071003c5d43ff44f56e263a0807baec1ae055",
      "bytes": 7884560
+    },
+    {
+     "path": "lod3.fbx",
+     "sha256": "5d5fe30ba09488e96a06b2fe6306202c4048083df9e1003f1051ad541e06aafa",
+     "bytes": 2181136
+    },
+    {
+     "path": "lod3.npz",
+     "sha256": "dab7f43a8cc43bbc556eafd21f9b7f5c2e5b119245ce30c3ba52586a0ddaf4df",
+     "bytes": 766233
+    },
+    {
+     "path": "mhr_model.pt",
+     "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc",
+     "bytes": 696110248
+    },
+    {
+     "path": "rig.json",
+     "sha256": "88c12c3ab6419e60d5ec4cd2d2ce2bde3b895e6593696b271cee2b24470650fe",
+     "bytes": 22571
     }
    ],
-   "source": null,
+   "source": {
+    "hf_repo": "character-factory/body-rig",
+    "revision": "main"
+   },
    "upstream": {
     "project": "Momentum Human Rig (MHR), Meta Platforms",
     "url": "https://github.com/facebookresearch/MHR",
@@ -145,66 +279,67 @@
      "bytes": 198943157
     }
    },
-   "description": "The pinned MHR rig (TorchScript forward + LOD1 topology/UVs), mirrored with attribution, plus rig metadata: topology checksum and the authoritative 127-joint name table (added at publish)."
+   "description": "The rig of 1.1.0 (same pinned MHR release) plus the LOD3 render topology: MHR's own LOD3 with its supplied barycentric map, transferred skin weights and expression morphs, the authored eye and mouth apertures, and the LOD3 mouth block with its own measured animation-limitation table. Patch: expression semantics re-derived on the render topology, each numeric claim naming its metric."
   },
   {
-   "name": "body-rig",
-   "version": "1.1.0",
-   "kind": "body-rig",
+   "name": "assembly-assets",
+   "version": "0.3.0",
+   "kind": "assets",
    "requires": {
     "schema": ">=0.1 <1.0"
    },
-   "artifacts": [],
-   "source": null,
-   "upstream": {
-    "project": "Momentum Human Rig (MHR), Meta Platforms",
-    "url": "https://github.com/facebookresearch/MHR",
-    "license": "Apache-2.0",
-    "release": "v1.0.1",
-    "release_archive": {
-     "path": "assets.zip",
-     "sha256": "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94",
-     "bytes": 198943157
+   "artifacts": [
+    {
+     "path": "atlas.json",
+     "sha256": "7b577fb4a7c0f3e156e6c2ae1f517a7ecff4e8572f77e8c8828044f5030f035d",
+     "bytes": 208
+    },
+    {
+     "path": "eye_placement.json",
+     "sha256": "11c3ff3d82349bffca13c6a187bb49095a64d0ec0172d5e4a8242f2040cfab07",
+     "bytes": 2183
+    },
+    {
+     "path": "eyeball.npz",
+     "sha256": "bac64ac1ac41ec5c6e2a89b6496cd6f766113a76eea81555811114c5f227c089",
+     "bytes": 4484
+    },
+    {
+     "path": "feet_mask.png",
+     "sha256": "6d3c999a1ffd66d976dc5b55a83e112b28dc6bd8addd7682ee3365fd113d9c09",
+     "bytes": 7696
+    },
+    {
+     "path": "head_mask.png",
+     "sha256": "1019757e7d4d38f8ecc19271a52f3ea4e7b443af102dddeba20c4c016c0e1f73",
+     "bytes": 3004
+    },
+    {
+     "path": "mouth_lower.npz",
+     "sha256": "71e4c83622153dff1e647bca810dfedeb38f5f5dd4745c89cde41e934b1ab3f2",
+     "bytes": 10897
+    },
+    {
+     "path": "mouth_placement.json",
+     "sha256": "76eb76a55a4378d82d0ecb65fa14cdd264a4efec4047e82571a550fcc358db8b",
+     "bytes": 1244
+    },
+    {
+     "path": "mouth_tongue.npz",
+     "sha256": "1fd61d282d55cbafc57a80a3dbe9498005da62cc0fb9a3aa7b4853cde0cec44f",
+     "bytes": 6385
+    },
+    {
+     "path": "mouth_upper.npz",
+     "sha256": "fd48e41b677cf25ab72dcc387539be9dd6e3627da7d1413155b025275a917ece",
+     "bytes": 10497
     }
+   ],
+   "source": {
+    "hf_repo": "character-factory/assembly-assets",
+    "revision": "main"
    },
-   "description": "The rig of 1.0.1 (same pinned MHR release) plus the data behind the character topology (SPEC.md §4.2): mouth portal and socket metadata, the exact expression morph basis and its provisional semantic table, jaw articulation guidance, and the machine-readable animation-limitations list."
-  },
-  {
-   "name": "flux2-klein-4b",
-   "version": "1.0.0",
-   "kind": "base-model",
-   "requires": {
-    "schema": ">=0.1 <1.0"
-   },
-   "artifacts": [],
-   "source": null,
-   "description": "FLUX.2 Klein 4B (Black Forest Labs, Apache-2.0): transformer + text encoder + VAE. Fetched from its upstream repository, pinned to an exact revision at publish; the identity component shares its text encoder.",
-   "inference": {
-    "steps": 4,
-    "guidance": 1.0
-   }
-  },
-  {
-   "name": "assembly-assets",
-   "version": "0.1.0",
-   "kind": "assets",
-   "requires": {
-    "schema": ">=0.1 <1.0"
-   },
-   "artifacts": [],
-   "source": null,
-   "description": "Static assembly assets: eyeball and lash meshes/textures (MIT, attributed in NOTICE), UV coverage templates, atlas metadata."
-  },
-  {
-   "name": "assembly-assets",
-   "version": "0.2.0",
-   "kind": "assets",
-   "requires": {
-    "schema": ">=0.1 <1.0"
-   },
-   "artifacts": [],
-   "source": null,
-   "description": "Everything in 0.1.0 plus the required mouth anatomy attachments: teeth, gum, and tongue meshes with their placement metadata (geometry from the Google Neutral Model, attributed in NOTICE)."
+   "description": "0.2.0's files with the launch-tier interior meshes: 300-triangle eyeballs, 700-triangle dental arches, a 400-triangle tongue (never omitted). Lashes and caruncles are omitted at this tier."
   },
   {
    "name": "make-wig",
@@ -215,7 +350,59 @@
    },
    "artifacts": [],
    "source": null,
-   "description": "The default hair provider: a procedural wig synthesizer consuming the character's semantic hair block and the assembled head/body geometry. Vendored in the package; this entry records versions for provenance and future model-driven variants."
+   "description": "The default hair provider: a procedural wig synthesizer consuming the character's semantic hair block and the assembled head/body geometry. Vendored in the package; this entry records versions for provenance and future model-driven variants.",
+   "density_presets": {
+    "budget": {
+     "cap_u": 35,
+     "cap_v": 12,
+     "count_scale": 0.38,
+     "profile_segments": 3,
+     "guide_segments": 8,
+     "wisp_scale": 0.25
+    },
+    "families": {
+     "buzz": "budget",
+     "crop": "budget",
+     "pixie": "budget",
+     "side_part": "budget",
+     "bob": "budget",
+     "loose_long": "budget",
+     "coily": "budget",
+     "ponytail": "budget",
+     "bun": "budget"
+    }
+   }
+  },
+  {
+   "name": "flux2-klein-base-4b",
+   "version": "1.0.0",
+   "kind": "base-model",
+   "requires": {
+    "schema": ">=0.1 <1.0"
+   },
+   "artifacts": [],
+   "source": null,
+   "description": "FLUX.2 Klein 4B, undistilled base (Black Forest Labs, Apache-2.0): transformer + text encoder + VAE. The texture adapters were trained against this base; the identity component shares its text encoder.",
+   "inference": {
+    "steps": 20,
+    "guidance": 4.0
+   },
+   "turbo_variant": "flux2-klein-4b"
+  },
+  {
+   "name": "flux2-klein-4b",
+   "version": "1.0.0",
+   "kind": "base-model",
+   "requires": {
+    "schema": ">=0.1 <1.0"
+   },
+   "artifacts": [],
+   "source": null,
+   "description": "FLUX.2 Klein 4B, distilled (Black Forest Labs, Apache-2.0): the fast turbo variant adopted by bake-time turbo mode.",
+   "inference": {
+    "steps": 4,
+    "guidance": 1.0
+   }
   }
  ]
 }

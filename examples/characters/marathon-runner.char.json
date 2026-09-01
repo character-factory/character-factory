@@ -134,7 +134,7 @@
   "textures": {
     "skin": {
       "component": "make-skin",
-      "component_version": "0.0.3",
+      "component_version": "0.0.4",
       "prompt": "light-medium skin tone, adult, subtle freckles across the nose",
       "seed": 41002
     },
@@ -206,10 +206,10 @@
         "version": "0.1.0"
       },
       "make-figure": {
-        "version": "0.0.2"
+        "version": "0.1.1"
       },
       "make-skin": {
-        "version": "0.0.3"
+        "version": "0.0.4"
       },
       "make-eye": {
         "version": "0.1.0"

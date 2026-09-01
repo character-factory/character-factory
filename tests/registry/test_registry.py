@@ -109,12 +109,10 @@ def test_snapshot_body_rig_is_hash_pinned():
 
 def test_unpublished_component_fails_clearly(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
-    # body-rig resolves 1.1.0: declared, artifact list completed at publish.
+    # The interpreter's blessed default model is not yet published:
+    # declared with no artifacts, so the failure names itself.
     with pytest.raises(ComponentNotPublished, match="declares no artifacts"):
-        Registry.default().ensure("body-rig")
-    # 1.0.1 pins its artifacts but has no source repository yet.
-    with pytest.raises(ComponentNotPublished, match="no source repository"):
-        Registry.default().ensure("body-rig", "1.0.1")
+        Registry.default().ensure("interpreter")
 
 
 # --- resolution -----------------------------------------------------------------

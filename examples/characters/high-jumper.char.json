@@ -135,7 +135,7 @@
   "textures": {
     "skin": {
       "component": "make-skin",
-      "component_version": "0.0.3",
+      "component_version": "0.0.4",
       "prompt": "deep warm-toned skin, early-20s feminine-presenting adult, focused calm expression, high cheekbones, athletic lean build",
       "seed": 51001
     },
@@ -207,10 +207,10 @@
         "version": "0.1.0"
       },
       "make-figure": {
-        "version": "0.0.2"
+        "version": "0.1.1"
       },
       "make-skin": {
-        "version": "0.0.3"
+        "version": "0.0.4"
       },
       "make-eye": {
         "version": "0.1.0"

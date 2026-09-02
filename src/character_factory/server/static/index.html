@@ -47,18 +47,52 @@ button:disabled { opacity: .45; cursor: default; }
   background: var(--tile) center/cover no-repeat; border: 1px solid var(--line);
   cursor: pointer; overflow: hidden; }
 .tile:hover { border-color: var(--line-hard); }
-.tile-meta { position: absolute; inset: auto 0 0 0; padding: 24px 9px 7px;
+.tile-foot { position: absolute; inset: auto 0 0 0; padding: 28px 9px 7px;
   font-size: 12px; color: var(--text);
-  background: linear-gradient(transparent, rgba(0,0,0,.72));
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  background: linear-gradient(transparent, rgba(0,0,0,.78)); }
+.tile-foot .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-badge { position: absolute; top: 8px; left: 8px; padding: 2px 9px;
   border-radius: 999px; font-size: 11px; background: rgba(0,0,0,.55);
   border: 1px solid var(--line-hard); }
 .tile-badge.error { color: var(--bad); }
-.tile-badge.working { color: var(--warn); }
 .tile.pending { display: flex; align-items: center; justify-content: center;
   color: var(--dim); font-size: 12px; }
 .gallery-empty { text-align: center; color: var(--dim); margin-top: 14vh; }
+
+/* job cards + in-tile progress. Every queued or running job is a card
+   in the grid (queued ones ahead of the active one, next-up nearest);
+   once a character exists for it the progress moves onto its tile. */
+.tile.job { display: flex; flex-direction: column; padding: 9px; cursor: default;
+  background: var(--tile); }
+.tile.job.queued { border-style: dashed; }
+.tile.job.failed, .tile.job.cancelled { border-color: rgba(230,102,92,.35); }
+.job-top { display: flex; align-items: center; justify-content: space-between;
+  min-height: 22px; margin-bottom: 8px; }
+.job-top .tile-badge { position: static; }
+.job-prompt { flex: 1; font-size: 12px; line-height: 1.35; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; }
+.job-error { font-size: 11px; color: var(--bad); margin: 4px 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.job-retry { padding: 3px 10px; font-size: 12px; margin-top: 6px; align-self: flex-start; }
+.spinner { width: 16px; height: 16px; flex: none; border: 2px solid var(--line-hard);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: lbspin .9s linear infinite; }
+.job-x { position: absolute; top: 6px; right: 6px; z-index: 2; width: 24px; height: 24px;
+  padding: 0; border-radius: 50%; font-size: 12px; line-height: 1;
+  background: rgba(0,0,0,.55); color: var(--dim); }
+.job-x:hover { color: var(--text); border-color: var(--line-hard); }
+.steps { display: flex; gap: 3px; margin-top: 6px; }
+.step { flex: 1; height: 4px; border-radius: 2px; background: rgba(246,252,249,.14);
+  position: relative; overflow: hidden; }
+.step.done { background: var(--accent); }
+.step.active::after { content: ''; position: absolute; inset: 0; width: 45%;
+  border-radius: 2px; background: var(--accent);
+  animation: stepslide 1.4s ease-in-out infinite; }
+@keyframes stepslide { 0% { left: -45%; } 100% { left: 100%; } }
+.step-label { display: flex; justify-content: space-between; gap: 6px;
+  font-size: 11px; color: var(--dim); margin-top: 4px; white-space: nowrap; }
+.step-label span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.tile-foot .steps { margin-top: 4px; }
 
 /* dock */
 .dock { position: fixed; left: 0; right: 0; bottom: 0; display: flex;
@@ -245,11 +279,101 @@ fetch('/v0/interpreters').then(r => r.json()).then(list => {
   }
 }).catch(() => {});
 
+/* ------------------------------------------------------------------ jobs */
+// The stages each operation walks (the server's job.stage values, in order).
+const STAGES = { create: ['creating', 'baking', 'assembling'],
+                 bake: ['baking', 'assembling'], assemble: ['assembling'] };
+const STAGE_LABEL = { creating: 'writing the recipe', baking: 'baking textures',
+                      assembling: 'assembling the GLB', complete: 'done' };
+const active = job => ['queued', 'running', 'cancelling'].includes(job?.status);
+const mmss = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+const since = iso => iso ? mmss(Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000))) : '';
+
+// Step-by-step progress: one segment per stage, done ones solid, the
+// current one sweeping (stages report no inner progress — the sweep plus
+// the running stage clock is what shows the job is alive).
+function stepsMarkup(job) {
+  const steps = STAGES[job.operation] || ['assembling'];
+  const at = steps.indexOf(job.stage);
+  const running = job.status === 'running' || job.status === 'cancelling';
+  const segments = steps.map((_, i) => {
+    const cls = job.status === 'succeeded' || (running && i < at) ? 'done'
+              : running && i === at ? 'active' : '';
+    return `<span class="step ${cls}"></span>`;
+  }).join('');
+  let label;
+  if (job.status === 'queued') label = job.queue_position ? `queued · #${job.queue_position}` : 'queued';
+  else if (job.status === 'submitting') label = 'submitting…';
+  else if (job.status === 'cancelling') label = 'cancelling after this stage…';
+  else if (running) label = `${STAGE_LABEL[job.stage] || job.stage} · ${since(job.stage_started_at)}`;
+  else label = job.status;
+  const count = running && at >= 0 ? `${at + 1}/${steps.length}` : '';
+  return `<div class="steps">${segments}</div>` +
+         `<div class="step-label"><span>${esc(label)}</span><span>${count}</span></div>`;
+}
+
+// Dismissed terminal job cards (failed creates that never produced a
+// character) — per browser, best effort.
+const DISMISSED_KEY = 'cf-dismissed-jobs';
+function dismissed() {
+  try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function dismiss(id) {
+  try {
+    const set = dismissed(); set.add(id);
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...set].slice(-200)));
+  } catch {}
+}
+
+async function cancelJob(job) {
+  await fetch(`/v0/jobs/${job.id}`, { method: 'DELETE' }).catch(() => {});
+  refresh();
+}
+function cancelButton(job) {
+  const title = !active(job) ? 'dismiss' : job.status === 'queued' ? 'remove from queue'
+              : job.status === 'cancelling' ? 'cancelling…' : 'cancel';
+  return `<button class="job-x" title="${title}" ${job.status === 'cancelling' ? 'disabled' : ''}>✕</button>`;
+}
+
+// A card for a job with no character tile yet (a create before its
+// recipe exists, or one that failed before it did).
+function jobCard(job) {
+  const div = document.createElement('div');
+  div.className = `tile job ${job.status}`;
+  const terminal = !active(job) && job.status !== 'submitting';
+  const head = job.status === 'queued'
+    ? `<span class="tile-badge">queued${job.queue_position ? ' #' + job.queue_position : ''}</span>`
+    : terminal ? `<span class="tile-badge error">${esc(job.status)}</span>`
+    : '<span class="spinner"></span>';
+  const what = job.request?.prompt || (job.request?.character_id ? `rebuild ${job.request.character_id}` : '');
+  div.innerHTML =
+    `<div class="job-top">${head}</div>${job.status === 'submitting' ? '' : cancelButton(job)}
+     <div class="job-prompt" title="${esc(what)}">${esc(what)}</div>
+     ${terminal && job.error ? `<div class="job-error">${esc(job.error.message)}</div>` : ''}
+     ${stepsMarkup(job)}
+     ${terminal && job.error?.retryable !== false ? '<button class="job-retry">retry</button>' : ''}`;
+  const x = div.querySelector('.job-x');
+  if (x) x.onclick = e => {
+    e.stopPropagation();
+    if (terminal) { dismiss(job.id); refresh(); } else cancelJob(job);
+  };
+  const retry = div.querySelector('.job-retry');
+  if (retry) retry.onclick = async e => {
+    e.stopPropagation();
+    retry.disabled = true;
+    const response = await fetch(`/v0/jobs/${job.id}/retry`, { method: 'POST' }).catch(() => null);
+    if (response?.ok) dismiss(job.id);
+    refresh();
+  };
+  return div;
+}
+
 /* --------------------------------------------------------------- gallery */
 function tile(row) {
   const div = document.createElement('div');
   const job = row.latest_job;
-  const working = job && ['queued', 'running', 'cancelling'].includes(job.status);
+  const working = active(job);
   const failed = job?.status === 'failed';
   if (row.artifact.available || failed || working) {
     div.className = 'tile';
@@ -263,11 +387,43 @@ function tile(row) {
   }
   const badge = failed
     ? `<span class="tile-badge error" title="${esc(job.error?.message)}">error</span>`
-    : working ? `<span class="tile-badge working">${esc(job.stage)}</span>` : '';
+    : working ? `<span class="tile-badge">${job.status === 'queued' ? 'queued' : 'working'}</span>` : '';
   div.insertAdjacentHTML('beforeend',
-    `${badge}<span class="tile-meta">${esc(row.name || row.id)}</span>`);
+    `${badge}${working ? cancelButton(job) : ''}<div class="tile-foot">` +
+    `<div class="name">${esc(row.name || row.id)}</div>${working ? stepsMarkup(job) : ''}</div>`);
+  const x = div.querySelector('.job-x');
+  if (x) x.onclick = e => { e.stopPropagation(); cancelJob(job); };
   div.onclick = () => openLightbox(row.id);
   return div;
+}
+
+// Grid order: queued jobs first (next-up nearest the active one), then
+// whatever is running, then failed creates awaiting a decision, then the
+// library newest-first. A job whose character already exists is shown on
+// that character's tile, not as a separate card.
+let submitting = [];   // optimistic cards between click and the server's ack
+function gridChildren() {
+  const onTiles = new Set(rows.map(r => r.latest_job?.id).filter(Boolean));
+  const hidden = dismissed();
+  const orphan = jobs.filter(j => !onTiles.has(j.id));
+  // Live work, cards and tiles alike: queued entries first, the one that
+  // runs next closest to the running one.
+  const live = [
+    ...orphan.filter(active).map(j => ({ job: j, node: () => jobCard(j) })),
+    ...rows.filter(r => active(r.latest_job))
+           .map(r => ({ job: r.latest_job, node: () => tile(r) })),
+  ];
+  const key = j => j.status === 'queued' ? (j.queue_position || 0) : -1;
+  live.sort((a, b) => key(b.job) - key(a.job));
+  const dayAgo = Date.now() - 86400e3;
+  const failed = orphan.filter(j => j.operation === 'create'
+    && ['failed', 'cancelled'].includes(j.status) && !hidden.has(j.id)
+    && Date.parse(j.finished_at || j.updated_at || 0) > dayAgo);
+  const restRows = rows.filter(r => !active(r.latest_job));
+  return [
+    ...submitting.map(jobCard), ...live.map(entry => entry.node()),
+    ...failed.map(jobCard), ...restRows.map(tile),
+  ];
 }
 
 async function refresh() {
@@ -278,13 +434,16 @@ async function refresh() {
     ]);
   }
   catch { $('worker-status').textContent = 'server unreachable'; return; }
-  const busy = jobs.find(j => ['queued', 'running', 'cancelling'].includes(j.status));
+  const live = jobs.filter(active);
+  const busy = live.find(j => j.status !== 'queued');
+  const waiting = live.length - (busy ? 1 : 0);
   $('worker-status').textContent = busy
-    ? `${busy.stage}: job ${busy.id.slice(0, 8)}` : 'idle';
+    ? `${STAGE_LABEL[busy.stage] || busy.stage}${waiting ? ` · ${waiting} queued` : ''}`
+    : waiting ? `${waiting} queued` : 'idle';
   $('library-count').textContent = rows.length ? `${rows.length} characters` : '';
-  const grid = $('grid');
-  grid.replaceChildren(...rows.map(tile));
-  $('empty').hidden = rows.length > 0;
+  const children = gridChildren();
+  $('grid').replaceChildren(...children);
+  $('empty').hidden = children.length > 0;
   if (open) {
     const row = rows.find(r => r.id === open);
     if (row) {
@@ -305,15 +464,23 @@ $('create').onclick = async () => {
   const body = { prompt };
   if ($('interpreter').value) body.interpreter = $('interpreter').value;
   if ($('turbo').checked) body.turbo = true;
+  // The card appears the moment Create is pressed; the server's job record
+  // replaces it on the next refresh (or the card goes away on a refusal).
+  const placeholder = { id: `pending-${Date.now()}`, operation: 'create',
+                        status: 'submitting', stage: 'queued', request: body };
+  submitting.push(placeholder);
+  $('grid').replaceChildren(...gridChildren());
+  $('empty').hidden = true;
   $('create').disabled = true;
-  $('note').textContent = 'creating (the writer and identity run first)…';
+  $('note').textContent = '';
   try {
     const response = await fetch('/v0/characters', { method: 'POST',
       headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const record = await response.json();
-    $('note').textContent = response.ok ? `queued job ${record.id}`
-                                        : (record.error || record.detail || 'failed');
+    if (response.ok) $('prompt').value = '';
+    else $('note').textContent = record.error || record.detail || 'failed';
   } catch (error) { $('note').textContent = String(error); }
+  submitting = submitting.filter(j => j !== placeholder);
   $('create').disabled = false;
   refresh();
 };

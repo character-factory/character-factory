@@ -200,6 +200,10 @@ class JobStore:
                 "last_heartbeat", "finished_at",
             )
         }
+        # The submitted request, verbatim — a client listing jobs can show
+        # what each one is (the prompt, the character being rebuilt)
+        # without a second lookup; the server never mutates it.
+        result["request"] = dict(job.get("request") or {})
         if isinstance(result.get("result"), dict):
             # The manifest is the sole authority for mandatory export
             # properties. Keep old on-disk job payloads private if a

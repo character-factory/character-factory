@@ -131,3 +131,15 @@ def test_failure_can_expose_safe_interpreter_diagnostics(tmp_path):
         "classification": "truncated_response",
         "trace_id": "opaque123",
     }
+
+
+def test_public_job_carries_the_submitted_request_verbatim(tmp_path):
+    # A client listing jobs (the bundled UI's job cards) shows what each
+    # one is from the record alone: the prompt for a create, the
+    # character for a rebuild. The fingerprint stays internal.
+    store = JobStore(tmp_path / "jobs", lambda *_: None, start_worker=False)
+    job = store.submit("create", {"prompt": "one person", "turbo": True, "seed": 7})
+    assert job["request"] == {"prompt": "one person", "turbo": True, "seed": 7}
+    assert "request_fingerprint" not in job
+    rebuild = store.submit("assemble", {"character_id": "abc123"})
+    assert store.get(rebuild["id"])["request"] == {"character_id": "abc123"}

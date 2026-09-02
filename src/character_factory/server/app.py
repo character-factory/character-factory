@@ -190,6 +190,12 @@ def create_app(service: CharacterService):
                 "progress": {"type": "number", "minimum": 0, "maximum": 1},
                 "detail": {"type": ["string", "null"]},
                 "queue_position": {"type": ["integer", "null"]},
+                "request": {
+                    "type": "object",
+                    "description": "The submitted request, verbatim (prompt, "
+                                   "interpreter, turbo, seed for create; "
+                                   "character_id for bake/assemble).",
+                },
                 "requested_interpreter": {"type": ["string", "null"]},
                 "actual_interpreter": {"type": ["string", "null"]},
                 "warnings": {"type": "array", "items": _ref("Warning")},

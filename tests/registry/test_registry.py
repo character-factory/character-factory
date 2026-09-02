@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import re
 
 import pytest
 
@@ -326,6 +327,32 @@ def test_ensure_component_size_check(tmp_path, monkeypatch):
     )
     directory = ensure_component(entry, fetch=lambda u, t, b: t.write_bytes(payload))
     assert (directory / "w").exists()
+
+
+def test_ensure_component_logs_fetch_start_and_end(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path))
+    payload = b"payload"
+    sha = hashlib.sha256(payload).hexdigest()
+    from character_factory.registry.model import ComponentEntry
+
+    entry = ComponentEntry(
+        adapter(
+            "skin", "0.1.0", "skin",
+            source={"hf_repo": "r", "revision": "v"},
+            artifacts=[{"path": "w", "sha256": sha, "bytes": len(payload)}],
+        )
+    )
+    ensure_component(entry, fetch=lambda u, t, b: t.write_bytes(payload))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert lines[0] == f"fetching skin 0.1.0 ({len(payload)} B)"
+    assert re.fullmatch(r"fetched skin 0\.1\.0 \d+\.\d s", lines[1])
+    assert len(lines) == 2
+
+    # Already on disk: nothing to fetch, nothing said.
+    ensure_component(entry, fetch=lambda u, t, b: t.write_bytes(payload))
+    assert capsys.readouterr().err == ""
 
 
 def test_cache_dir_env_override(monkeypatch, tmp_path):

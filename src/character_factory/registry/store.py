@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -142,9 +144,12 @@ def ensure_component(
     `progress`, if given, is called with (bytes received so far, bytes to
     fetch in total) as the default fetch streams — a job can show a
     19 GB model arriving, and may raise from the callback to abandon it.
+    One line on stderr marks the start and the end of each component's
+    download (whatever the fetch), so a redirected log still shows what a
+    quiet multi-minute transfer is doing.
     """
+    total = missing_bytes(entry)
     if fetch is None:
-        total = missing_bytes(entry)
         received = 0
 
         def fetch(url: str, target: Path, expected: int) -> None:  # noqa: E731
@@ -168,6 +173,9 @@ def ensure_component(
             f"component {entry.ref} is not published yet: its registry "
             f"entry declares no artifacts and it is not provisioned locally"
         )
+    if total:
+        _log(f"fetching {entry.name} {entry.version} ({total} B)")
+        started = time.monotonic()
     for artifact in entry.artifacts:
         path = target_dir / artifact["path"]
         if path.is_file():
@@ -194,4 +202,12 @@ def ensure_component(
             tmp_path.replace(path)
         finally:
             tmp_path.unlink(missing_ok=True)
+    if total:
+        _log(f"fetched {entry.name} {entry.version} "
+             f"{time.monotonic() - started:.1f} s")
     return target_dir
+
+
+def _log(line: str) -> None:
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()

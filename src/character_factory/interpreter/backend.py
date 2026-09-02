@@ -471,7 +471,6 @@ class ModelInterpreter:
 
         mode = self.config.effective_mode
         self.metrics.mode = mode
-        start = time.monotonic()
         try:
             import torch
 
@@ -481,6 +480,12 @@ class ModelInterpreter:
             pass
         trace_id = secrets.token_hex(12) if self.config.endpoint is not None else None
         try:
+            # Load (and on first use, fetch) the local model before the
+            # generation clock starts, so a cold start is reported once as
+            # load time rather than folded into the first call's latency.
+            if self.config.endpoint is None and self.generate is None:
+                self._ensure_loaded()
+            start = time.monotonic()
             if mode == "multi":
                 figure, slots, hair, notes, proportions = self._interpret_multi(
                     prompt, vocabulary, trace_id)

@@ -655,3 +655,32 @@ def test_local_generation_stops_on_the_end_of_turn_token(
     backend = ModelInterpreter(InterpreterConfig(model="x", mode="multi"))
     backend._model, backend._tokenizer = Model(), Tokenizer()
     assert backend._stop_ids() == expected
+
+
+def test_local_model_load_is_not_charged_to_the_first_call(monkeypatch):
+    # A cold start (fetch + load) happens before the generation clock
+    # starts: it is reported once as load time, not folded into the first
+    # call's latency and the generation total.
+    import time as _time
+
+    answers = multi_answers()
+    backend = ModelInterpreter(InterpreterConfig(model="x", mode="multi"))
+    clock = {"now": 0.0}
+    monkeypatch.setattr(_time, "monotonic", lambda: clock["now"])
+
+    def load():
+        clock["now"] += 300.0
+        backend._model, backend._tokenizer = object(), object()
+        backend.metrics.load_seconds = 300.0
+
+    def generate(instruction, description, schema):
+        assert backend._model is not None
+        clock["now"] += 1.0
+        return multi_backend(answers).generate(instruction, description, schema)
+
+    monkeypatch.setattr(backend, "_ensure_loaded", load)
+    monkeypatch.setattr(backend, "_generate_local", generate)
+    backend.interpret("a slight young woman", vocabulary={})
+    assert backend.metrics.load_seconds == 300.0
+    assert backend.metrics.calls["figure"] == 1.0
+    assert backend.metrics.generate_seconds == 7.0

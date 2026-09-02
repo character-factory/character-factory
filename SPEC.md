@@ -125,6 +125,10 @@ character. The content ID is never stored in the document.
 }
 ```
 
+The two `"... N values total"` markers and the four `…`-shortened hashes
+are elisions for the page; with the arrays and hashes written out, this
+document validates under `character-factory validate --strict`.
+
 ### 3.1 Top-level fields
 
 | Field | Type | Required | Description |
@@ -168,7 +172,9 @@ source topology the rig evaluates. The surface an assembler *exports* is
 the render topology declared by the pinned `body-rig` component — which
 MAY be a coarser tessellation of the same rig, carried by a supplied
 vertex map with skin weights and expression morphs transferred (the
-launch component renders MHR's LOD3: 4,899 vertices, 9,794 triangles).
+launch component renders MHR's LOD3: 4,899 vertices, 9,794 triangles for
+the full closed surface, before the assembler removes aperture and
+under-shell faces).
 The render topology, its vertex map, its checksum, and its aperture
 patches are component data, pinned in the registry, not part of this
 specification. A conforming assembler MUST verify the rig and render

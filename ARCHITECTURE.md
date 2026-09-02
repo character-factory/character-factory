@@ -80,10 +80,10 @@ Two facts about determinism:
   └──────────────────────────────────────────────┘
 ```
 
-The servers wrap the library; they add no logic of their own. Local and
-hosted are one product with two addresses: the `/v0` HTTP contract and the
-MCP tool surface are the same in both, and a bearer token is accepted (and
-ignored) locally so clients do not change shape when auth becomes real.
+The servers wrap the library; they add no logic of their own. The `/v0`
+HTTP contract and the MCP tool surface are designed so that a remote
+deployment needs no client changes: a bearer token is accepted (and
+ignored) locally.
 
 ### 2.1 Library API
 
@@ -136,9 +136,9 @@ the interpretation schema before anything runs.
   one instruction that folds in each component's registry guidance. `multi`
   asks one question per component (figure, skin, eye, garment, shoe, hair,
   proportions), each with a literal template for that component's format
-  and its own grammar. Small local models answer the narrow questions far
-  better than the single instruction; hosted frontier models do better in
-  single mode. `mode: auto` (the default) picks `multi` for local models and
+  and its own grammar. In our bench, small local models did better in
+  multi mode and hosted models in single mode. `mode: auto` (the default)
+  picks `multi` for local models and
   `single` for endpoints. The multi-call templates live in
   `interpreter/multi.py` and are bound to the launch component versions.
 - **Optional: any OpenAI-compatible endpoint**, configured per alias with
@@ -147,9 +147,12 @@ the interpretation schema before anything runs.
   `PUT /v0/interpreters/{alias}`. Uses strict JSON-Schema response
   formatting where supported. An empty or truncated response gets one
   retry with a tripled completion budget; malformed or schema-invalid
-  output fails. This is the recommended configuration when available: a
-  current hosted frontier model interprets a description in ≈10–15 s
-  against the local default's ≈50 s and writes richer garment prompts.
+  output fails. This is the recommended configuration when available. On
+  one RTX 3090 with weights on disk, the local default interprets a
+  description in 78 s in multi mode (25 s to load the model, 52 s to
+  answer the seven questions); a hosted frontier model answers the same
+  description in 14 s in single mode, and wrote better garment prompts
+  in our bench.
 - **Skeletal proportions.** The identity component writes them on every
   create; an interpreter backend may emit explicit values on clear signal
   in the description, and those override per key.
@@ -220,7 +223,7 @@ GET    /v0/interpreters                backends: alias, kind, default, label,
                                        identities or keys
 PUT    /v0/interpreters/{alias}        {endpoint|model, api_key?, mode?,
                                        label?, default?}; key is write-only;
-                                       a hosted deployment answers 405
+                                       remote deployments may answer 405
 DELETE /v0/interpreters/{alias}
 POST   /v0/validate                    document → validation report
 GET    /v0/components                  registry view
@@ -230,7 +233,7 @@ GET    /v0/docs                        rendered OpenAPI
 ```
 
 Job states, terminal outcomes, idempotency, cancellation, and retry are
-common local/hosted contract; capacity fields (`queue_position`, device
+part of the `/v0` contract; capacity fields (`queue_position`, device
 fields in `/v0/health`) are server-specific.
 
 **Trust boundary.** The server binds `127.0.0.1` and does not authenticate.
@@ -247,7 +250,8 @@ CORS constrains browser scripts, not other machines.
 `character-factory://schema/character` and
 `character-factory://characters/{id}`. Tool inputs and outputs are
 character documents, not handles, so agent workflows compose with hand
-editing and version control. Same names and shapes local and hosted.
+editing and version control. The tools mirror the `/v0` contract's names
+and shapes.
 
 ## 3. Assembly and export
 
@@ -259,10 +263,12 @@ import the diffusion stack.
    surface (18,439 vertices) and a 127-joint skeleton.
 2. **Render topology.** The `body-rig` component may declare a coarser
    render surface; the launch component (1.2.1) declares MHR's own LOD3
-   (4,899 vertices, 9,794 triangles), carried by the supplied barycentric
-   map with skin weights and expression morphs transferred. Everything
-   below operates on the render surface. Absent a declaration, the source
-   topology is the render surface.
+   (4,899 vertices, 9,794 triangles — the full closed body surface before
+   the eye-socket, mouth, and under-shell faces below are removed),
+   carried by the supplied barycentric map with skin weights and
+   expression morphs transferred. Everything below operates on the render
+   surface. Absent a declaration, the source topology is the render
+   surface.
 3. **Skin.** The body albedo is the skin texture, unmodified.
 4. **Garment and shoe shells.** Garment coverage is recovered from the
    garment image by a calibrated luminance key against its black background
@@ -346,7 +352,7 @@ and are never duplicated into `extras`.
 
 A **baked idle clip** ships in the GLB: a few seconds of breathing and
 weight sway with full local TRS for every joint, frame 0 exactly the rest
-pose, seamless loop. It is a Generic, native-skeleton clip, not certified
+pose, seamless loop. It is a Generic, native-skeleton clip, not validated
 for Humanoid retargeting.
 
 ### 3.3 Delivery compression
@@ -373,19 +379,28 @@ produce; data and infrastructure keep plain names.
 
 | Component | Version | Contents | Size |
 | --- | --- | --- | --- |
-| `interpreter` | 0.1.0 | Qwen3.5-9B, exact upstream revision (Apache-2.0) | ≈19 GB |
-| `make-figure` | 0.1.1 | Text → identity + proportions generative model and normalization stats | ≈10 MB |
-| `make-skin` | 0.0.4 | Adapter for the `skin` albedo (body atlas) | ≈90 MB |
-| `make-eye` | 0.1.0 | Adapter for the `eye` albedo (eyeball layout) | ≈90 MB |
-| `make-garment` | 0.1.0 | Adapter for the `garment` albedo (garment over black) | ≈90 MB |
-| `make-shoe` | 0.0.2 | Adapter for the `shoe` albedo (single-shoe canvas, foot chart, below-ankle vocabulary) | ≈90 MB |
+| `interpreter` | 0.1.0 | Qwen3.5-9B, exact upstream revision (Apache-2.0) | 19,329,302,129 B (19.33 GB) |
+| `make-figure` | 0.1.1 | Text → identity + proportions generative model and normalization stats | 33,960,218 B (34.0 MB) |
+| `make-skin` | 0.0.4 | Adapter for the `skin` albedo (body atlas) | 92,426,392 B (92.4 MB) |
+| `make-eye` | 0.1.0 | Adapter for the `eye` albedo (eyeball layout) | 92,426,386 B (92.4 MB) |
+| `make-garment` | 0.1.0 | Adapter for the `garment` albedo (garment over black) | 92,426,390 B (92.4 MB) |
+| `make-shoe` | 0.0.2 | Adapter for the `shoe` albedo (single-shoe canvas) plus the foot chart (47,186 B of the total) | 92,473,322 B (92.5 MB) |
 | `make-wig` | 0.1.0 | Procedural hair engine, vendored; registry entry records the version and density presets | in package |
-| `body-rig` | 1.2.1 | Pinned MHR v1.0.1 release: TorchScript rig, LOD1 + LOD3 topology, expression morphs, 127-joint name table, humanoid map, mouth data | ≈700 MB |
-| `assembly-assets` | 0.3.0 | Eyeballs, dental arches, tongue, placement data, atlas metadata | ≈20 MB |
-| `flux2-klein-base-4b` | 1.0.0 | FLUX.2 Klein 4B base (transformer, text encoder, VAE), fetched upstream at an exact revision; the text encoder also embeds the figure prompt | ≈16 GB |
+| `body-rig` | 1.2.1 | Pinned MHR v1.0.1 release: TorchScript rig, LOD1 + LOD3 topology, expression morphs, 127-joint name table, humanoid map, mouth data | 709,024,724 B (709 MB) |
+| `assembly-assets` | 0.3.0 | Eyeballs, dental arches, tongue, placement data, atlas metadata | 46,598 B |
+| `flux2-klein-base-4b` | 1.0.0 | FLUX.2 Klein 4B base (transformer, text encoder, VAE, tokenizer, scheduler — 18 files), fetched from `black-forest-labs/FLUX.2-klein-base-4B` at an exact revision; the text encoder also embeds the figure prompt | 15,980,131,711 B (15.98 GB) |
+| `flux2-klein-4b` | 1.0.0 | FLUX.2 Klein 4B distilled variant, same 18-file layout, fetched from `black-forest-labs/FLUX.2-klein-4B` at an exact revision; used only by `--turbo` | 15,980,131,745 B (15.98 GB) |
 
-First-run download: ≈36 GB with the local interpreter, ≈17 GB with an
-endpoint. Assembly-only use needs `body-rig` + `assembly-assets`, ≈720 MB.
+Sizes are the sum of each entry's `artifacts[].bytes` in the vendored
+snapshot. First-run download with the default configuration
+(`interpreter` + `flux2-klein-base-4b` + `make-figure` + the four
+adapters + `body-rig` + `assembly-assets`): 36,422,217,870 B (36.42 GB);
+with an endpoint interpreter: 17,092,915,741 B (17.09 GB); `--turbo` adds
+`flux2-klein-4b`. Assembly-only use (`assemble` on an existing character
+file) fetches `body-rig` + `assembly-assets` — 709,071,322 B (709 MB) —
+plus the whole `make-shoe` component when the character wears shoes,
+because its foot chart ships inside that component: 801,544,644 B
+(802 MB).
 
 Everything is pinned by content hash: upstream models by revision hash,
 the MHR release archive and each consumed artifact by SHA-256. Every
@@ -406,10 +421,14 @@ and `CHARACTER_FACTORY_AUTH_TOKEN` (or `registry_url` / `auth_token` in
   "slot": "skin",
   "map": "albedo",
   "requires": { "base_model": "flux2-klein-base-4b", "schema": ">=0.1 <1.0" },
-  "artifacts": [ { "path": "weights.safetensors", "sha256": "…", "bytes": 92426712 } ],
-  "inference": { "prompt_template": "…", "steps": 20, "guidance": 4.0, "resolution": 1024 },
+  "artifacts": [
+    { "path": "config.json", "sha256": "c281165d41b53c33f0a1af8c3021be079db6d6c1e245b6aedc93d6a20bb9815c", "bytes": 256 },
+    { "path": "weights.safetensors", "sha256": "7b09947747dba9a86d798fba7c076b6b075ca39eaee927dadef12cd43a0d177f", "bytes": 92426136 }
+  ],
+  "inference": { "prompt_template": "MHR face albedo texture map, neutral delit lighting, {prompt}", "steps": 20, "guidance": 4.0, "resolution": 1024 },
   "interpretation": { "fields": "…" },
-  "source": { "hf_repo": "character-factory/make-skin", "revision": "…" }
+  "source": { "hf_repo": "character-factory/make-skin", "revision": "main" },
+  "description": "Full-body skin albedo on the body's canonical UV atlas."
 }
 ```
 
@@ -461,19 +480,26 @@ character-factory make "a lean marathon runner with cropped dark hair" -o runner
 
 ### 6.1 Measured VRAM
 
-Four-slot bake at 1024², 24 GB card:
+Measured on one RTX 3090 (24 GiB) with the launch components and weights
+on disk; peak torch allocation, including pipeline load. Four-slot bake at
+1024²:
 
-- **bf16 (default):** 17.4 GB allocated / 20.3 GB reserved, ≈132 s.
+- **bf16 (default):** 17.4 GiB allocated / 20.3 GiB reserved, 137 s.
 - **`nf4`** (`textures.quantization` in `config.json` or
-  `CHARACTER_FACTORY_TEXTURE_QUANTIZATION`; transformer and text encoder
-  quantized, VAE full precision): 8.9 GB allocated / 9.7 GB reserved,
-  ≈265 s.
+  `CHARACTER_FACTORY_TEXTURE_QUANTIZATION`): 8.9 GiB allocated /
+  14.4 GiB reserved, 267 s. The transformer and text encoder are
+  quantized with bitsandbytes at load from the same bf16 artifacts —
+  there is no separate quantized download; the VAE stays full precision.
+  The slower time is dequantization.
+
+The default local interpreter (Qwen3.5-9B, bf16, multi mode) peaks at
+16.9 GiB allocated and interprets a description in 78 s (25 s model
+load, 52 s for the seven component questions); with the model files in
+the OS page cache, 68 s.
 
 GPU stages are serialized and release before the next loads, so the bake
 sets the floor: a 12 GB card runs the pipeline under `nf4` with an endpoint
-interpreter. The default local interpreter needs ≈18 GB on its own (bf16;
-a quantized interpreter is unmeasured). 8 GB is not supported. fp8 on
-Ada-class hardware is unmeasured.
+interpreter. 8 GB is not supported.
 
 ## 7. Tests
 

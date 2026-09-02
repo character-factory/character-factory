@@ -1,7 +1,6 @@
 # Character Factory
 
-A free, open-source, locally-run text-to-3D character pipeline. Prompt
-in, rigged character out.
+A free, open-source, locally-run text-to-3D character pipeline.
 
 ## Quickstart
 
@@ -10,88 +9,137 @@ pip install "character-factory[generation]"
 character-factory make "A retired astronomy professor, tweed waistcoat, round spectacles, white beard" -o professor
 ```
 
-The first run downloads ≈36 GB of model weights (≈17 GB if you point the
-interpreter at an endpoint — see [The interpreter](#the-interpreter)).
-After that, generation is local and offline. Stage timings print to
-stderr; stdout is exactly the two output paths:
-
 ```
 $ character-factory make "A retired astronomy professor, tweed waistcoat, round spectacles, white beard" -o professor
-create      80.9 s
-bake       131.2 s
-assemble     4.6 s
+create      77.6 s
+bake       134.3 s
+assemble     5.2 s
 professor/character.char.json
 professor/scene.glb
 ```
 
-(24 GB card, weights already on disk, default local interpreter.)
-`--seed` pins the identity and texture draw, `--backend` picks a
-configured interpreter by alias, `--turbo` trades texture quality for
-bake time, `--compress web|unity` also writes a delivery-sized GLB.
+(One RTX 3090, weights on disk, default local interpreter.) The first run
+downloads 36.4 GB of model weights, or 17.1 GB if you point the
+interpreter at an endpoint (see [The interpreter](#the-interpreter)).
+After that, generation is local and offline.
+
+## The character file
+
+`character.char.json` is the character. Trimmed from the [SPEC.md](SPEC.md)
+§3 example:
+
+```json
+{
+  "format": "character-factory/character",
+  "schema_version": "0.1",
+  "body": {
+    "rig": "mhr-lod1@1.0",
+    "identity": ["…"],
+    "proportions": { "leg_length": 0.24, "hip_width": -0.06 },
+    "resting_expression": ["…"]
+  },
+  "textures": {
+    "garment": {
+      "component": "make-garment",
+      "component_version": "0.1.0",
+      "prompt": "teal running vest and black shorts, white piping",
+      "seed": 41004
+    },
+    "…": "…"
+  },
+  "hair": { "family": "crop", "color": { "family": "dark_brown" }, "…": "…" },
+  "provenance": {
+    "components": { "make-figure": { "version": "0.1.1" }, "make-garment": { "version": "0.1.0" }, "…": "…" },
+    "…": "…"
+  }
+}
+```
+
+Change `textures.garment.prompt` and hand the file back to the pipeline
+(`POST /v0/characters` with `{"character": …}` on a running server, or
+`bake` then `assemble` in Python): same character, different clothes.
+Plain JSON. Assembly is deterministic: the same file produces the same
+GLB. The format is specified in [SPEC.md](SPEC.md).
 
 ## What you get
 
-- **`character.char.json`** — the character itself: a few kilobytes of
-  JSON holding body parameters, texture recipes, a semantic hair
-  description, and provenance. Diff it, commit it, edit it by hand, hand
-  it to an agent. It regenerates the character under pinned component
-  versions; character file → GLB is byte-identical.
-- **`scene.glb`** — a rigged, skinned glTF built deterministically from
-  the character file. Garments and shoes are separate body-following
-  shells with their own cloth materials over a skin-only body; hair is
-  its own geometry with albedo and normal maps; the mouth is modeled
-  (teeth, gums, tongue, inner cavity).
+- **`character.char.json`** — body parameters, texture recipes, a semantic
+  hair description, and provenance; 5,973 bytes for the quickstart
+  character.
+- **`scene.glb`** — a rigged, skinned glTF built from the character file:
+  a skin-only body, garment and shoe shells with their own materials,
+  hair geometry with albedo and normal maps, and a modeled mouth (teeth,
+  gums, tongue, inner cavity).
 
 Every character:
 
 | | |
 |---|---|
-| Triangles | ~15–50k, hair-dependent (body ≈16k; locs and braids are the high end) |
+| Triangles | 17,850 in the quickstart character (body 8,337, garment 4,528, shoe 1,432, hair 1,059, mouth 1,798, eyes 696); hair is 1.1–2.3k for most families, 31k for locs, 45k for braids |
 | Textures | 1024² per surface — skin, eyes, garment, shoes; hair albedo + normal |
 | Rig | 127 joints, exact linear-blend skinning, bone-role manifest embedded; 54-bone Unity Humanoid map in the manifest |
 | Facial animation | 72 expression morph targets (`facs_00`–`facs_71`); the jaw animates through the `c_jaw` joint |
 | Idle | a baked breathing/weight-sway clip, playable as Generic or Humanoid |
-| Materials / draw calls | 10–11 primitives |
-| Alpha passes | 0 — fully opaque by design |
-| GLB size | 7–12 MB lossless (PNG); `--compress web` ≈ a third of that |
-| Source document | 2–6 KB JSON |
-| Generation time | ~1–5 min depending on hardware and interpreter |
+| Materials / draw calls | 11 primitives with garment and shoes |
+| Alpha passes | 0 — fully opaque |
+| GLB size | 8.8 MB lossless (PNG) for the quickstart character; 3.9 MB with `--compress web`, 4.6 MB with `--compress unity` |
+| Generation time | 3 min 38 s wall for the quickstart character |
 
-`scene.glb` is lossless. For delivery, `--compress web` writes
-`scene.web.glb` with WebP textures (`EXT_texture_webp`), and
-`--compress unity` writes `scene.unity.glb` with JPEG textures and no
-extension, for glTFast and other loaders without WebP.
-`character-factory compress` does the same to an existing file. Meshes,
-morph targets, the idle clip, and the manifest are untouched either way.
+`--compress web` writes `scene.web.glb` with WebP textures
+(`EXT_texture_webp`); `--compress unity` writes `scene.unity.glb` with
+JPEG textures and no extension, for glTFast and other loaders without
+WebP. Meshes, morph targets, the idle clip, and the manifest are the same
+in every variant.
 
-Scope notes for v0.1: identity drives the face, build, and surface form,
-and skeletal proportions vary within six semantic controls (spine, neck,
-shoulders, arms, hips, legs — `body.proportions`); the rig's finer
-per-segment scales stay at template values. Ground contact in-engine
-needs foot IK either way. Keep compound facial expressions moderate while
-the mouth is nearly closed — the manifest's limitation table lists the
-exact combinations that clip.
+## Known limitations (v0.1)
 
-## Doors
+- Garment coverage is recovered from the garment texture by a luminance
+  key against its black background; the shell edge is where that key
+  crosses its threshold. Shells follow the body surface: loose clothing,
+  skirts, and anything leaving the body silhouette is out of scope.
+- The garment model has no sari or wrapped-garment coverage.
+- Footwear styles run from below-ankle shoes to tall boots, as declared by
+  `make-shoe`. Both feet wear the same design (the canvas is mirrored).
+  Open styles (sandals, flip-flops) keep only the straps the bake recovers;
+  when that recovery keeps too little of the canvas, a schematic two-band
+  strap layout is substituted.
+- Hair is a closed set of eleven procedural families (buzz, crop, pixie,
+  side_part, bob, loose_long, coily, ponytail, bun, braids, locs), one
+  color per character; "dyed tips" cannot be represented. An improved hair
+  path is in progress for v0.2.
+- The local interpreter misses on some prompts (bottom garments, one-piece
+  garments); an endpoint does better on the same prompts.
+- The render surface is LOD3 only; no generated normal or secondary maps
+  for skin and garments.
+- Skeletal proportions are six controls (`spine_length`, `neck_length`,
+  `shoulder_width`, `arm_length`, `hip_width`, `leg_length`); the rig's
+  finer per-segment scales stay at template values.
+- Keep compound facial expressions moderate while the mouth is nearly
+  closed; the manifest's limitation table lists the combinations that clip.
+- Ground contact in-engine needs foot IK.
+- A garment or shoe shell that fails a structural gate is an assembly error
+  naming the gate; the body is never painted instead.
+- 12 GB cards run the bake under `nf4` with an endpoint interpreter; 8 GB
+  is not supported.
+- A failed interpretation returns a structured error; there is no fallback
+  backend.
 
-Four ways onto the same pipeline. Everything below the CLI is a client
-of the `/v0` HTTP contract; nothing is a local-only convenience.
+## Interfaces
 
-- **CLI** — `make` (above), `validate`, `assemble` (character file →
-  GLB, no GPU), `compress`, `interpret` (see what a description
-  decomposes into, for benchmarking interpreter models side by side),
-  `preflight`.
+- **CLI** — `character-factory make` (above; `--seed` pins the identity
+  and texture draw, `--backend` picks a configured interpreter by alias,
+  `--turbo` trades texture quality for bake time, `--compress web|unity`
+  also writes a delivery-sized GLB), `validate`, `assemble` (character
+  file → GLB, no GPU), `compress`, `interpret` (prints what a description
+  decomposes into, with timings), `preflight`.
 - **Server + browser UI** — `pip install "character-factory[server]"`,
-  then `character-factory serve`: the local `/v0` HTTP API and a gallery
-  UI on `127.0.0.1:8400` (`--host 0.0.0.0` for agents and other machines
-  on a trusted network). `/v0/docs` on a running server documents the
-  API. Local and hosted are one product with two addresses: same
-  contract, and a bearer token is accepted (and ignored) locally so no
-  client changes shape when auth becomes real.
+  then `character-factory serve`: the `/v0` HTTP API and a gallery UI on
+  `127.0.0.1:8400` (`--host 0.0.0.0` for other machines on a trusted
+  network); `/v0/docs` documents the API. A bearer token is accepted and
+  ignored.
 - **MCP** — `pip install "character-factory[mcp]"`, then add
   `character-factory mcp` to your agent's MCP config: `create_character`,
   `get_job`, `get_character`, `list_components`, and friends, on stdio.
-  No API key or account involved.
 - **Unity (6000.0+)** — run `character-factory serve`, add
   `"com.character-factory.unity": "https://github.com/character-factory/character-factory-unity.git"`
   to `Packages/manifest.json`, then `unity cmd cf-create --prompt "<description>" --walking true --json`
@@ -99,56 +147,58 @@ of the `/v0` HTTP contract; nothing is a local-only convenience.
   [Unity package README](https://github.com/character-factory/character-factory-unity)
   covers the editor window, the Humanoid avatar, and the verify checks.
 
-If you are handing this to a coding agent, paste in the agent block from
-the website — it is this section in five lines, and points back here.
-
 ## Hardware and install
 
-Measured numbers, not aspirations (details in
+Measured on a single RTX 3090 (details in
 [ARCHITECTURE.md §6](ARCHITECTURE.md)):
 
 | | |
 |---|---|
-| Install | ≈1.1 GB (most of it the CPU torch wheel the rig evaluation needs) |
-| Weights | ≈36 GB on first use: ≈19 GB interpreter + ≈16 GB base image model + ≈1 GB components; ≈17 GB with an endpoint interpreter |
-| Generation, 24 GB card | the default bf16 pipeline: bake measured at 17.4 GB allocated (≈132 s), whole character ≈3.5 min with the local interpreter, ≈2.5 min with an endpoint |
-| Generation, 12 GB card | `nf4` quantization (`textures.quantization` in the cache config): bake measured at 8.9 GB (≈265 s), with an endpoint interpreter. 8 GB is not supported |
+| Install | 1.1 GB |
+| Weights | 36.4 GB on first use: 19.3 GB interpreter + 16.0 GB base image model + 1.1 GB components; 17.1 GB with an endpoint interpreter |
+| Generation, 24 GB card | the default bf16 pipeline: bake 17.4 GiB allocated, 137 s; whole character 3 min 38 s with the local interpreter |
+| Generation, 12 GB card | `nf4` quantization (`textures.quantization` in the cache config): bake 8.9 GiB allocated, 267 s (slower: dequantization), with an endpoint interpreter. 8 GB is not supported |
 | Assembly and consumption | no GPU — character file → GLB runs on CPU, including macOS |
 
 `character-factory preflight` checks the generation stack in seconds —
 the `[generation]` import set, the torch CUDA build, and the driver (via
-a real CUDA call) — and names what is broken instead of letting it
-surface minutes into the first model load. `make` and every server
-generation job run the same check before touching any weights.
+a real CUDA call). `make` and every server generation job run the same
+check before touching any weights.
 
 ## The interpreter
 
 The interpreter is the language model that turns your description into
 each component's prompt. It runs locally by default: the registry's
 `interpreter` component names Qwen3.5-9B (Apache-2.0, ungated — no
-token, no account), ≈19 GB to download, ≈18 GB of VRAM on its own, about
-a minute per description asked one component at a time. It never shares
-VRAM with the image model.
+token, no account), 19.3 GB to download, 16.9 GiB of VRAM on its own,
+78 s per description on the 3090 (25 s to load, 52 s to answer one
+question per component). It never shares VRAM with the image model.
 
 **For speed and quality, point it at an OpenAI-compatible endpoint
 instead.** A current hosted frontier model (an OpenAI GPT-5.6-class model
-in our bench) takes 10–15 s and writes noticeably richer clothing.
+in our bench) takes 14 s and wrote better garment prompts in our bench.
 Configure it with `CHARACTER_FACTORY_INTERPRETER_ENDPOINT`, `_MODEL`, and
 `_API_KEY`, with `interpreter.backends` in the cache `config.json`, or
 through `PUT /v0/interpreters/{alias}` on a running server. The browser
-UI offers the same two choices in its interpreter setup panel and says
-up front what pressing Create will do — create, download the local model
-first (a visible job step with byte progress), or nothing until an
-interpreter is set up. There is no degraded mode: the server never
-silently swaps the requested backend, and a failed interpretation is a
-structured, retryable error, not a worse character.
+UI offers the same two choices in its interpreter setup panel.
+
+## Built on
+
+MHR (Meta, Apache-2.0), FLUX.2 Klein 4B (Black Forest Labs, Apache-2.0),
+Qwen3.5-9B (Apache-2.0), UnityEyes2 (MIT), GNM (Google, Apache-2.0) —
+see [NOTICE](NOTICE).
+
+## Status
+
+v0.1 is the architecture launch, built in public; v0.2 targets hair and
+seeded variation. File issues at
+[github.com/character-factory/character-factory/issues](https://github.com/character-factory/character-factory/issues).
 
 ## Going deeper
 
-- [SPEC.md](SPEC.md) — the character format, if you are judging the
-  format or implementing against it. `character_factory.schema` is its
-  reference implementation (standard library only) with the published
-  JSON Schema, example characters, and test corpus.
+- [SPEC.md](SPEC.md) — the character format. `character_factory.schema`
+  is its reference implementation (standard library only) with the
+  published JSON Schema, example characters, and test corpus.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the system: interpreter, bake,
   assembly and export conventions, components and registry, install
   story, test surface.
@@ -162,11 +212,13 @@ c = Character.load("examples/characters/freediver.char.json")
 print(c.content_id, c.rig, sorted(c.textures))
 ```
 
-**Trust boundary.** The local server binds to `127.0.0.1` by default and
-does not authenticate requests. Bound to `0.0.0.0`, your firewall and
-network rules are the security boundary — a trusted LAN or private
-overlay, never the public internet. The bundled UI is same-origin; there
-are no CORS headers, and CORS would not protect the port from other
-machines anyway. Details in [ARCHITECTURE.md §2.3](ARCHITECTURE.md).
+## Trust boundary
 
-Licensed under Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).
+The local server binds to `127.0.0.1` by default and does not
+authenticate requests. Bound to `0.0.0.0`, your firewall and network
+rules are the security boundary — a trusted LAN or private overlay, never
+the public internet. Details in [ARCHITECTURE.md §2.3](ARCHITECTURE.md).
+
+## License
+
+Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).

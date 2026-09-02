@@ -9,14 +9,16 @@ from the following third-party works:
 Momentum Human Rig (MHR), Meta Platforms
   https://github.com/facebookresearch/MHR
   Licensed under the Apache License, Version 2.0.
-  The parametric body model evaluated at assembly time (fetched as the
-  `body-rig` component, pinned to an exact upstream release by content
-  hash).
+  The parametric body model evaluated at assembly time (redistributed in
+  the `body-rig` component, pinned by content hash to the upstream
+  release).
 
 FLUX.2 Klein 4B, Black Forest Labs
+  https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B
+  https://huggingface.co/black-forest-labs/FLUX.2-klein-4B
   Licensed under the Apache License, Version 2.0.
   The base image-generation model used by the texture components (fetched
-  from its upstream repository, pinned to an exact revision).
+  from its upstream repositories, pinned to an exact revision).
 
 Qwen3.5-9B, Qwen (Alibaba)
   https://huggingface.co/Qwen/Qwen3.5-9B

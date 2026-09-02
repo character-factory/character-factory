@@ -124,8 +124,8 @@ def test_make_composes_the_stages_and_prints_the_two_paths(
         calls.append(("bake", Path(out_dir).name, turbo))
         return BakeResult(character, Path(out_dir), ["skin"])
 
-    def assemble(character, assets_dir, out_path, *, registry, **_):
-        calls.append(("assemble", Path(out_path).name))
+    def assemble(character, assets_dir, out_path, *, registry, compress, **_):
+        calls.append(("assemble", Path(out_path).name, compress))
         return Path(out_path)
 
     class Registry:
@@ -141,17 +141,19 @@ def test_make_composes_the_stages_and_prints_the_two_paths(
     out_dir = tmp_path / "professor"
     code = main([
         "make", "a retired astronomy professor", "-o", str(out_dir),
-        "--seed", "7", "--backend", "fast", "--turbo",
+        "--seed", "7", "--backend", "fast", "--turbo", "--compress", "web",
     ])
     captured = capsys.readouterr()
     assert code == 0
     assert calls == [
         ("create", "a retired astronomy professor", 7, "cuda", "fast"),
         ("bake", "assets", True),
-        ("assemble", "scene.glb"),
+        ("assemble", "scene.glb", "web"),
     ]
+    # With --compress the sibling's path is the third stdout line.
     assert captured.out.splitlines() == [
         str(out_dir / "character.char.json"), str(out_dir / "scene.glb"),
+        str(out_dir / "scene.web.glb"),
     ]
     assert [line.split()[0] for line in captured.err.splitlines()] == [
         "create", "bake", "assemble",

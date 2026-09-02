@@ -108,6 +108,24 @@ def test_assemble_end_to_end(tmp_path):
     assert abs(plane - min(minima.values())) < 1e-5
     assert minima["shoe"] == min(minima.values())  # the shoe is the floor
 
+    # Delivery compression on the real thing: the structural inventory a
+    # consumer relies on survives, and only the images change.
+    from character_factory.assembly.compress import compress_glb
+
+    for target, mime in (("web", "image/webp"), ("unity", "image/jpeg")):
+        compressed = compress_glb(data, target)
+        assert len(compressed) < len(data)
+        small, _ = parse_glb(compressed)
+        body = [m for m in small["meshes"] if m["name"] == "body"][0]
+        assert len(body["primitives"][0]["targets"]) == 72
+        assert len(body["extras"]["targetNames"]) == 72
+        assert sum("skin" in node for node in small["nodes"]) == 3
+        assert small["animations"][0]["name"] == "idle"
+        assert "humanoid_map" in small["asset"]["extras"]
+        assert {image["mimeType"] for image in small["images"]} == {mime}
+        assert small["meshes"] == gltf["meshes"]
+        assert small["nodes"] == gltf["nodes"]
+
     from character_factory.assembly.gltf import read_accessor as _ra
 
     # The full assembly: eyes attached to the eye joints, hair to the head.

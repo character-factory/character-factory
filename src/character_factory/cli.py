@@ -1,8 +1,9 @@
 """The character-factory command line.
 
 `make` is the one-shot path (description in, `character.char.json` and
-`scene.glb` out); `validate`, `assemble`, `interpret`, `preflight`,
-`serve`, and `mcp` expose the stages and services individually.
+`scene.glb` out); `validate`, `assemble`, `compress`, `interpret`,
+`preflight`, `serve`, and `mcp` expose the stages and services
+individually.
 """
 
 from __future__ import annotations
@@ -41,8 +42,25 @@ def _cmd_assemble(args: argparse.Namespace) -> int:
     from character_factory.registry import RegistryError
 
     try:
-        out = assemble(args.character, args.assets, args.output, device=args.device)
+        out = assemble(args.character, args.assets, args.output, device=args.device,
+                       compress=args.compress)
     except (AssetError, RegistryError, FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(out)
+    if args.compress:
+        from character_factory.assembly.compress import compressed_path
+
+        print(compressed_path(out, args.compress))
+    return 0
+
+
+def _cmd_compress(args: argparse.Namespace) -> int:
+    from character_factory.assembly.compress import compress_glb_file
+
+    try:
+        out = compress_glb_file(args.glb, args.target, args.output)
+    except (FileNotFoundError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     print(out)
@@ -63,7 +81,8 @@ def _cmd_make(args: argparse.Namespace) -> int:
     try:
         glb = make(
             args.text, args.output, seed=args.seed, device=args.device,
-            interpreter=args.backend, turbo=args.turbo, report=report,
+            interpreter=args.backend, turbo=args.turbo, compress=args.compress,
+            report=report,
         )
     except (PreflightError, InterpreterError, RegistryError, AssetError,
             FileNotFoundError, ValueError) as error:
@@ -71,7 +90,26 @@ def _cmd_make(args: argparse.Namespace) -> int:
         return 1
     print(glb.parent / "character.char.json")
     print(glb)
+    if args.compress:
+        from character_factory.assembly.compress import compressed_path
+
+        print(compressed_path(glb, args.compress))
     return 0
+
+
+# Mirrors assembly.compress.TARGETS; kept literal here so building the
+# parser does not import the assembly stack (validate is stdlib-only).
+_COMPRESS_TARGETS = ("web", "unity")
+
+
+def _add_compress_option(command: argparse.ArgumentParser) -> None:
+    command.add_argument(
+        "--compress", choices=_COMPRESS_TARGETS,
+        help="also write scene.<target>.glb with textures re-encoded for "
+             "delivery: web = WebP (EXT_texture_webp), unity = JPEG (no "
+             "extension; for glTFast and other loaders without WebP). "
+             "scene.glb itself stays lossless",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--turbo", action="store_true",
         help="faster, lower-quality texture bake",
     )
+    _add_compress_option(make)
     make.add_argument("--device", default="cuda")
     make.set_defaults(func=_cmd_make)
 
@@ -127,8 +166,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory holding <slot>.png files",
     )
     assemble.add_argument("-o", "--output", type=Path, required=True)
+    _add_compress_option(assemble)
     assemble.add_argument("--device", default="cpu")
     assemble.set_defaults(func=_cmd_assemble)
+
+    compress = commands.add_parser(
+        "compress",
+        help="re-encode an existing .glb's textures for delivery "
+             "(web = WebP, unity = JPEG); meshes and the manifest are untouched",
+    )
+    compress.add_argument("glb", type=Path, help="the .glb to compress")
+    compress.add_argument(
+        "--target", choices=_COMPRESS_TARGETS, required=True,
+        help="web = WebP under EXT_texture_webp; unity = JPEG, no extension",
+    )
+    compress.add_argument(
+        "-o", "--output", type=Path,
+        help="output path (default: <name>.<target>.glb beside the input)",
+    )
+    compress.set_defaults(func=_cmd_compress)
 
     interpret = commands.add_parser(
         "interpret",

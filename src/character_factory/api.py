@@ -188,13 +188,16 @@ def make(
     device: str = "cuda",
     interpreter: str | None = None,
     turbo: bool = False,
+    compress: str | None = None,
     report=None,
 ) -> Path:
     """create → bake → assemble: description in, rigged .glb out.
 
     Writes `character.char.json`, `assets/<slot>.png`, and `scene.glb`
-    under `out_dir` and returns the .glb path. `report(stage, seconds)`,
-    when given, is called as each of the three stages finishes."""
+    under `out_dir` and returns the .glb path. `compress` ("web" or
+    "unity") additionally writes `scene.<target>.glb` with re-encoded
+    textures (see `assemble`). `report(stage, seconds)`, when given, is
+    called as each of the three stages finishes."""
     import time
 
     from character_factory.registry import Registry
@@ -224,7 +227,7 @@ def make(
     started = time.monotonic()
     out = assemble(
         baked.character, baked.assets_dir, out_dir / "scene.glb",
-        registry=registry,
+        registry=registry, compress=compress,
     )
     if report is not None:
         report("assemble", time.monotonic() - started)
@@ -257,6 +260,7 @@ def assemble(
     *,
     registry=None,
     device: str = "cpu",
+    compress: str | None = None,
 ) -> Path:
     """Build the rigged .glb for a character from its baked assets.
 
@@ -264,6 +268,13 @@ def assemble(
     (`skin.png`, `eye.png`, `garment.png`, optional `shoe.png`). When the
     character carries an `assets` block, every file is verified against its
     pinned hash before use; a mismatch is a hard error.
+
+    `out_path` is always the canonical, lossless export (the file the
+    determinism promise covers). `compress="web"` or `"unity"` writes a
+    second file beside it — `scene.web.glb` / `scene.unity.glb` — with the
+    textures re-encoded for delivery (WebP under `EXT_texture_webp`, or
+    JPEG for consumers that cannot decode WebP, Unity among them). The
+    return value stays the canonical path.
 
     Garments and shoes ship as separate skinned shell meshes with their
     own cloth material, and the body faces underneath are omitted — the
@@ -281,6 +292,12 @@ def assemble(
     from character_factory.assembly.composite import AtlasDefinition
     from character_factory.registry import Registry
 
+    from character_factory.assembly.compress import TARGETS
+
+    if compress is not None and compress not in TARGETS:
+        raise ValueError(
+            f"unknown compression target {compress!r}; expected one of {TARGETS}"
+        )
     if not isinstance(character, Character):
         character = Character.load(character)
     assets_dir = Path(assets_dir)
@@ -556,6 +573,10 @@ def assemble(
         manifest_extra={"garments": garments_manifest} if garments_manifest
         else None,
     )
+    if compress is not None:
+        from character_factory.assembly.compress import compress_glb_file
+
+        compress_glb_file(result.glb_path, compress)
     return result.glb_path
 
 

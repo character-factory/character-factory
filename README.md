@@ -21,6 +21,14 @@ the identity and texture draw, `--backend` picks a configured interpreter
 by alias, `--turbo` trades texture quality for bake time. The first run
 downloads the model components (sizes below).
 
+`scene.glb` is lossless (7–12 MB, most of it PNG textures). For
+delivery, `--compress web` also writes `scene.web.glb` with WebP
+textures (`EXT_texture_webp`; about a third of the size), and
+`--compress unity` writes `scene.unity.glb` with JPEG textures and no
+extension, for glTFast and other loaders without WebP.
+`character-factory compress` does the same to an existing file. Meshes,
+morph targets, the idle clip, and the manifest are untouched either way.
+
 Two more doors onto the same pipeline: `character-factory serve` (extra
 `[server]`) runs the local `/v0` HTTP API with a browser UI, and
 `character-factory mcp` (extra `[mcp]`) runs an MCP server on stdio for

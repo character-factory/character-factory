@@ -587,7 +587,26 @@ of conventions chosen so the artifact imports and retargets correctly:
   vertex attributes and indices use the proper buffer targets, joints as
   unsigned-short VEC4 with float VEC4 weights, no UV V-flip (the bake and
   glTF already agree on a top-left origin), counter-clockwise winding
-  verified against outward normals rather than assumed.
+  verified against outward normals rather than assumed. Byte-identical
+  textures are embedded once (the two eye materials share one image).
+- **Delivery compression is opt-in and never the canonical file.**
+  `scene.glb` is lossless — that is the file the determinism promise
+  covers — and its textures are most of its bytes (a 1024² PNG atlas set
+  is 4–8 MB of a 7–12 MB file; every material is opaque, so no alpha is
+  at stake). `--compress web` (on `make` and `assemble`) or
+  `character-factory compress` writes a sibling `scene.web.glb` with the
+  albedo maps re-encoded as WebP q85 and the hair normal map as WebP q90
+  under `EXT_texture_webp` (listed in `extensionsRequired` — there is no
+  PNG fallback, so a loader without the extension refuses the file
+  instead of rendering it untextured); `--compress unity` writes
+  `scene.unity.glb` with plain JPEG at the same qualities and no
+  extension, for glTFast and any other loader that goes through an image
+  stack without WebP. Meshes, skins, morph targets, the idle clip, and
+  the manifest are carried across unchanged, and the test suite asserts
+  exactly that. Geometry compression (quantization, meshopt) is not
+  done: it needs a native decoder on the consumer's side, and on a
+  skinned mesh the dequantization has to be folded into the inverse
+  bind matrices — a change to the rig contract, not a post-step.
 - **The GLB is self-describing.** The **bone-role manifest** (JSON: the
   full engine humanoid role → joint name mapping, the explicit
   leave-unmapped set — procedural twist joints, null markers, mouth

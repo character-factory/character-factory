@@ -11,6 +11,7 @@ projection, never the authority) and a baked idle clip with every export.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -479,10 +480,18 @@ def export_character_glb(
     materials: list[dict] = []
     meshes: list[dict] = []
 
+    # Byte-identical textures are embedded once (the left and right eye
+    # share an image; both materials reference the same texture).
+    texture_by_digest: dict[str, int] = {}
+
     def add_texture(png: bytes) -> int:
+        digest = hashlib.sha256(png).hexdigest()
+        if digest in texture_by_digest:
+            return texture_by_digest[digest]
         images.append(writer.add_image(png))
         texture_defs.append({"sampler": 0, "source": len(images) - 1})
-        return len(texture_defs) - 1
+        texture_by_digest[digest] = len(texture_defs) - 1
+        return texture_by_digest[digest]
 
     body_material: dict = {
         "name": "body",

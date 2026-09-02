@@ -330,7 +330,7 @@ pip install "character-factory[generation]"
 character-factory make "a lean marathon runner with cropped dark hair" -o runner/
 ```
 
-- Python ≥ 3.11. Base install ≈1.1 GB; `[generation]`, `[server]`, `[mcp]` extras on top.
+- Python ≥ 3.11. Base install 5.6 GB (torch with CUDA); `[generation]`, `[server]`, `[mcp]` extras on top.
 - Linux + NVIDIA CUDA is first-class. Windows runs through WSL2 on the same code path; native Windows is untested. macOS runs the CLI, schema tools, server, and assembly; generation is unsupported (no CUDA, no MPS target).
 - `character-factory preflight` checks the generation import set, the torch CUDA build, and the driver with a real CUDA call. `make` and every server generation job run it before loading weights.
 

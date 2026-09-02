@@ -56,7 +56,10 @@ mcp = ["mcp>=1.2"]
 dev = ["pytest>=8", "jsonschema>=4.21", "httpx>=0.27", "fastapi>=0.111", "anyio>=4"]
 
 [project.urls]
-# Homepage/repository URLs land when the public repository exists.
+Homepage = "https://characterfactory.ai"
+Repository = "https://github.com/character-factory/character-factory"
+Documentation = "https://github.com/character-factory/character-factory#readme"
+Issues = "https://github.com/character-factory/character-factory/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

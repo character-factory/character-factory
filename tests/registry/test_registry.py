@@ -99,12 +99,35 @@ def test_snapshot_shoe_maker_declares_vocabulary():
 
 
 def test_snapshot_body_rig_is_hash_pinned():
-    # 1.0.1 specifically: 1.1.0 is declared but its artifact list is
-    # completed at publish (the snapshot's stated pattern).
-    entry = Registry.default().get("body-rig", "1.0.1")
+    # The packaged snapshot specifically (a refreshed local index may
+    # differ): the upstream body model file is pinned by content hash.
+    from character_factory.registry import RegistryIndex, _snapshot_document
+
+    entry = Registry(RegistryIndex(_snapshot_document())).get("body-rig")
     paths = {a["path"]: a for a in entry.artifacts}
     assert paths["mhr_model.pt"]["bytes"] == 696110248
     assert len(paths["mhr_model.pt"]["sha256"]) == 64
+
+
+def test_snapshot_base_models_are_pinned_upstream():
+    # Both image base models are fetched from their upstream repositories
+    # at an exact revision, every file the pipeline opens hash-pinned, and
+    # the identity component's declared base is one of them.
+    from character_factory.registry import RegistryIndex, _snapshot_document
+
+    registry = Registry(RegistryIndex(_snapshot_document()))
+    for name in ("flux2-klein-base-4b", "flux2-klein-4b"):
+        entry = registry.get(name)
+        assert len(entry.document["source"]["revision"]) == 40
+        paths = {a["path"] for a in entry.artifacts}
+        assert {"model_index.json", "transformer/config.json",
+                "text_encoder/config.json", "tokenizer/tokenizer.json",
+                "vae/config.json"} <= paths
+        assert all(len(a["sha256"]) == 64 and a["bytes"] > 0
+                   for a in entry.artifacts)
+        assert entry.document["upstream"]["gated"] is False
+    base = registry.get("make-figure").document["requires"]["base_model"]
+    assert registry.get(base).kind == "base-model"
 
 
 def test_unpublished_component_fails_clearly(tmp_path, monkeypatch):

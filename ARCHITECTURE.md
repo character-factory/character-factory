@@ -56,12 +56,8 @@ Two facts about determinism:
 - Every character carries 72 expression morph targets (`facs_00`–`facs_71`)
   and a jaw joint (`c_jaw`). No facial performances are authored; playback
   is the consumer's.
-- Footwear is below-ankle only: `make-shoe` declares its style vocabulary in
-  the registry and the interpreter clamps to it. Boots arrive as a
-  `make-shoe` version widening that vocabulary.
-- Garments are body-following shells extracted from the garment texture, not
-  simulated cloth. Loose clothing, skirts, and anything leaving the body
-  silhouette are out of scope.
+- Garments and shoes are single-layer shells extracted from the garment
+  texture; loose or off-silhouette clothing is out of scope.
 - No identity resampling of an existing file, and no animation authoring
   beyond the baked idle clip.
 
@@ -81,9 +77,8 @@ Two facts about determinism:
 ```
 
 The servers wrap the library; they add no logic of their own. The `/v0`
-HTTP contract and the MCP tool surface are designed so that a remote
-deployment needs no client changes: a bearer token is accepted (and
-ignored) locally.
+HTTP contract and the MCP tool surface accept a bearer token and ignore
+it locally.
 
 ### 2.1 Library API
 
@@ -149,10 +144,8 @@ the interpretation schema before anything runs.
   retry with a tripled completion budget; malformed or schema-invalid
   output fails. This is the recommended configuration when available. On
   one RTX 3090 with weights on disk, the local default interprets a
-  description in 78 s in multi mode (25 s to load the model, 52 s to
-  answer the seven questions); a hosted frontier model answers the same
-  description in 14 s in single mode, and wrote better garment prompts
-  in our bench.
+  description in 78 s in multi mode; a hosted frontier model answers the
+  same description in 14 s in single mode, and writes better prompts.
 - **Skeletal proportions.** The identity component writes them on every
   create; an interpreter backend may emit explicit values on clear signal
   in the description, and those override per key.
@@ -162,8 +155,7 @@ the interpretation schema before anything runs.
   authoring only — nothing downstream can verify it.
 - **No degraded mode.** There is no non-model backend. A model that cannot
   be fetched or a failed request is a structured error (`error.code`,
-  `classification`, `retryable`, `trace_id`), never a silent swap to a
-  different backend.
+  `classification`, `retryable`, `trace_id`).
 - **Readiness.** `GET /v0/interpreters` reports, per configured backend,
   whether a create would succeed now and if not why (weights not
   downloaded and how many bytes; declared VRAM exceeds the device; no CUDA
@@ -173,8 +165,7 @@ the interpretation schema before anything runs.
   `downloading` job stage with byte progress, after the generation
   preflight passes; cancelling discards the partial file.
 - **VRAM sequencing.** The interpreter loads, runs, and releases inside the
-  `interpret` call, before the diffusion stack loads. The two are never
-  resident together.
+  `interpret` call, before the diffusion stack loads.
 - **Audit log.** With `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG` set, the
   server appends a mode-0600 JSONL record per request (raw prompt and
   response, status, latency, usage, attempt, trace id). Public job errors
@@ -219,7 +210,7 @@ POST   /v0/jobs/{id}/retry             new attempt after failure or cancel
 GET    /v0/interpreters                backends: alias, kind, default, label,
                                        ready, reason, download_bytes,
                                        vram_bytes, fits, device_bytes,
-                                       endpoint_host, has_key — never model
+                                       endpoint_host, has_key — no model
                                        identities or keys
 PUT    /v0/interpreters/{alias}        {endpoint|model, api_key?, mode?,
                                        label?, default?}; key is write-only;
@@ -238,7 +229,7 @@ fields in `/v0/health`) are server-specific.
 
 **Trust boundary.** The server binds `127.0.0.1` and does not authenticate.
 On `0.0.0.0` the host firewall and network are the boundary: a trusted LAN
-or private overlay, never the public internet. There are no CORS headers;
+or private overlay, not the public internet. There are no CORS headers;
 CORS constrains browser scripts, not other machines.
 
 ### 2.4 The MCP server
@@ -281,7 +272,7 @@ import the diffusion stack.
    shell are deleted; a narrow skin band (`band_cm`: 3.0 for garments, 0.4
    for shoes) is kept under the rim. A shell that fails a structural gate
    (alpha quality, seam cracks, topology, closed solid, weight audit) is an
-   assembly error naming the gate — there is no painted fallback. Layering
+   assembly error naming the gate. Layering
    is shoe over garment over skin.
 5. **Eyes.** A patch over each socket is removed; a stock eyeball mesh is
    placed by a similarity fit of its lid margin to the socket rim and takes
@@ -317,9 +308,8 @@ import the diffusion stack.
   shorter than 2 mm inherit the parent's direction. Joint positions are
   untouched; worst left/right deviation is ≈0.02°.
 - **Knee flexion.** 5° (`KNEE_FLEXION_DEGREES`, versioned) is baked into
-  the rest pose about a shared sagittal axis, because a straight knee is a
-  degenerate hinge for retargeters.
-- **Inverse bind matrices** are rebuilt after both edits, so the bound mesh
+  the rest pose about a shared sagittal axis.
+- **Inverse bind matrices** are rebuilt after both edits; the bound mesh
   is bit-identical to the rig's rest geometry.
 - **Correctives.** The rig animates as linear-blend skinning; MHR's learned
   pose correctives are not exported.
@@ -342,13 +332,13 @@ joint-name map (54 bones for Unity Humanoid), the leave-unmapped set,
 units and axes, joint count, the knee constant, per-slot `garments` shell
 inventory (`render_mode: "shell"`), a `jaw` block (rotation sign,
 `full_open_degrees`, and the `facs_24` + `expression_fit_angle_degrees`
-composition — alternatives, never summed), the measured
+composition — alternatives, not summed), the measured
 animation-limitation table, a `grounding` block (ground plane, root and
 foot offsets, idle drift tolerance, foot-IK recommendation), and the
 render LOD. It is a function of rig version, exporter constants, and the
 character's proportions — byte-identical across re-exports. Character
 identity, textures, hair, and provenance stay in the character document
-and are never duplicated into `extras`.
+and are not duplicated into `extras`.
 
 A **baked idle clip** ships in the GLB: a few seconds of breathing and
 weight sway with full local TRS for every joint, frame 0 exactly the rest
@@ -397,10 +387,9 @@ snapshot. First-run download with the default configuration
 adapters + `body-rig` + `assembly-assets`): 36,422,217,870 B (36.42 GB);
 with an endpoint interpreter: 17,092,915,741 B (17.09 GB); `--turbo` adds
 `flux2-klein-4b`. Assembly-only use (`assemble` on an existing character
-file) fetches `body-rig` + `assembly-assets` — 709,071,322 B (709 MB) —
-plus the whole `make-shoe` component when the character wears shoes,
-because its foot chart ships inside that component: 801,544,644 B
-(802 MB).
+file) fetches `body-rig` + `assembly-assets`: 709,071,322 B (709 MB);
+when the character wears shoes, the whole `make-shoe` component as well:
+801,544,644 B (802 MB).
 
 Everything is pinned by content hash: upstream models by revision hash,
 the MHR release archive and each consumed artifact by SHA-256. Every
@@ -469,8 +458,8 @@ pip install "character-factory[generation]"
 character-factory make "a lean marathon runner with cropped dark hair" -o runner/
 ```
 
-- Python ≥ 3.11. Base install ≈1.1 GB (mostly the CPU torch wheel the rig
-  evaluation needs); `[generation]`, `[server]`, `[mcp]` extras on top.
+- Python ≥ 3.11. Base install ≈1.1 GB; `[generation]`, `[server]`, `[mcp]`
+  extras on top.
 - Linux + NVIDIA CUDA is first-class. Windows runs through WSL2 on the same
   code path; native Windows is untested. macOS runs the CLI, schema tools,
   server, and assembly; generation is unsupported (no CUDA, no MPS target).
@@ -490,12 +479,10 @@ on disk; peak torch allocation, including pipeline load. Four-slot bake at
   14.4 GiB reserved, 267 s. The transformer and text encoder are
   quantized with bitsandbytes at load from the same bf16 artifacts —
   there is no separate quantized download; the VAE stays full precision.
-  The slower time is dequantization.
 
 The default local interpreter (Qwen3.5-9B, bf16, multi mode) peaks at
-16.9 GiB allocated and interprets a description in 78 s (25 s model
-load, 52 s for the seven component questions); with the model files in
-the OS page cache, 68 s.
+16.9 GiB allocated and interprets a description in 78 s; with the model
+files in the OS page cache, 68 s.
 
 GPU stages are serialized and release before the next loads, so the bake
 sets the floor: a 12 GB card runs the pipeline under `nf4` with an endpoint
@@ -554,6 +541,5 @@ Runs that need cached components skip when they are absent.
 │   ├── server/           FastAPI app, service, jobs, static UI
 │   └── mcp/
 ├── examples/characters/  committed .char.json files
-├── tests/
-└── docs/
+└── tests/
 ```

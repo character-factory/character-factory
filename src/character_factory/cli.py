@@ -1,8 +1,8 @@
 """The character-factory command line.
 
-Implemented today: `validate`, `assemble`, `interpret`, `serve`, `mcp`.
-`create`/`bake`/`make` land with their modules and are absent, not
-stubbed: an unknown command is argparse's honest error.
+`make` is the one-shot path (description in, `character.char.json` and
+`scene.glb` out); `validate`, `assemble`, `interpret`, `preflight`,
+`serve`, and `mcp` expose the stages and services individually.
 """
 
 from __future__ import annotations
@@ -49,12 +49,64 @@ def _cmd_assemble(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_make(args: argparse.Namespace) -> int:
+    from character_factory.api import AssetError, make
+    from character_factory.interpreter.backend import InterpreterError
+    from character_factory.preflight import PreflightError
+    from character_factory.registry import RegistryError
+
+    # Stage timings go to stderr so stdout is exactly the two output paths
+    # — scriptable, and a `2>&1` transcript shows the real wall clock.
+    def report(stage: str, seconds: float) -> None:
+        print(f"{stage:<9}{seconds:7.1f} s", file=sys.stderr)
+
+    try:
+        glb = make(
+            args.text, args.output, seed=args.seed, device=args.device,
+            interpreter=args.backend, turbo=args.turbo, report=report,
+        )
+    except (PreflightError, InterpreterError, RegistryError, AssetError,
+            FileNotFoundError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print(glb.parent / "character.char.json")
+    print(glb)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="character-factory",
         description="Turn a text description into a rigged, textured 3D human.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    make = commands.add_parser(
+        "make",
+        help="description → character.char.json + scene.glb "
+             "(interpret, generate, bake, assemble; install extra [generation])",
+    )
+    make.add_argument("text", help="the character description")
+    make.add_argument(
+        "-o", "--output", type=Path, required=True,
+        help="output directory (created if missing)",
+    )
+    make.add_argument(
+        "--seed", type=int,
+        help="identity and texture seed (random when omitted; recorded in "
+             "the character file's provenance)",
+    )
+    make.add_argument(
+        "--backend",
+        help="interpreter backend alias (see the server's /v0/interpreters); "
+             "the configured default when omitted",
+    )
+    make.add_argument(
+        "--turbo", action="store_true",
+        help="faster, lower-quality texture bake",
+    )
+    make.add_argument("--device", default="cuda")
+    make.set_defaults(func=_cmd_make)
 
     validate = commands.add_parser(
         "validate", help="validate character files against the format spec"

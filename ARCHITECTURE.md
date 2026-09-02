@@ -818,10 +818,13 @@ complete pipeline with an endpoint interpreter configured (§2.2), or a
 smaller local model; a quantized default interpreter is unmeasured and
 no number is claimed for it in v0.
 
-On an unsuitable machine the pipeline degrades honestly: `create`, `bake`,
-and `make` probe device and free VRAM up front and exit with a message
-stating the floor and pointing at what *does* work (below) — no partial
-generation, no silent CPU fallback that would take hours.
+On an unsuitable machine the pipeline degrades honestly: `make` (and the
+`create`/`bake` API calls behind it) runs the generation preflight up
+front — import set, CUDA build, driver — and exits naming the cause
+before any weights load; no partial generation, no silent CPU fallback
+that would take hours. VRAM is not probed: the floor above is documented,
+and an over-subscribed card fails at model load like any other torch
+program.
 
 ### 6.2 What succeeds on a MacBook Air
 

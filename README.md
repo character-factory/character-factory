@@ -11,9 +11,21 @@ Turn a text description into a rigged, textured, realtime 3D human.
 > PyPI.
 
 ```
-pip install character-factory
+pip install "character-factory[generation]"
 character-factory make "a lean marathon runner with cropped dark hair" -o runner/
 ```
+
+Stage timings print to stderr as they finish; stdout is the two output
+paths (`runner/character.char.json`, `runner/scene.glb`). `--seed` pins
+the identity and texture draw, `--backend` picks a configured interpreter
+by alias, `--turbo` trades texture quality for bake time. The first run
+downloads the model components (sizes below).
+
+Two more doors onto the same pipeline: `character-factory serve` (extra
+`[server]`) runs the local `/v0` HTTP API with a browser UI, and
+`character-factory mcp` (extra `[mcp]`) runs an MCP server on stdio for
+coding agents — `create_character`, `get_job`, `get_character`,
+`list_components`, and friends, no API key or account involved.
 
 One sentence in; two artifacts out:
 

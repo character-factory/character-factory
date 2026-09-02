@@ -186,20 +186,49 @@ def make(
     seed: int | None = None,
     registry=None,
     device: str = "cuda",
+    interpreter: str | None = None,
+    turbo: bool = False,
+    report=None,
 ) -> Path:
-    """create → bake → assemble: description in, rigged .glb out."""
+    """create → bake → assemble: description in, rigged .glb out.
+
+    Writes `character.char.json`, `assets/<slot>.png`, and `scene.glb`
+    under `out_dir` and returns the .glb path. `report(stage, seconds)`,
+    when given, is called as each of the three stages finishes."""
+    import time
+
     from character_factory.registry import Registry
     from character_factory.textures import bake
 
     registry = registry or Registry.default()
     out_dir = Path(out_dir)
-    character = create(prompt, seed=seed, registry=registry, device=device)
-    baked = bake(character, out_dir / "assets", registry=registry, device=device)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    started = time.monotonic()
+    character = create(
+        prompt, seed=seed, registry=registry, device=device,
+        interpreter=interpreter,
+    )
+    if report is not None:
+        report("create", time.monotonic() - started)
+
+    started = time.monotonic()
+    baked = bake(
+        character, out_dir / "assets", registry=registry, device=device,
+        turbo=turbo,
+    )
     baked.character.save(out_dir / "character.char.json")
-    return assemble(
+    if report is not None:
+        report("bake", time.monotonic() - started)
+
+    started = time.monotonic()
+    out = assemble(
         baked.character, baked.assets_dir, out_dir / "scene.glb",
         registry=registry,
     )
+    if report is not None:
+        report("assemble", time.monotonic() - started)
+    return out
 
 
 class AssetError(ValueError):

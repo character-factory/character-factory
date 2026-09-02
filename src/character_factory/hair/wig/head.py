@@ -11,6 +11,7 @@ Chart convention (right-handed, y-up):
                   (nape, sideburns).
 """
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -256,7 +257,12 @@ class Head:
                     Rp[2:, :],
                 ]
             )
-            fill = np.nanmean(neigh, axis=0)
+            # Cells whose four neighbours are all still holes average to
+            # NaN by design and fill on a later pass; numpy's warning for
+            # that case is noise here.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                fill = np.nanmean(neigh, axis=0)
             R[nanmask] = fill[nanmask]
         # light smoothing (keeps hairline features, kills bin noise)
         for _ in range(2):

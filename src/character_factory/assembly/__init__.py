@@ -6,7 +6,7 @@ this package is what runs on machines that cannot generate.
 
 Needs torch (for the rig's TorchScript forward) and numpy; both are base
 dependencies precisely so the assembly-only install story holds
-(ARCHITECTURE.md §6.2).
+(ARCHITECTURE.md §6).
 """
 
 from character_factory.assembly.export import (

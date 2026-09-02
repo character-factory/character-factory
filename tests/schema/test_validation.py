@@ -1,4 +1,4 @@
-"""The broken-document corpus (ARCHITECTURE §7.1): every deliberately broken
+"""The broken-document corpus (ARCHITECTURE §7): every deliberately broken
 document fails with the documented error, at the documented severity."""
 
 import pytest

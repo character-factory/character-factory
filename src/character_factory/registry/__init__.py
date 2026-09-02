@@ -6,7 +6,7 @@ fetched on first use into a local cache, and described by a JSON index. New
 capability arrives as registry data, not code (ARCHITECTURE.md §4).
 
 This package is stdlib-only so that the assembly-only install (macOS story,
-ARCHITECTURE.md §6.2) can fetch and verify components without the generation
+ARCHITECTURE.md §6) can fetch and verify components without the generation
 stack.
 """
 

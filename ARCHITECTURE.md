@@ -1,1028 +1,533 @@
 # Architecture
 
-**Status: v0 design document.** This describes what Character Factory is,
-how the pieces fit together, and what is deliberately not in v0. The
-companion document [SPEC.md](SPEC.md) defines the character format; this
-document covers everything else.
+How Character Factory is put together: the pipeline, the package and its
+entry points, assembly and export, components, install, and tests. The
+character format itself is specified in [SPEC.md](SPEC.md). Licensed under
+Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).
 
-Character Factory is licensed under the Apache License 2.0 — code, documents,
-and published model weights alike. See [LICENSE](LICENSE) and
-[NOTICE](NOTICE) for third-party attributions.
-
-## 1. What v0 is
-
-Character Factory turns a text description into a rigged, textured, realtime
-3D human. One sentence in, one animatable glTF binary out:
+## 1. Pipeline
 
 ```
 "a lean marathon runner with cropped dark hair and green eyes, teal running vest"
         │
         ▼
-  interpretation                (a language model writes every component's prompt in
-        │                        that component's trained format: per-slot texture
-        │                        prompts, the semantic hair block, and the figure prompt)
+  interpretation      a language model writes every component's prompt in that
+        │             component's format: per-slot texture prompts, the figure
+        │             prompt, and the semantic hair block
         ▼
-  identity generation           (figure prompt → 45 body/face shape coefficients + 72
-        │                        resting-expression values on the MHR parametric body —
-        │                        SAMPLED from a generative model; the create seed picks
-        │                        one identity from the figure prompt's distribution)
+  identity            figure prompt → 45 MHR identity coefficients + skeletal
+        │             proportions, sampled from a generative model (the create
+        │             seed picks the draw)
         ▼
-  texture generation            (skin, eye, garment, optional shoe: UV-space
-        │                        images from a FLUX.2 Klein 4B base model with
-        │                        per-slot adapters; seeded diffusion, 1024² albedo)
+  textures            skin, eye, garment, optional shoe: 1024² UV-space albedo
+        │             images from FLUX.2 Klein 4B with a per-slot adapter
         ▼
-  hair synthesis                (semantic hair JSON → textured hair mesh, procedural,
-        │                        deterministic, no diffusion)
+  hair                semantic hair block → textured hair mesh (procedural, CPU)
+        │
         ▼
-  assembly                      (evaluate the rig, composite garments over skin in UV
-        │                        space, place eyes and the mouth interior, attach hair,
-        ▼                        emit a skinned glTF with the full 127-joint skeleton)
+  assembly            rig evaluation, garment/shoe shells, eyes, mouth interior,
+        │             hair, skinned glTF export
+        ▼
   character.char.json  +  scene.glb
 ```
 
-The intermediate product — and the thing this project treats as the character
-itself — is the **character file** (SPEC.md): a few kilobytes of JSON holding
-the body parameters, per-slot texture recipes, semantic hair description, and
-provenance. The GLB is a build artifact; the character file is the source.
+The character file is the product; the GLB is built from it. The file
+holds body parameters, per-slot texture recipes (prompt + seed + component
+version), the hair block, and provenance — a few kilobytes of JSON that
+can be diffed, edited, and regenerated.
 
-Two properties are load-bearing:
+Two facts about determinism:
 
-- **Identity is generative, and the document records the draw.** The
-  interpreter writes a figure prompt — a dense physique description in
-  the figure component's trained format, exactly as every texture slot
-  gets its component's format — and the identity model SAMPLES one
-  identity from that prompt's distribution: a single joint model (a
-  semantic-center regressor plus a conditional rectified flow over one
-  body+proportions+face state), seeded by the create seed, with noise
-  drawn on the CPU so a (figure prompt, seed, component version) triple
-  reproduces the same body on every device. The drawn values AND the
-  figure prompt land in the character file, so the file remains an
-  honest, fully-determined recipe — stochasticity exists at create time
-  only.
-- **Everything downstream of generation is symbolic.** Textures are recipes
-  (prompt + seed + component version), hair is a semantic vocabulary, the
-  body is 117 floats. Regeneration and hand-editing are both first-class.
+- **prompt → character file is not deterministic.** Interpretation is a
+  language-model step, and identity is a sample: the interpreter's figure
+  prompt conditions a rectified-flow model, seeded by the create seed with
+  noise drawn on the CPU, so a (figure prompt, seed, component version)
+  triple reproduces the same body on any device. The drawn values and the
+  figure prompt are both written to the file.
+- **character file → GLB is byte-identical** under pinned components.
+  Texture regeneration is reproducible up to GPU kernel nondeterminism;
+  exact bytes are pinned through `assets` hashes.
 
-The determinism boundary is worth stating precisely: **prompt → character
-file is not promised deterministic** (interpretation is a language-model
-step); **character file → GLB is byte-identical** given pinned assets. The
-character file is the reproducible artifact, which is why it — not the
-prompt — is the thing you commit, share, and edit.
+### 1.1 Scope of v0
 
-### 1.1 What v0 is not
+- Surfaces are albedo plus fixed material constants. No generated normal or
+  other secondary maps for skin and garments (hair emits its own albedo and
+  normal).
+- Every character carries 72 expression morph targets (`facs_00`–`facs_71`)
+  and a jaw joint (`c_jaw`). No facial performances are authored; playback
+  is the consumer's.
+- Footwear is below-ankle only: `make-shoe` declares its style vocabulary in
+  the registry and the interpreter clamps to it. Boots arrive as a
+  `make-shoe` version widening that vocabulary.
+- Garments are body-following shells extracted from the garment texture, not
+  simulated cloth. Loose clothing, skirts, and anything leaving the body
+  silhouette are out of scope.
+- No identity resampling of an existing file, and no animation authoring
+  beyond the baked idle clip.
 
-Stated plainly, because a reader deciding whether to depend on this needs
-the boundaries more than the features:
-
-- **No normal maps or other non-albedo maps** for skin and garments in v0. v0
-  surfaces are albedo plus fixed material constants. Generated normal/detail
-  maps are planned for v0.2; model components ship on a roughly monthly
-  cadence after launch (§4), so this does not wait on a code release. (Hair
-  is the exception: the hair synthesizer emits its own albedo and normal
-  textures.)
-- **Facial animation is baseline data, not an optional tier.** Every
-  character carries 72 exact expression morph targets and a jaw that
-  animates through `c_jaw` (SPEC.md §4.2, §7.4 here) — but the system
-  authors no facial performances: playing expressions, lip-sync, and
-  blends is the consumer's job, within the measured limitation table the
-  manifest ships. Creation fails if the complete mouth-interior artifact
-  cannot be delivered; there is no body-only fallback.
-- **Footwear is below-ankle styles only.** Footwear ships at launch as the
-  optional `shoe` texture slot on the foot regions of the body atlas —
-  closed, below-ankle shoes can be painted; boots above the ankle, sandals,
-  and open straps would require geometry the pipeline does not build.
-  `make-shoe` *declares* its supported style vocabulary in its registry
-  entry, and the interpreter clamps shoe prompts to what the installed
-  component declares (§4.2) — so capability growth (boots, say) arrives as a
-  `make-shoe` version bump widening its vocabulary, never as a sibling
-  component or a code change.
-- **Garment geometry is body-following shells, not simulated clothing.**
-  Garments are generated in UV space, and each character's baked garment
-  becomes its own skinned mesh — lifted off the body, with a cloth
-  material distinct from skin (§7). A character whose garment fails the
-  extraction certification falls back to the painted composite, recorded
-  in the manifest. The shells follow the body silhouette; loose clothing,
-  skirts, and anything that departs from the silhouette are out of v0
-  scope. Footwear ships the same way: the baked shoe overlay becomes its
-  own shell over the feet, cloth-class material included.
-- **No identity resampling of an existing character.** Identity is sampled
-  at create time (a different seed gives a different take on the same
-  description), but there is no operation that redraws the body of a
-  character file that already exists — the drawn parameters in the file are
-  the character. Want a variant? Create again with another seed.
-- **No animation authoring.** The output is a rigged, skinned glTF; playing
-  or retargeting animation on it is the consumer's job.
-
-## 2. One package, three doors
-
-Character Factory is a single Python package with three ways in, in strict
-layering order:
+## 2. One package, four doors
 
 ```
-  ┌───────────────────────────────────────────────┐
-  │  MCP server        (character_factory.mcp)    │   coding agents
-  ├───────────────────────────────────────────────┤
-  │  HTTP server       (character_factory.server) │   apps, UIs
-  ├───────────────────────────────────────────────┤
-  │  Library API       (character_factory)        │   Python users
-  ├───────────────────────────────────────────────┤
-  │  schema · registry · identity · textures ·    │
-  │  hair · assembly   (internal modules)         │
-  └───────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────┐
+  │  MCP server        (character_factory.mcp)   │   coding agents
+  ├──────────────────────────────────────────────┤
+  │  HTTP server       (character_factory.server)│   apps, UIs, Unity
+  ├──────────────────────────────────────────────┤
+  │  CLI + library API (character_factory)       │   shell, Python
+  ├──────────────────────────────────────────────┤
+  │  schema · registry · interpreter · identity  │
+  │  textures · hair · assembly                  │
+  └──────────────────────────────────────────────┘
 ```
 
-The library is the foundation; the HTTP server is a thin process wrapper
-around it; the MCP server exposes the *same operations* as tools so a coding
-agent can create and inspect characters as part of a workflow. Nothing in
-the server layers has logic of its own — if a behavior can't be reached from
-the library API, it doesn't exist.
+The servers wrap the library; they add no logic of their own. Local and
+hosted are one product with two addresses: the `/v0` HTTP contract and the
+MCP tool surface are the same in both, and a bearer token is accepted (and
+ignored) locally so clients do not change shape when auth becomes real.
 
-One principle governs both server layers: **local and hosted are one product
-with two addresses.** The HTTP contract and the MCP tool surface defined here
-are the same contract a hosted service exposes; a user or agent who outgrows
-local switches by changing an endpoint (and adding a token), never by
-learning a new product. Design decisions in §2.3 and §2.4 that look like
-over-engineering for a localhost tool exist to keep that true.
-
-### 2.1 The library API
-
-The public surface a user touches is intentionally small — one class, four
-functions:
+### 2.1 Library API
 
 ```python
-from character_factory import Character, create, bake, assemble, make
+from character_factory import Character, create, assemble, make
+from character_factory.textures import bake
 
 character = create("a lean marathon runner …", seed=41000)
-    # → Character. Runs interpretation and identity generation and
-    #   fills in texture recipes + hair semantics. Needs the identity
-    #   component (GPU strongly recommended, small model); does NOT run
-    #   texture diffusion.
+    # → Character: interpretation + identity. Fills texture recipes and
+    #   the hair block; runs no diffusion. GPU.
 
-assets = bake(character, out_dir="runner/")
-    # → BakedAssets. Runs texture generation for every slot (GPU required)
-    #   and hair synthesis (CPU). Writes images + hair geometry, records
-    #   their hashes into character.assets.
+result = bake(character, "runner/assets", turbo=False)
+    # → BakeResult: one image per slot (GPU), asset hashes recorded on
+    #   result.character.
 
-path = assemble(character, assets, "runner/scene.glb")
-    # → Path to a rigged, skinned glTF binary. Deterministic; CPU-capable.
+path = assemble(result.character, "runner/assets", "runner/scene.glb",
+                compress=None)
+    # → rigged, skinned GLB. CPU; hash-verifies every asset first.
 
-path = make("a lean marathon runner …", out_dir="runner/")
-    # create → bake → assemble, with progress callbacks. The one-liner.
+path = make("a lean marathon runner …", "runner/", seed=41000,
+            turbo=False, compress="web")
+    # create → bake → assemble in one call.
 
-Character.load("runner/character.char.json")   # schema round-trip
-character.save("runner/character.char.json")   # (validated on both ends)
+Character.load("runner/character.char.json")   # validated on load and save
 ```
 
-`Character` is a plain, validated, immutable-by-convention data object with
-`load`/`save`/`validate`/`content_id`. The split between `create`, `bake`,
-and `assemble` is the product thesis expressed as an API: the symbolic
-character is cheap and always available; pixels and triangles are derived,
-cacheable, and re-derivable.
+`Character` is a validated data object with `load`, `save`, `validate`, and
+`content_id`. Module rules: `schema` and `assembly` import no diffusion or
+network code; `identity`, `textures`, and the local interpreter backend
+import torch lazily, so `import character_factory` is instant everywhere;
+`registry` is the only module that touches the network, and only when a
+component is missing from the cache.
 
-Design rules for the internal modules:
-
-- `schema` and `assembly` import neither the diffusion stack nor any network
-  code. A machine that can't generate can still validate, edit, and
-  assemble.
-- `identity`, `textures` depend on torch + CUDA and are imported lazily, so
-  `import character_factory` works everywhere.
-- `registry` is the only module that touches the network, and only when a
-  component is missing from the local cache.
+CLI: `make`, `validate`, `assemble`, `compress`, `interpret`, `preflight`,
+`serve`, `mcp`.
 
 ### 2.2 The interpreter
 
-The step that maps a free-text description onto the character file's
-structured fields is a language-model task by construction — the hair block
-alone is ~30 closed-vocabulary fields that no rule set can fill from prose —
-so it is designed as permanent infrastructure, not a convenience:
+The interpreter turns the description into every component's prompt: the
+figure prompt for identity, one prompt per texture slot, the hair block,
+and optional skeletal-proportion overrides. Its output is validated against
+the interpretation schema before anything runs.
 
-```python
-class Interpreter(Protocol):
-    def interpret(
-        self,
-        text: str,                     # the user's description or edit request
-        existing: Character | None,    # the edit path: text amends this character
-    ) -> Interpretation:               # per-slot texture prompts + hair block
-        ...
-```
-
-The raw text is *not* consumed by the interpreter alone — it passes through
-to identity generation untouched (§1), and the interpreter's output covers
-only the fields that are prose in the character file anyway (texture prompts)
-plus the semantic hair block. The edit path is the same protocol: given an
-existing character and "give her a ponytail," the interpreter returns an
-updated hair block and leaves everything else alone.
-
-**Skeletal proportions have a fixed precedence stack.** Proportions are
-identity-class output: the identity component writes them from the
-figure prompt on *every* create.
-An interpreter backend may additionally emit explicit proportion fields
-(only on clear signal in the description); when it does, those values
-override the identity component's per key. In short: **head writes →
-interpreter overrides per key.**
-
-- **Default backend: a small local model, named by a registry component**
-  like every other model. The `interpreter` component pins an exact
-  upstream revision of an instruction-tuned ~9B-parameter model
-  (Qwen3.5-9B at launch, Apache-2.0, fetched anonymously — no account or
-  token; the entry records the license), and every artifact is
-  hash-pinned. Inference is grammar-constrained greedy decoding
-  against a grammar derived from the interpretation schema, with schema
-  validation as a repair loop. The runtime is **in-process and
-  Python-native**: installed by pip as part of this package's
-  dependencies, no external daemon to start, no runtime with account
-  linkage or telemetry. It rides the same torch/transformers stack the
-  generation extra already requires (with a pure-Python
-  constrained-decoding layer), so it adds no build step and no new
-  platform to the matrix — interpretation runs where generation runs. The
-  all-in-one install stays intact: no external LLM server.
-- **Two modes ask the same model differently.** `single` sends one
-  instruction (the registry's per-slot guidance folded in) and decodes
-  the whole interpretation document in one pass. `multi` asks one narrow
-  question per component — figure, skin, eye, garment, shoe, hair,
-  proportions — each with the raw description verbatim, a literal
-  template for that component's trained format, and a per-call grammar,
-  and assembles the document from the answers; the same validator judges
-  it whole. The split is what makes a small model usable: under the single
-  instruction it drops slots, echoes the description, leaks footwear into
-  the garment prompt, and invents hair families it was never shown; asked
-  seven questions it answers each one specifically (the hair call carries
-  the full closed vocabulary inline). It costs seven generations instead
-  of one (≈50 s per description on a 24 GB-class card with the default
-  model, about what its single prompt costs), and it
-  is the wrong trade for a hosted frontier model, which gains nothing from
-  the split and loses the descriptive richness the single instruction
-  elicits. So `mode: auto` (the default) resolves to `multi` for local
-  models and `single` for endpoints; either can be forced per backend.
-  The call templates live in `interpreter/multi.py` and are bound to the
-  launch component versions the way the registry's per-slot guidance is —
-  and they are changed against the bench, never by taste: a small model
-  satisfies a hedged instruction ("add a skin condition only when there
-  is a reason") and takes an abstract one loosely, so the templates are
-  literal, with named slots and no conditional clauses.
-- **Load order is a rule, not a habit:** the interpreter loads, runs, and
-  **releases its memory before the base image model loads** (or runs
-  CPU-only). Keeping both resident is easy to do by accident with an
-  in-process runtime and would break the VRAM floor (§6.1) — the pipeline
-  enforces the sequencing, and a test asserts the interpreter's weights are
-  released before the diffusion stack initializes.
-- **`character-factory interpret "<text>"` is also the benchmark harness**
-  for choosing the default model: it runs exactly the production path
-  (safetensors weights via the in-process runtime with grammar-constrained
-  decoding) and reports, alongside the decomposition JSON, per-invocation
-  wall time and peak memory — so candidate models are compared on the same
-  numbers users will experience.
-- **Component vocabularies bound the interpreter's output.** Registry
-  components may declare supported-vocabulary constraints (§4.2) — the first
-  customer is the launch `make-shoe` component, which supports below-ankle
-  styles only. The interpreter reads the installed components' declarations
-  and clamps its slot prompts to them, so "knee-high boots" degrades to the
-  nearest supported request rather than silently conditioning a component
-  outside its competence. The clamp is advisory: it constrains prompt
-  authoring, and nothing downstream can verify compliance — the diffusion
-  component has no notion of its own vocabulary.
-- **The model choice is config, not code.** The backend accepts a registry
-  component id or a local weights path; nothing in the codebase names a
-  model — the default is the registry component id `interpreter`, and the
-  model behind it is registry data. Swapping candidates must take under a
-  minute, and the step is invokable standalone —
-  `character-factory interpret "<text>" [--mode single|multi]` emits the
-  decomposition JSON without running any generation, with wall time,
-  peak memory, and (in multi mode) seconds per call — so candidate models
-  can be compared side by side on real prompts.
-- **Grammar-derivation note for the implementer:** the constraint layer's
-  JSON-Schema support has a known limitation — non-string `const` values
-  crash its enum path — so the grammar derivation expresses the hair
-  block's `schema_version: 1` as a closed integer range (and should prefer
-  ranges over non-string consts generally). The exercised derivation lives
-  in the grammar test module.
-- **Optional backend: any OpenAI-compatible endpoint**, selected by one
-  config field, for people running a local inference server or wanting a
-  larger model. Endpoint output uses strict JSON-Schema response formatting
-  where the endpoint supports it and still passes through the same validator.
-  Empty or length-truncated output receives one bounded retry against the
-  same backend with a tripled completion budget (reasoning-capable
-  endpoints spend hidden tokens inside the same limit); malformed JSON and
-  schema-invalid documents fail immediately. It must never complicate the
-  default path. **For speed and quality it is the recommended
-  configuration when one is available:** a current hosted frontier model
-  (the launch bench used an OpenAI GPT-5.6-class model) in single mode
-  interprets a description in ≈10–15 s against the local default's ≈50 s,
-  and writes richer garment prompts — the one place the local default
-  visibly lags on screen.
-- **No degraded mode.** There is deliberately no non-model interpretation
-  backend: a default model that cannot be fetched or a failed model
-  request is a structured, named error, never a silent quality
-  downgrade. Records expose the requested and actual backend aliases and
-  warnings.
-- **Readiness is reported, and the first run downloads in the open.**
-  Every configured backend is listed with whether a create against it
-  would succeed today and, if not, why: weights not downloaded (and how
-  many bytes), a declared VRAM need the device does not meet, no CUDA
-  device, an unreachable weights path. The checks are file existence and
-  a device property read — no hashing, no model load, no network. A
-  create whose local model is a registry component with uncached weights
-  fetches them as a `downloading` job stage of its own, with byte
-  progress, after the generation preflight passes (never gigabytes onto
-  a machine that cannot run them); cancelling mid-download discards the
-  partial file. Backends are written through the same contract they are
-  read from (`PUT`/`DELETE /v0/interpreters/{alias}`) into the machine's
-  mode-0600 `config.json`; an API key is accepted on write and reported
-  afterwards only as a boolean. The bundled browser view's setup panel
-  is a client of exactly that — the two ways README describes, nothing
-  the CLI cannot do.
-- **Endpoint diagnostics are private.** If an operator configures
-  `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`, the server writes a mode-0600
-  JSONL stream containing raw prompts, raw responses, HTTP status, response
-  size, finish reason, latency, endpoint request id, reported backend version,
-  usage, attempt number, and an opaque trace id. Public job failures include
-  only that trace id and a safe classification such as `empty_response`,
-  `truncated_response`, `invalid_json`, or `schema_invalid`. Invalid endpoint
-  output uses `interpreter_invalid_output`; transport and HTTP availability
-  failures use `interpreter_unavailable`.
-- **VRAM discipline:** the interpreter never coexists in VRAM with the base
-  model — it runs and releases before the diffusion stack loads, or runs
-  CPU-only. The VRAM floor in §6.1 is unchanged by this component.
+- **Default: a local model named by the `interpreter` registry component**
+  (Qwen3.5-9B at launch — an exact upstream revision, hash-pinned, no
+  account or token). It runs in-process on the same torch/transformers
+  stack generation uses, in bfloat16, with grammar-constrained decoding.
+  No external daemon.
+- **Two modes.** `single` decodes the whole interpretation in one pass from
+  one instruction that folds in each component's registry guidance. `multi`
+  asks one question per component (figure, skin, eye, garment, shoe, hair,
+  proportions), each with a literal template for that component's format
+  and its own grammar. Small local models answer the narrow questions far
+  better than the single instruction; hosted frontier models do better in
+  single mode. `mode: auto` (the default) picks `multi` for local models and
+  `single` for endpoints. The multi-call templates live in
+  `interpreter/multi.py` and are bound to the launch component versions.
+- **Optional: any OpenAI-compatible endpoint**, configured per alias with
+  `CHARACTER_FACTORY_INTERPRETER_ENDPOINT` / `_MODEL` / `_API_KEY` /
+  `_MODE`, `interpreter.backends` in the cache `config.json`, or
+  `PUT /v0/interpreters/{alias}`. Uses strict JSON-Schema response
+  formatting where supported. An empty or truncated response gets one
+  retry with a tripled completion budget; malformed or schema-invalid
+  output fails. This is the recommended configuration when available: a
+  current hosted frontier model interprets a description in ≈10–15 s
+  against the local default's ≈50 s and writes richer garment prompts.
+- **Skeletal proportions.** The identity component writes them on every
+  create; an interpreter backend may emit explicit values on clear signal
+  in the description, and those override per key.
+- **Vocabulary clamps.** Components may declare `constraints.vocabulary`
+  in the registry (§4.2); the interpreter clamps its slot prompts to the
+  installed components' declarations. The clamp constrains prompt
+  authoring only — nothing downstream can verify it.
+- **No degraded mode.** There is no non-model backend. A model that cannot
+  be fetched or a failed request is a structured error (`error.code`,
+  `classification`, `retryable`, `trace_id`), never a silent swap to a
+  different backend.
+- **Readiness.** `GET /v0/interpreters` reports, per configured backend,
+  whether a create would succeed now and if not why (weights not
+  downloaded and how many bytes; declared VRAM exceeds the device; no CUDA
+  device; missing weights path). The checks are file existence and a
+  device property read — no hashing, no model load, no network. A create
+  against a registry model with uncached weights downloads them as a
+  `downloading` job stage with byte progress, after the generation
+  preflight passes; cancelling discards the partial file.
+- **VRAM sequencing.** The interpreter loads, runs, and releases inside the
+  `interpret` call, before the diffusion stack loads. The two are never
+  resident together.
+- **Audit log.** With `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG` set, the
+  server appends a mode-0600 JSONL record per request (raw prompt and
+  response, status, latency, usage, attempt, trace id). Public job errors
+  carry only the trace id and a classification (`empty_response`,
+  `truncated_response`, `invalid_json`, `schema_invalid`,
+  `transport_error`).
+- **`character-factory interpret "<text>" [--backend ALIAS] [--mode
+  single|multi]`** runs the production path without generation and prints
+  the interpretation, wall time, peak memory, and per-call seconds — the
+  way to compare candidate models.
 
 ### 2.3 The HTTP server
 
-`character-factory serve` starts a local FastAPI app: a library front-end
-with a job queue, not a platform. Design constraints: single GPU, so a
-single-flight generation queue; all state on disk in per-character
-directories (the character file is the database); progressive results —
-the scene GLB is rebuilt and atomically replaced as each texture lands, so a
-polling viewer watches the character get dressed. The bundled browser view is
-built as a plain API client of this contract — no server-side rendering, no
-local-only endpoints — so the same interface can front a hosted deployment
-rather than being a dead end.
-
-Endpoint sketch (v0):
+`character-factory serve` starts a FastAPI app around the library: a
+single-flight generation queue (one GPU), per-character directories on disk
+(the character file is the database), and progressive results — the GLB is
+rebuilt and atomically replaced as each stage lands. The bundled browser UI
+is a same-origin client of this contract with no private endpoints.
 
 ```
-POST   /v0/characters                  {prompt, interpreter?, allow_fallback?, turbo?}
-                                       → 202 Job; Location + Retry-After
-                                       Idempotency-Key makes transport retries
-                                       safe; unkeyed requests are new work
-                                       interpreter: backend alias from /v0/interpreters —
-                                       per-request model selection (hosted tiers use the same field)
-GET    /v0/interpreters                selectable interpreter backends, default first:
-                                       [{alias, kind, default, label, ready, reason,
-                                         download_bytes, vram_bytes, fits, device_bytes,
-                                         endpoint_host, has_key}] — readiness and
-                                       cost, never model identities or keys
-PUT    /v0/interpreters/{alias}        configure a backend: {endpoint|model, api_key?,
-                                       mode?, label?, default?} → its row (the key
-                                       is write-only); a hosted deployment answers 405
-DELETE /v0/interpreters/{alias}        remove a configured backend
-GET    /v0/jobs                        lightweight job list
-GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error;
-                                       `stages` is the planned step list (a create
-                                       may lead with `downloading`), `stage_progress`
-                                       the fraction of the current step when known
-DELETE /v0/jobs/{id}                   cancel queued work or request cancellation
-POST   /v0/jobs/{id}/retry             explicit new attempt after failure/cancel
-GET    /v0/characters                  completed records array, newest first
-GET    /v0/characters/{id}             character + separate artifact/latest-job state
-GET    /v0/characters/{id}/scene.glb   current build artifact
+POST   /v0/characters                  {prompt, interpreter?, turbo?, seed?}
+                                       | {character}         → 202 Job
+                                       Idempotency-Key: same key + same body
+                                       returns the original job; different
+                                       body → 409; no key → new work
+GET    /v0/characters                  completed records, newest first
+GET    /v0/characters/{id}             record + artifact and latest-job state
+GET    /v0/characters/{id}/character.json
+GET    /v0/characters/{id}/scene.glb
 GET    /v0/characters/{id}/assets/{slot}.png
-GET    /v0/characters/{id}/manifest.json   the scene's embedded export manifest,
-                                           served standalone (same bytes as the
-                                           GLB's asset extras)
-PUT    /v0/characters/{id}/assets/{slot}   image body → replace one baked asset;
-                                           the stored hash pin is updated and the
-                                           scene rebuilds from the assemble stage
-POST   /v0/characters/{id}/rebuild     {from: "bake"|"assemble", overrides?}
-                                       → 202 Job; always explicit new work
-                                       unless replaying the same Idempotency-Key
+PUT    /v0/characters/{id}/assets/{slot}   replace one asset; re-pins the hash
+                                           and rebuilds from assemble
+GET    /v0/characters/{id}/manifest.json   the GLB's embedded export manifest
+GET    /v0/characters/{id}/thumbnail.png
+POST   /v0/characters/{id}/rebuild     {from: "bake"|"assemble"} → 202 Job
 DELETE /v0/characters/{id}
-POST   /v0/validate                    character document in body → validation report
-GET    /v0/components                  registry view: installed + available components
-GET    /v0/health                      GPU present, VRAM, component cache state
+GET    /v0/jobs                        job list
+GET    /v0/jobs/{id}                   stage, stages, stage_progress,
+                                       heartbeat, outcome, error
+DELETE /v0/jobs/{id}                   cancel
+POST   /v0/jobs/{id}/retry             new attempt after failure or cancel
+GET    /v0/interpreters                backends: alias, kind, default, label,
+                                       ready, reason, download_bytes,
+                                       vram_bytes, fits, device_bytes,
+                                       endpoint_host, has_key — never model
+                                       identities or keys
+PUT    /v0/interpreters/{alias}        {endpoint|model, api_key?, mode?,
+                                       label?, default?}; key is write-only;
+                                       a hosted deployment answers 405
+DELETE /v0/interpreters/{alias}
+POST   /v0/validate                    document → validation report
+GET    /v0/components                  registry view
+GET    /v0/health                      status, counts, cuda, vram_free_gb,
+                                       vram_total_gb
+GET    /v0/docs                        rendered OpenAPI
 ```
 
-The character list is a bare JSON array of completed records. Browser use is
-same-origin only. The server does not provide CORS headers or support
-separately hosted browser clients. The bundled docs are self-contained, and
-the gallery retains a dependency-free create/list/download view if its 3D
-viewer modules are unavailable offline.
+Job states, terminal outcomes, idempotency, cancellation, and retry are
+common local/hosted contract; capacity fields (`queue_position`, device
+fields in `/v0/health`) are server-specific.
 
-Uploads of edited character files are just `POST /v0/characters` with a
-`character` body instead of a `prompt` — the server builds whatever valid
-character it is given.
-
-Per the parity principle (§2), the entire `/v0` surface above is the common
-local/hosted contract — no endpoint is a local-only convenience — and it is
-designed as if a conformance suite will one day run against both. The auth
-story is reserved at the contract level now: clients send
-`Authorization: Bearer <token>`, which the v0 local server accepts and
-ignores, so no client changes shape when auth becomes real. The one expected
-divergence is capacity (`queue_position` and device fields in `/v0/health`),
-which is declared server-specific, not contractual. Job states, terminal
-enums, idempotency, cancellation, and retry semantics are common contract.
-
-Creation and rebuild submission use one retry contract. A caller that supplies
-`Idempotency-Key` receives the original job when it repeats the same operation,
-target, and payload. Reusing that key for different work is a `409` conflict.
-Omitting the header always submits a new job; rebuilds are never inferred from
-repeating a create body. The key does not alter character identity or artifact
-hashing.
-
-Interpreter failure handling is backend-neutral. A client should inspect the
-job's structured `error.code`, `error.classification`, `error.retryable`, and
-opaque `error.trace_id`; it must not infer backend behavior from the message.
-It may retry the original failed job through `POST /v0/jobs/{id}/retry`.
-Changing fallback policy is a different request: submit it separately with a
-new `Idempotency-Key` and `allow_fallback: true`. Retrying never mutates the
-original idempotent request, and fallback is never enabled silently.
-
-The local process binds to loopback by default. Binding it to all interfaces
-is intended only for a trusted local network or private overlay network, where
-the host firewall and network access rules are the security boundary. Because
-the local server does not authenticate requests, it must not be exposed to the
-public internet or an untrusted network. CORS would not change that boundary:
-it constrains browser scripts, not agents, native clients, or other machines.
+**Trust boundary.** The server binds `127.0.0.1` and does not authenticate.
+On `0.0.0.0` the host firewall and network are the boundary: a trusted LAN
+or private overlay, never the public internet. There are no CORS headers;
+CORS constrains browser scripts, not other machines.
 
 ### 2.4 The MCP server
 
-`character-factory mcp` (stdio transport; HTTP optional) exposes:
+`character-factory mcp` (stdio) exposes tools `create_character`,
+`assemble_character`, `get_job`, `cancel_job`, `retry_job`,
+`get_character`, `list_characters`, `validate_character`,
+`store_character`, `list_components`, and resources
+`character-factory://schema/character` and
+`character-factory://characters/{id}`. Tool inputs and outputs are
+character documents, not handles, so agent workflows compose with hand
+editing and version control. Same names and shapes local and hosted.
 
-- tools — `create_character`, `assemble_character`, `get_job`, `cancel_job`,
-  `retry_job`, `get_character`, `list_characters`, `validate_character`,
-  `store_character`, `list_components`;
-- resources — the character JSON Schema, SPEC.md itself, and each existing
-  character's document, so an agent can read the format it is writing
-  against without leaving the session.
+## 3. Assembly and export
 
-The intended consumer is a coding agent building something *with* characters
-(a game, a scene, a test fixture) that needs "give me a 3D person matching
-this description" as a callable primitive. Tool inputs and outputs are
-character documents, never opaque handles, so agent workflows compose with
-hand editing and version control.
+`character_factory.assembly` is deterministic and CPU-capable. It does not
+import the diffusion stack.
 
-MCP parity mirrors HTTP parity: same tool names, same input/output shapes,
-local and hosted; the only difference is transport and endpoint
-configuration. An agent workflow built against the local MCP server must
-work against a hosted one by editing its MCP config, nothing else.
-
-## 3. Assembly and the rigged export
-
-Assembly (`character_factory.assembly`) is the deterministic half of the
-system and deliberately boring:
-
-1. **Rig evaluation.** The MHR TorchScript rig (Apache 2.0, fetched as a
-   registry component, ~700 MB, CPU-capable) maps identity + rest pose +
-   resting expression to 18,439 vertices and a 127-joint skeleton.
-2. **Coverage recovery.** The body albedo is the skin texture, verbatim
-   — nothing is ever composited onto the body. The garment image's
-   coverage is recovered by a
-   calibrated luminance key against its black background (dark garments are
-   protected by a value floor in the generator) with the head region
-   masked out; it drives the garment shell's cut, not paint. The `shoe`
-   image, when present, is a single-shoe canvas: the component's foot
-   chart (per-texcoord canvas coordinates shipped with the model, because
-   the canvas layout is part of each version's output contract)
-   bakes it into atlas space over the foot islands of both feet — the
-   second foot through
-   the chart's horizontal mirror — with style-aware occupancy (open styles
-   keep only their straps; the shaft is cut to the style's declared
-   height); the resulting RGBA overlay's alpha drives the shoe shell's
-   cut, confined to the feet region (SPEC.md §9). Where the shells
-   overlap in depth, geometry layers naturally: shoe over garment over
-   the skin band at each rim.
-
-   **Garment shells.** The baked garment texture then becomes geometry
-   (standard assembly behavior, never recorded in the character
-   document): its own keyed
-   coverage — never a canonical or per-style cut — is marched through the
-   body triangles, reconstructed on the character's identity, lifted and
-   faired under clamps, closed into a watertight solid, and exported as a
-   skinned mesh riding the body's own skin. The body faces under the
-   coverage are omitted — deleted, not hidden — so the shell is the only
-   surface where the shell is: no doubled geometry, no z-fighting, and
-   body-through-cloth clipping is impossible where cloth covers, because
-   there is no body there. The one intentional overlap is a narrow skin
-   band retained at the coverage boundary — a surface distance
-   (`band_cm`, per-slot data: centimeters for garments, millimeters for
-   shoes), tucked
-   under the shell's rim so skin runs continuously under cloth from any
-   angle; the band width is the technique's tuning knob. Clearance and
-   rim depth are per-slot calibration data too — a shoe lifts a uniform
-   0.35 cm with no boundary puff and cuts with strict UV-seam
-   confidence, where a garment carries a softer, boundary-eased lift. The shoe shell
-   extracts identically from the baked overlay's own alpha (authoritative
-   occupancy — no luminance keying), confined to the atlas's feet
-   region, and carries the same cloth-class material. Extraction is a
-   pure function of the published baked asset bytes; certification is a
-   fail-closed ladder of structural gates (alpha quality, seam-crack
-   detection, topology, closed-solid and weight audits) — a shell that
-   builds as a valid solid ships; posing behavior is the consumer's to
-   see, not a reason to withhold geometry. There is no painted fallback:
-   a slot that fails a structural gate is a defined assembly error
-   naming the reason, and the broken bake gets fixed. The manifest's
-   `garments` block records each slot's shell inventory,
-   so consumers never sniff. Validators validate; nothing repairs a
-   nonconforming mask. The v0.1 boundary treatment is the feathered
-   soft-threshold cut (crossings refined against the texture's own alpha)
-   with the garment's boundary colors dilated outward so edge faces
-   always sample cloth; a re-triangulated cut-line boundary is a planned
-   post-v0.1 refinement, held to the same watertightness and
-   weight-transfer invariants.
-3. **Eyes.** A small patch of faces over each eye socket is removed; a
-   stock eyeball mesh (permissively licensed, bundled as a registry asset)
-   is placed by a similarity fit of its lid margin to the socket rim, and
-   receives the generated eye albedo. Procedural lash cards, caruncle
-   patches, and a darkened socket backing are planned post-v0.1 polish —
-   today the eyeball alone fills the socket, and no interior geometry is
-   stitched into the body mesh for the eyes.
-4. **Mouth** (`"mouth-interior"` topology). The rig version's fixed mouth
-   patch is removed; a posterior-lip cuff and cavity strip — built from the
-   character's inner-lip curves, skinned by extending the lips' own
-   influences, UV-mapped into the removed patch's own atlas region at
-   measured-even density — is stitched into the body mesh; GNM-derived
-   teeth, gums, and tongue are placed by identity anchors (upper on the
-   skull, lower and tongue on the jaw chain). The export gains the rig's
-   72 expression coefficients as exact sparse morph targets
-   (`facs_00`–`facs_71`) and machine-readable jaw guidance and
-   animation-limitation tables in its manifest. Interior geometry obeys
-   the interior-UV contract: original vertex UVs bit-exact, no new atlas
-   islands, no chart overlap, no UV inversion — all asserted by the
-   permanent suite.
-5. **Hair.** The hair provider's mesh (§5) is attached rigidly to the head
+1. **Rig evaluation.** The MHR TorchScript rig (`body-rig` component) maps
+   identity, proportions, rest pose, and resting expression to the LOD1
+   surface (18,439 vertices) and a 127-joint skeleton.
+2. **Render topology.** The `body-rig` component may declare a coarser
+   render surface; the launch component (1.2.1) declares MHR's own LOD3
+   (4,899 vertices, 9,794 triangles), carried by the supplied barycentric
+   map with skin weights and expression morphs transferred. Everything
+   below operates on the render surface. Absent a declaration, the source
+   topology is the render surface.
+3. **Skin.** The body albedo is the skin texture, unmodified.
+4. **Garment and shoe shells.** Garment coverage is recovered from the
+   garment image by a calibrated luminance key against its black background
+   (head region masked). The `shoe` image is a single-shoe canvas: the
+   component's foot chart bakes it onto both feet's atlas islands (the
+   second foot through the chart's mirror), with style-aware occupancy, and
+   its alpha is the coverage. Each coverage is marched through the body
+   triangles, lifted, faired, closed into a watertight solid, and exported
+   as its own skinned mesh riding the body's weights. Body faces under a
+   shell are deleted; a narrow skin band (`band_cm`: 3.0 for garments, 0.4
+   for shoes) is kept under the rim. A shell that fails a structural gate
+   (alpha quality, seam cracks, topology, closed solid, weight audit) is an
+   assembly error naming the gate — there is no painted fallback. Layering
+   is shoe over garment over skin.
+5. **Eyes.** A patch over each socket is removed; a stock eyeball mesh is
+   placed by a similarity fit of its lid margin to the socket rim and takes
+   the eye albedo. Lashes, caruncles, and socket backing are not in v0.
+6. **Mouth.** The rig version's fixed mouth patch is removed; a
+   posterior-lip cuff and cavity strip built from the inner-lip curves,
+   skinned by extending the lips' influences and UV-mapped into the removed
+   patch's atlas region, are stitched into the body. Teeth, gums, and tongue
+   (GNM-derived, `assembly-assets`) are placed by identity anchors — upper
+   on the skull, lower and tongue on the jaw chain. Interior geometry keeps
+   original vertex UVs bit-exact and adds no atlas islands.
+7. **Hair.** The hair provider's mesh (§5) is parented rigidly to the head
    joint.
-5. **Skinned glTF export.** The exporter emits the full 127-joint node
-   hierarchy with human-readable joint names (from the rig component's
-   metadata, §4.1), inverse bind matrices, and per-vertex skinning weights
-   read from the rig. The rig's native skinning uses at most 4 influences
-   per vertex with weights summing to 1, so glTF's JOINTS_0/WEIGHTS_0
-   carries the **weights exactly — no pruning loss**. The body mesh is
-   skinned; rigid accessories are parented to their carrier joints (eyeballs
-   to the eye joints, hair to the head joint). Where UV seams force vertex
-   duplication, skinning weights are carried through the duplication.
-   Materials are metallic-roughness PBR with fixed v0 constants —
-   dielectric throughout, skin at roughness 0.5 and garment and shoe
-   shells at
-   0.9, so cloth responds to light differently than skin by design
-   (roughness contrast is the one portable lever while surfaces are
-   albedo-only); hair
-   additionally uses the glTF anisotropy extension with a standard-PBR
-   fallback.
+8. **Export.** Skinned glTF binary with the full 127-joint hierarchy, joint
+   names from the rig component's metadata, inverse bind matrices, and the
+   rig's own weights (≤ 4 influences, summing to 1 — carried exactly).
+   Eyeballs are parented to the eye joints, hair to the head. Materials are
+   metallic-roughness with constants: dielectric, skin roughness 0.5,
+   garment and shoe shells 0.9; hair carries an albedo and a normal map.
+   Every material is opaque. The 72 expression coefficients export as
+   sparse morph targets `facs_00`–`facs_71`.
 
 ### 3.1 Exporter conventions
 
-The exporter targets game engines, not just viewers, and follows a fixed set
-of conventions chosen so the artifact imports and retargets correctly:
+- **Frame.** Rig: centimeters, Y-up, +Z-forward. glTF: meters, Y-up,
+  +Z-forward. The conversion is a uniform 0.01 scale; no axis flip.
+- **Rest orientations are re-authored.** MHR's native rest rotations carry
+  per-bone roll that is not mirrored between limbs, which breaks humanoid
+  retargeters that derive hinge axes from rest frames. The exporter
+  re-authors every joint's rest orientation from geometry under one
+  mirror-invariant convention (long axis toward the mean of children; a
+  sagittal-invariant forward reference orthogonalized against it). Bones
+  shorter than 2 mm inherit the parent's direction. Joint positions are
+  untouched; worst left/right deviation is ≈0.02°.
+- **Knee flexion.** 5° (`KNEE_FLEXION_DEGREES`, versioned) is baked into
+  the rest pose about a shared sagittal axis, because a straight knee is a
+  degenerate hinge for retargeters.
+- **Inverse bind matrices** are rebuilt after both edits, so the bound mesh
+  is bit-identical to the rig's rest geometry.
+- **Correctives.** The rig animates as linear-blend skinning; MHR's learned
+  pose correctives are not exported.
+- **Root.** Joint 0 is `body_world`, the rig's transform root, included in
+  the skin's joint list so glTF joint indices equal rig indices; no vertex
+  is weighted to it.
+- **File hygiene.** One self-contained `.glb`: PNG textures embedded once
+  each (both eyes share one image), 4-byte-aligned buffer views, POSITION
+  min/max, proper buffer targets, unsigned-short JOINTS_0 / float
+  WEIGHTS_0, no UV V-flip, counter-clockwise winding verified against
+  outward normals.
 
-- **One frame, one constant.** The rig's native frame is centimeters, Y-up,
-  +Z-forward; glTF is meters, Y-up, +Z-forward. The exporter's entire
-  conversion is a uniform scale of 0.01 — no axis flip, no handedness
-  change, and mesh and skeleton are always expressed in the same frame.
-- **One binding truth.** Inverse bind matrices are the inverse of each
-  joint's world bind matrix, written column-major; whenever the rest pose is
-  post-processed (below), the IBMs are rebuilt *afterward*, so the bound
-  mesh is bit-identical before and after.
-- **Rest orientations are re-authored, deliberately.** The rig's native
-  per-joint rest rotations carry per-bone roll that is not mirrored between
-  left and right limbs — harmless to skinning (the IBM cancels it) but
-  hostile to humanoid retargeting systems, which derive hinge axes from rest
-  frames. The exporter discards the source rotations and re-authors every
-  joint's rest orientation from geometry under one mirror-invariant global
-  convention (bone-long axis toward the mean of children; a forward-axis
-  reference vector, invariant under the sagittal mirror, orthogonalized
-  against it). Joint *positions* are untouched. Bones shorter than two
-  millimeters inherit the parent's direction instead of deriving their
-  own. This covers the near-zero foot and wrist-twist pairs and the neck's
-  procedural twist helper, whose endpoint can cross its parent at valid
-  body proportions; deriving an axis from that displacement would force a
-  180° local rotation. With the floor, no exported joint approaches that
-  half-turn singularity, and the worst left/right frame deviation remains
-  ~0.02° across the entire proportion range.
-- **A small knee flexion is baked into the exported rest pose** (a
-  documented, versioned constant), because a near-straight knee is a
-  degenerate hinge that retargeters can resolve backwards. It is applied as
-  a plain skinning-space edit about a shared sagittal axis, so left and
-  right stay symmetric by construction, and IBMs are rebuilt after.
-- Consequence of the two points above, stated honestly: **the exported rest
-  pose is deliberately not the rig's verbatim rest** — same class of caveat
-  as the correctives note below.
-- **Skeleton root.** Joint index 0 is the rig's world-transform node
-  (`body_world` — a transform root, not a deformer). It is exported as the
-  skeleton's root node and included in the skin's joint list so that glTF
-  joint indices equal rig joint indices verbatim; the exporter asserts no
-  vertex is weighted to it.
-- **File hygiene.** A single self-contained `.glb`: textures embedded as
-  PNG, every bufferView 4-byte aligned, POSITION accessors carry min/max,
-  vertex attributes and indices use the proper buffer targets, joints as
-  unsigned-short VEC4 with float VEC4 weights, no UV V-flip (the bake and
-  glTF already agree on a top-left origin), counter-clockwise winding
-  verified against outward normals rather than assumed. Byte-identical
-  textures are embedded once (the two eye materials share one image).
-- **Delivery compression is opt-in and never the canonical file.**
-  `scene.glb` is lossless — that is the file the determinism promise
-  covers — and its textures are most of its bytes (a 1024² PNG atlas set
-  is 4–8 MB of a 7–12 MB file; every material is opaque, so no alpha is
-  at stake). `--compress web` (on `make` and `assemble`) or
-  `character-factory compress` writes a sibling `scene.web.glb` with the
-  albedo maps re-encoded as WebP q85 and the hair normal map as WebP q90
-  under `EXT_texture_webp` (listed in `extensionsRequired` — there is no
-  PNG fallback, so a loader without the extension refuses the file
-  instead of rendering it untextured); `--compress unity` writes
-  `scene.unity.glb` with plain JPEG at the same qualities and no
-  extension, for glTFast and any other loader that goes through an image
-  stack without WebP. Meshes, skins, morph targets, the idle clip, and
-  the manifest are carried across unchanged, and the test suite asserts
-  exactly that. Geometry compression (quantization, meshopt) is not
-  done: it needs a native decoder on the consumer's side, and on a
-  skinned mesh the dequantization has to be folded into the inverse
-  bind matrices — a change to the rig contract, not a post-step.
-- **The GLB is self-describing.** The **bone-role manifest** (JSON: the
-  full engine humanoid role → joint name mapping, the explicit
-  leave-unmapped set — procedural twist joints, null markers, mouth
-  interior, tarsal helpers — with structured flags for the jaw (mappable,
-  default-unmapped) and fingers (mapped, verify in-engine), units, axes,
-  joint count, and the baked knee constant) embeds in the GLB's
-  asset-level `extras` — the
-  spec's mechanism for application metadata, ignored by parsers that don't
-  read it — so one file is the complete engine deliverable and the
-  manifest can never be separated from the mesh it describes. It is a pure
-  function of rig version, exporter constants, and the character's
-  skeletal proportions (stature is measured from the exported geometry;
-  byte-identical across re-exports of the same character); a sidecar
-  `manifest.json` exists only on request, as a projection of the same
-  bytes (`GET /v0/characters/{id}/manifest.json`). The manifest carries
-  its own `schema_version` and `$schema`; the machine-readable schema is
-  served at the declared same-origin path and packaged with the library.
-  Minor versions are additive, while a field-shape or meaning change bumps
-  the major. A consumer that pins a tested contract rejects any other
-  version loudly instead of inferring from field shapes. The per-slot
-  `garments` block declares `render_mode: "shell"` for each
-  garment-class slot, with its shell inventory. The jaw
-  block states its contract explicitly: rotation sign (positive about the
-  local axis opens, in the file's right-handed glTF frame — handedness
-  conversion at import flips it) and the two jaw compositions
-  (joint-only with `full_open_degrees`, or expression playback pairing
-  `facs_24` with `expression_fit_angle_degrees`), which are alternatives
-  and never summed. Boundary: the manifest
-  is **export metadata** — facts about the GLB as an engine deliverable.
-  Character identity, textures, hair, and provenance live in the character
-  document exclusively; nothing from it is ever duplicated into GLB
-  `extras` — one source of truth per fact. A **baked idle clip** ships
-  inside the GLB as a **Generic, native-skeleton clip that is not certified
-  for Humanoid retargeting**: a few seconds of subtle breathing and weight sway, with
-  the complete local TRS baked for every joint — animation channels
-  replace node transforms in a conforming player, so the clip leaves
-  nothing to engine defaults. Frame 0 is exactly the rest pose and the
-  clip loops seamlessly. The `grounding` block measures the body ground
-  plane in scene space, gives the root and left/right foot-joint offsets for
-  this character's proportions, declares the idle's tested ground-drift
-  tolerance, and states that there are no certified contact frames and
-  runtime foot IK is recommended. A consumer never has to guess whether to
-  play the embedded clip as Generic or convert it to Humanoid.
+### 3.2 Manifest and idle clip
 
-One honest documentation line, twice over: the exported rig animates as
-clean linear-blend skinning — the generator's own renders additionally apply
-learned pose correctives that core glTF cannot express — and the exported
-rest pose re-authors joint orientations and knee flexion as described above.
-Rest-pose *geometry* is exact in both cases.
+The **export manifest** (schema `0.6`, served at
+`/v0/schemas/export-manifest-0.6.json` and packaged with the library) is
+embedded in the GLB's asset-level `extras` and served standalone at
+`/v0/characters/{id}/manifest.json`. It carries the engine humanoid role →
+joint-name map (54 bones for Unity Humanoid), the leave-unmapped set,
+units and axes, joint count, the knee constant, per-slot `garments` shell
+inventory (`render_mode: "shell"`), a `jaw` block (rotation sign,
+`full_open_degrees`, and the `facs_24` + `expression_fit_angle_degrees`
+composition — alternatives, never summed), the measured
+animation-limitation table, a `grounding` block (ground plane, root and
+foot offsets, idle drift tolerance, foot-IK recommendation), and the
+render LOD. It is a function of rig version, exporter constants, and the
+character's proportions — byte-identical across re-exports. Character
+identity, textures, hair, and provenance stay in the character document
+and are never duplicated into `extras`.
 
-This is the component that makes the output "a character, not a statue,"
-and it runs everywhere — including machines that cannot generate.
+A **baked idle clip** ships in the GLB: a few seconds of breathing and
+weight sway with full local TRS for every joint, frame 0 exactly the rest
+pose, seamless loop. It is a Generic, native-skeleton clip, not certified
+for Humanoid retargeting.
 
-## 4. Components and weights
+### 3.3 Delivery compression
 
-No weights live in this repository or in the Python package. Every model and
-static asset is a **component**: a versioned, hash-pinned artifact fetched
-from the `character-factory` Hugging Face organization on first use and
-cached locally (`~/.cache/character-factory/`, override via
-`CHARACTER_FACTORY_HOME`).
+`scene.glb` is lossless and is what the determinism promise covers.
+`--compress web` (on `make` and `assemble`) or `character-factory compress`
+writes a sibling `scene.web.glb` with albedo as WebP q85 and the hair
+normal as WebP q90 under `EXT_texture_webp` (in `extensionsRequired` — no
+PNG fallback). `--compress unity` writes `scene.unity.glb` with JPEG at the
+same qualities and no extension, for glTFast and other loaders without
+WebP. Meshes, skins, morph targets, the idle clip, and the manifest are
+unchanged. Geometry compression is not done: on a skinned mesh
+dequantization must be folded into the inverse bind matrices.
 
-**Naming.** Generator components carry `make-<artifact>` names, where the
-noun is the discrete artifact the component produces: `make-figure` makes a
-figure (the body parameters), `make-skin` a skin, `make-eye` one eye
-texture, `make-garment` a garment layer, `make-shoe` a shoe texture,
-`make-wig` a wig mesh. Static data and infrastructure keep plain functional
-names (`body-rig`, `assembly-assets`, `interpreter`). Nouns are singular
-throughout, matching the texture slot keys they serve.
+## 4. Components and the registry
 
-### 4.1 v0 components
+No weights live in the repository or the package. Every model and static
+asset is a **component**: versioned, hash-pinned, fetched on first use from
+the `character-factory` Hugging Face organization (or upstream), cached
+under `~/.cache/character-factory/` (`CHARACTER_FACTORY_HOME`).
 
-| Component | Contents | Approx. size |
-| --- | --- | --- |
-| `interpreter` | The default local language model (§2.2): an exact upstream revision of Qwen3.5-9B (Apache-2.0), run in-process in bfloat16 with the multi-call plan and decoding grammar in this package | ~19 GB |
-| `make-figure` | Text → body/face parameter heads + normalization stats | ~10 MB |
-| `make-skin` | Texture adapter for the `skin` slot's albedo (body atlas) | ~90 MB |
-| `make-eye` | Texture adapter for the `eye` slot's albedo (eyeball layout) | ~90 MB |
-| `make-garment` | Texture adapter for the `garment` slot's albedo (garment-over-black atlas images) | ~90 MB |
-| `make-shoe` | Texture adapter for the `shoe` slot's albedo (optional slot; declares a below-ankle style vocabulary at launch) | ~90 MB |
-| `make-wig` | The default hair provider (vendored procedural engine; registry entry records versions for provenance) | in package |
-| `body-rig` | Pinned MHR TorchScript rig + topology metadata + the authoritative 127-joint name table (Apache 2.0, mirrored with attribution) | ~700 MB |
-| `assembly-assets` | Eyeball and mouth-interior meshes, UV occupancy templates, atlas metadata | ~20 MB |
-| *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
+Generators are named `make-<artifact>` after the singular artifact they
+produce; data and infrastructure keep plain names.
 
-First-run download for full generation ≈ 36 GB with the default local
-interpreter, ≈ 17 GB with an endpoint interpreter configured instead.
-Assembly-only use (no generation) needs only `body-rig` +
-`assembly-assets` ≈ 720 MB.
+| Component | Version | Contents | Size |
+| --- | --- | --- | --- |
+| `interpreter` | 0.1.0 | Qwen3.5-9B, exact upstream revision (Apache-2.0) | ≈19 GB |
+| `make-figure` | 0.1.1 | Text → identity + proportions generative model and normalization stats | ≈10 MB |
+| `make-skin` | 0.0.4 | Adapter for the `skin` albedo (body atlas) | ≈90 MB |
+| `make-eye` | 0.1.0 | Adapter for the `eye` albedo (eyeball layout) | ≈90 MB |
+| `make-garment` | 0.1.0 | Adapter for the `garment` albedo (garment over black) | ≈90 MB |
+| `make-shoe` | 0.0.2 | Adapter for the `shoe` albedo (single-shoe canvas, foot chart, below-ankle vocabulary) | ≈90 MB |
+| `make-wig` | 0.1.0 | Procedural hair engine, vendored; registry entry records the version and density presets | in package |
+| `body-rig` | 1.2.1 | Pinned MHR v1.0.1 release: TorchScript rig, LOD1 + LOD3 topology, expression morphs, 127-joint name table, humanoid map, mouth data | ≈700 MB |
+| `assembly-assets` | 0.3.0 | Eyeballs, dental arches, tongue, placement data, atlas metadata | ≈20 MB |
+| `flux2-klein-base-4b` | 1.0.0 | FLUX.2 Klein 4B base (transformer, text encoder, VAE), fetched upstream at an exact revision; the text encoder also embeds the figure prompt | ≈16 GB |
 
-Everything upstream is **pinned by content hash, never by a floating
-"latest"**: the base model is fetched from its upstream repository (it is
-Apache 2.0) at an exact revision hash recorded in the registry entry, and
-the rig component pins the exact upstream release archive and each consumed
-artifact by SHA-256. An upstream change can never silently alter output;
-mirroring into the organization is the documented contingency if upstream
-availability ever becomes a problem, not the default.
+First-run download: ≈36 GB with the local interpreter, ≈17 GB with an
+endpoint. Assembly-only use needs `body-rig` + `assembly-assets`, ≈720 MB.
 
-### 4.2 The registry
+Everything is pinned by content hash: upstream models by revision hash,
+the MHR release archive and each consumed artifact by SHA-256. Every
+artifact is verified after fetch and before load; a mismatch is an error.
 
-The registry is a signed-by-hash JSON index, itself versioned and fetched
-like a component (with a snapshot vendored into each package release as an
-offline fallback). Each entry records:
+### 4.1 The registry
+
+The registry is a JSON index fetched like a component, with a snapshot
+vendored into each release as the offline default. `CHARACTER_FACTORY_REGISTRY_URL`
+and `CHARACTER_FACTORY_AUTH_TOKEN` (or `registry_url` / `auth_token` in
+`config.json`) point at an alternate index. An entry:
 
 ```json
 {
   "name": "make-skin",
-  "version": "0.1.0",
+  "version": "0.0.4",
   "kind": "texture-adapter",
   "slot": "skin",
   "map": "albedo",
-  "requires": { "base_model": "flux2-klein-4b", "schema": ">=0.1 <1.0" },
-  "artifacts": [ { "path": "adapter.safetensors", "sha256": "…", "bytes": 92000000 } ],
+  "requires": { "base_model": "flux2-klein-base-4b", "schema": ">=0.1 <1.0" },
+  "artifacts": [ { "path": "weights.safetensors", "sha256": "…", "bytes": 92426712 } ],
   "inference": { "prompt_template": "…", "steps": 20, "guidance": 4.0, "resolution": 1024 },
-  "constraints": { "vocabulary": { "styles": ["…"] } },
-  "source": { "hf_repo": "character-factory/skin", "revision": "…" }
+  "interpretation": { "fields": "…" },
+  "source": { "hf_repo": "character-factory/make-skin", "revision": "…" }
 }
 ```
 
-`constraints` is a general mechanism: a component MAY declare the vocabulary
-it actually supports (named enums of styles, categories, or attributes), and
-the interpreter clamps its prompts to the declarations of the components
-that will run (§2.2). The launch `make-shoe` component is the first user
-(below-ankle styles only); any component whose competence is narrower than
-its slot's plain-language name should declare, so that capability growth is
-a registry edit, not a code release. Texture entries also carry `map`: which
-named map of their slot they produce (every current entry: `albedo`), so a
-future secondary-map component for an existing slot is pure data.
+- `inference` holds each adapter's conditioning template and sampler
+  defaults; `interpretation.fields` is the per-component prompt guidance
+  the interpreter folds into its instructions. An updated component with
+  different conditioning is a version bump.
+- `constraints.vocabulary` (optional) declares what a component supports;
+  the interpreter clamps to it (§2.2). `make-shoe` uses it.
+- `map` names which of a slot's maps a texture component produces (all
+  current: `albedo`).
+- `create` resolves each slot to the newest compatible component and
+  records exact versions in provenance; `bake` honors the pins;
+  `rebuild {from: "bake"}` re-resolves after an update.
 
-Design consequences, in decreasing order of importance:
+## 5. Hair
 
-- **New capability is data, not code.** An updated skin component, a
-  secondary-map component, or the mouth-interior geometry pack arrive as new
-  registry entries (a version bump, a new `map` value, grown assets). The
-  planned monthly model cadence never requires users to upgrade the package
-  unless the schema itself grows.
-- **Prompt conditioning is component metadata.** Each adapter's trigger
-  phrasing, sampler defaults, and resolution live in its registry entry, so
-  an updated component with different conditioning is still just a version
-  bump.
-- **Character files pin versions; the registry resolves names.** `create`
-  resolves each slot to the newest compatible component and records exact
-  versions in the character's provenance; `bake` honors pinned versions and
-  can be told to upgrade (`rebuild {from: "bake"}` after an update).
-- **Integrity is non-optional.** Every artifact is SHA-256 verified after
-  fetch and before load. A hash mismatch is a hard error, never a warning.
-
-## 5. The hair boundary
-
-Hair is synthesized by a procedural engine that ships **vendored inside this
-package**, under the repository's Apache 2.0 license. Even so, the
-architecture is built against an interface, not the engine — extraction to a
-standalone dependency remains a post-launch option, and alternative providers
-remain possible:
+Hair is synthesized by the vendored `make-wig` engine behind one protocol:
 
 ```python
 class HairProvider(Protocol):
-    def synthesize(
-        self,
-        intent: dict,          # the character's hair block, SPEC.md §6 — the full contract
-        head: HeadGeometry,    # body mesh + forward axis + eye level, body frame, cm
-    ) -> HairResult:           # textured triangle mesh + PBR material + provider version
-        ...
+    def synthesize(self, intent: dict, head: HeadGeometry) -> HairResult: ...
+    # intent: the character's hair block (SPEC.md §6)
+    # head:   body mesh, forward axis, eye level — body frame, cm
+    # result: textured triangle mesh + material + provider version
 ```
 
-The contract is exactly the character format's hair block on the way in and
-a textured mesh in the body's frame on the way out. The engine needs no rig
-internals — it fits any roughly-human head mesh — which is what makes the
-boundary this narrow. Its output is deterministic for a fixed (intent, head,
-engine version) triple, which assembly's determinism guarantee inherits.
+The engine fits any roughly human head mesh and needs no rig internals. Its
+output is deterministic for a fixed (intent, head, engine version). Wigs
+are opaque sculpted shells bound rigidly to the head bone, with albedo and
+normal maps; the convention follows the VALID avatar library's hair
+(NOTICE).
 
-Because the boundary is this narrow, the vendoring decision is packaging,
-not architecture: the engine could equally ship as a pip dependency or an
-entry-point plugin without changing anything above this line. Third-party
-providers plug in behind the same protocol; a missing provider degrades to
-`hair: null` characters and a clear "hair provider not installed" error.
-
-## 6. Install story
+## 6. Install and hardware
 
 ```
-pip install character-factory
+pip install "character-factory[generation]"
 character-factory make "a lean marathon runner with cropped dark hair" -o runner/
-# → runner/character.char.json, runner/scene.glb  (first run downloads components)
 ```
 
-- **Python:** 3.11 floor, tested against 3.12.
-- **Install size:** the base install (schema tools, registry, assembly,
-  server — no generation extras) measures **about 1.1 GB**, most of it
-  the CPU torch wheel the assembler's rig evaluation needs. Generation
-  extras and model components download on top of that.
-- **Linux + NVIDIA CUDA** is the first-class platform; everything works.
-- **Windows** is supported via WSL2 and is the same code path as Linux.
-  Native Windows is untested and unclaimed in v0.
-- **macOS** installs and runs the CLI, schema tools, server (library mode),
-  and assembly; **generation is unsupported** (no CUDA; MPS is not a v0
-  target).
+- Python ≥ 3.11. Base install ≈1.1 GB (mostly the CPU torch wheel the rig
+  evaluation needs); `[generation]`, `[server]`, `[mcp]` extras on top.
+- Linux + NVIDIA CUDA is first-class. Windows runs through WSL2 on the same
+  code path; native Windows is untested. macOS runs the CLI, schema tools,
+  server, and assembly; generation is unsupported (no CUDA, no MPS target).
+- `character-factory preflight` checks the generation import set, the torch
+  CUDA build, and the driver with a real CUDA call. `make` and every server
+  generation job run it before loading weights.
 
-### 6.1 VRAM floor
+### 6.1 Measured VRAM
 
-Measured on a 24 GB card, full four-slot bake at 1024×1024, same
-character and seeds per mode:
+Four-slot bake at 1024², 24 GB card:
 
-- **Full precision (the default): 17.4 GB allocated / 20.3 GB reserved**,
-  about 132 s of diffusion per character — a **24 GB card** runs it
-  without configuration.
-- **`nf4` weight quantization** (`textures.quantization` in the local
-  config; transformer and text encoder quantize, the VAE stays full
-  precision) brings the same bake to **8.9 GB allocated / 9.7 GB
-  reserved** with the expandable-segments CUDA allocator, at roughly
-  twice the bake time (~265 s). Every GPU stage is strictly serialized
-  and releases its memory before the next loads, and no other stage
-  peaks higher, so **the complete pipeline — identity, all texture
-  slots, assembly — runs on a 12 GB card** under `nf4`, with
-  interpretation on an endpoint or a smaller local model (the default
-  interpreter model needs ≈18 GB on its own; see below). 8 GB is not
-  supported.
+- **bf16 (default):** 17.4 GB allocated / 20.3 GB reserved, ≈132 s.
+- **`nf4`** (`textures.quantization` in `config.json` or
+  `CHARACTER_FACTORY_TEXTURE_QUANTIZATION`; transformer and text encoder
+  quantized, VAE full precision): 8.9 GB allocated / 9.7 GB reserved,
+  ≈265 s.
 
-The pipeline loads the base model once and swaps ~90 MB adapters between
-slots, and identity generation reuses the same text encoder, so the floor
-is set by the base model, not by the number of components. On
-Ada-generation and newer NVIDIA hardware, fp8 weight formats should bring
-the full-precision footprint down further; that is anticipated but
-unmeasured, and no number is claimed for it in v0. The interpreter runs
-first and releases its VRAM before the diffusion stack loads — the two
-are never resident together — so it never adds to the diffusion peak.
-**It does set its own floor:** the default local model measured ≈18 GB
-peak allocated in bfloat16, above the 12 GB `nf4` bake. A 12 GB card runs the
-complete pipeline with an endpoint interpreter configured (§2.2), or a
-smaller local model; a quantized default interpreter is unmeasured and
-no number is claimed for it in v0.
+GPU stages are serialized and release before the next loads, so the bake
+sets the floor: a 12 GB card runs the pipeline under `nf4` with an endpoint
+interpreter. The default local interpreter needs ≈18 GB on its own (bf16;
+a quantized interpreter is unmeasured). 8 GB is not supported. fp8 on
+Ada-class hardware is unmeasured.
 
-On an unsuitable machine the pipeline degrades honestly: `make` (and the
-`create`/`bake` API calls behind it) runs the generation preflight up
-front — import set, CUDA build, driver — and exits naming the cause
-before any weights load; no partial generation, no silent CPU fallback
-that would take hours. VRAM is not probed: the floor above is documented,
-and an over-subscribed card fails at model load like any other torch
-program.
+## 7. Tests
 
-### 6.2 What succeeds on a MacBook Air
+`tests/` mirrors the module layout. What the suite protects:
 
-The final install test target is a MacBook Air, defined as exactly this
-passing:
+- **Schema** — load → save → load is the identity; canonical form and
+  content ID are stable; every example validates; a corpus of broken
+  documents fails with the documented error; unknown optional fields warn
+  by default and fail strict; unknown `topology`, `rig`, `proportions`
+  keys, and `inputs` are hard errors.
+- **Export** — byte-determinism across runs; a re-parse acceptance test
+  (read the GLB back, skin the rest mesh through node matrices and inverse
+  bind matrices, compare to exported positions, ≈0 mm); 127 joints with
+  the golden name table, topological parent order, no weights on joint 0,
+  weights sum to 1 with ≤ 4 influences, UV-seam duplicates carry their
+  weights; left/right rest frames mirror within a bound; knee constant;
+  manifest present, complete, byte-stable; the idle clip reproduces the
+  rest skin at t=0 through the hierarchy and moves within bounds over its
+  length; buffer alignment, scale, winding, no V-flip.
+- **Shells, mouth, footwear** — extraction gates, watertightness, weight
+  transfer, interior-UV invariants (original UVs bit-exact, no new islands,
+  no overlap, no inversion), clearance sweeps over the supported pose set,
+  and the same battery re-run natively on a declared render LOD (skipped
+  when no such component is cached).
+- **Bake** — one image per slot at the declared resolution with hashes
+  recorded; seeds and templates honored; recipe overrides beat defaults;
+  the base model loads once; assembly refuses non-matching assets;
+  quantization config resolution.
+- **Interpreter, server, registry, CLI** — grammar derivation, backend
+  readiness and config writes, job lifecycle (idempotency, cancel, retry,
+  download stage), route contracts, integrity checks, command behavior.
 
-1. `pip install character-factory` succeeds (no CUDA extras resolved).
-2. `character-factory validate examples/characters/*.char.json` passes.
-3. `character-factory assemble examples/characters/runner.char.json -o out/`
-   downloads `body-rig` + `assembly-assets` (~720 MB), assembles against the
-   repo's committed example assets, and writes a valid rigged `scene.glb`
-   that opens in a standard glTF viewer.
-4. `character-factory serve` starts in library mode, lists the example
-   characters, and serves their GLBs to a browser.
-5. `character-factory make "…"` fails fast with the documented
-   generation-unsupported message.
-
-Steps 2–4 are the demonstration that the character format and assembler are
-real products independent of the generation stack.
-
-## 7. Test surface
-
-Four families, in decreasing order of how much of the product they protect:
-
-### 7.1 Schema round-trips
-
-- load → save → load is the identity function; canonical form and content ID
-  are stable across round-trips and implementations of the serializer.
-- Every committed example validates; a corpus of deliberately broken
-  documents (wrong array lengths, unknown enum values, NaN, `color.rgb`
-  without `custom`, unknown `topology`) fails with the documented error for
-  each.
-- Forward-compatibility: a synthetic "0.x+1" document with an unknown
-  optional field passes default validation with a warning and fails strict
-  validation; an unknown `topology` value is a hard error in both modes.
-
-### 7.2 Assembler determinism
-
-- Same character file + same pinned assets ⇒ byte-identical GLB across two
-  runs, and across CPU/GPU rig evaluation.
-- **Re-parse acceptance test:** parse the exported `.glb` back from disk,
-  walk the node hierarchy to each joint's global matrix, apply the inverse
-  bind matrices, skin the rest mesh with the exported weights, and compare
-  to the exported positions — the target is exact (≈ 0 mm), plus upright
-  orientation and mesh/skeleton co-location. The validator trusts only the
-  artifact, never in-memory state.
-- Rig integrity: 127 joints exported with the golden name table; parent
-  indices are topologically ordered (`parents[i] < i`); joint order matches
-  the rig bundle's own buffers; index 0 is the world-transform root and
-  carries no skin weights; every vertex's weights sum to 1 and reference
-  ≤ 4 joints (exact — the rig's native maximum); every UV-seam-duplicated
-  vertex carries its original's weights; topology counts and the rig
-  checksum match the registry pin.
-- **Mirror-consistency test:** for every left/right joint pair, the left
-  rest frame equals the right one reflected across the sagittal plane
-  (reflect, then restore handedness); the worst angular deviation is
-  reported and bounded.
-- Rest-pose conventions: the baked knee-flexion constant matches its
-  documented version; IBMs were rebuilt after rest edits (implied and
-  verified by the re-parse test above).
-- The embedded bone-role manifest is present, complete, consistent with
-  the exported joint set, and byte-identical across re-exports; the baked
-  idle clip fully drives every joint's TRS, and — substituted for the node
-  transforms, exactly as a conforming engine plays it — reproduces the
-  rest skin through the hierarchy and IBMs at t=0 within numerical
-  tolerance (engine-free, catching bakes that only work when a forgiving
-  viewer reconciles them with node state), while over the clip it must
-  actually move: some channels vary in time and the peak mesh deviation is
-  non-zero yet bounded, so a fully-driven statue fails exactly like an
-  explosion does.
-- Golden-file structural checks on the example characters: mesh/primitive
-  inventory, material constants, texture bindings, extension usage — not
-  pixel screenshots.
-
-### 7.3 Bake correctness
-
-Diffusion outputs are reproducible only up to GPU kernel nondeterminism, so
-bake tests assert structure, not bytes:
-
-- every slot produces an image at the component's declared resolution, and
-  recorded asset hashes match the files written;
-- garment images key correctly: coverage recovered at the calibrated cutoff
-  is stable under the cutoff's documented tolerance band, never bleeds into
-  the head region, and an intentionally dark test garment survives the key;
-- seeds are respected: same recipe twice on the same machine ⇒ identical
-  hashes for the deterministic stages and near-identical (perceptual-diff
-  bounded) images for diffusion stages;
-- a reference-GPU golden run (hash-exact) runs in CI on self-hosted
-  hardware, and is advisory elsewhere.
-
-### 7.4 Mouth-variant contract cases
-
-Written before the variant existed and now implemented as written — the
-`mouth-interior` topology ships against this pre-agreed contract.
-Mechanically the variant is a `body-rig` version bump plus grown
-`assembly-assets` — interior meshes placed by assembly like the eyeballs,
-no new texture slot or component kind:
-
-- the removal patch is validated against the pinned rig topology: exact
-  expected face count, closed boundary of the expected edge count, identical
-  across identities and expressions;
-- the interior geometry's entrance ring coincides with the lip-derived
-  boundary within a stated tolerance at every pose — no visible seam;
-- identity may *place* interior anatomy (a similarity fit, computed once
-  per character, reflection forbidden); expression may move the lower
-  anatomy only through the rig's rigid jaw transform; upper anatomy is
-  bit-identical under expression-only changes;
-- a clearance sweep over the supported pose set proves no interior geometry
-  protrudes through the face surface, and the supported pose set is an
-  explicit list that tests prevent from widening silently;
-- synthetic stress-envelope identities at the mechanism's tested
-  mouth-width bounds run the same construction and clearance checks, so
-  the guarantee covers the identity space, not the library sample;
-- interior geometry stitched into the skinned body carries UVs under the
-  interior-UV contract: original vertex UVs bit-exact before and after
-  construction, new UVs inside an already-appropriate existing region
-  (no new islands), no chart overlap, no UV winding inversion, and
-  per-face texel density measured against stated bounds.
+Runs that need cached components skip when they are absent.
 
 ## 8. Repository layout
 
 ```
-character-factory/
-├── README.md                  # demo video embed at top; install + first
-│                              # command immediately after; then the 60-second
-│                              # tour of the character file; links to SPEC.md
-├── SPEC.md                    # the character format (this repo's second product)
-├── ARCHITECTURE.md            # this document
-├── LICENSE                    # Apache 2.0
-├── NOTICE                     # third-party attributions
-├── pyproject.toml             # one package: character-factory
+├── README.md · SPEC.md · ARCHITECTURE.md · LICENSE · NOTICE
+├── pyproject.toml
 ├── src/character_factory/
-│   ├── __init__.py            # Character, create, bake, assemble, make
-│   ├── schema/                # format model, validation, canonical form, JSON Schema
-│   ├── registry/              # component index, fetch, cache, integrity
-│   ├── interpreter/           # Interpreter protocol, local-model + HTTP
-│   │                          # backends (local model: lazy import)
-│   ├── identity/              # raw text → body parameters       (GPU, lazy import)
-│   ├── textures/              # diffusion runner, adapter loading (GPU, lazy import)
-│   ├── hair/                  # HairProvider protocol + the vendored procedural engine
-│   ├── assembly/              # rig eval, UV compositing, eyes, skinned glTF export
-│   ├── server/                # FastAPI app, job queue, per-character state dirs
-│   ├── mcp/                   # MCP tools + resources
-│   └── cli.py                 # make / create / bake / assemble / interpret /
-│                              # validate / serve / mcp / components
-├── examples/
-│   ├── characters/            # committed .char.json files
-│   └── assets/                # committed baked textures for the no-GPU path
-├── tests/                     # §7, mirroring the module layout
-└── docs/                      # deeper guides as they are earned
+│   ├── __init__.py       Character, create, assemble, make
+│   ├── api.py            create / make / assemble
+│   ├── cli.py
+│   ├── preflight.py
+│   ├── schema/           format model, validation, canonical form, JSON Schema
+│   ├── registry/         index, fetch, cache, integrity; vendored snapshot
+│   ├── interpreter/      backends, multi-call templates, grammar, config
+│   ├── identity/         figure prompt → body parameters (lazy torch)
+│   ├── textures/         diffusion runner, adapters, quantization (lazy torch)
+│   ├── hair/             HairProvider + vendored make-wig engine
+│   ├── assembly/         rig, shells, eyes, mouth, rest pose, export, manifest, compress
+│   ├── server/           FastAPI app, service, jobs, static UI
+│   └── mcp/
+├── examples/characters/  committed .char.json files
+├── tests/
+└── docs/
 ```
-
-The README's job is a stranger's first five minutes: see it move (video),
-install it, run one command, then discover that the interesting artifact is
-the small JSON file next to the GLB.

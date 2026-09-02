@@ -1,4 +1,4 @@
-"""Exported-artifact validation (ARCHITECTURE.md §7.2).
+"""Exported-artifact validation (ARCHITECTURE.md §7).
 
 Every check here re-parses the .glb from bytes and works only with what a
 consumer's engine would see — never the exporter's in-memory state. The

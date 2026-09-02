@@ -3,7 +3,7 @@
 Downloads use plain stdlib HTTP against Hugging Face's stable resolve URLs —
 no client library, so the base install stays dependency-free. Every artifact
 is SHA-256 verified after download and before first use; a mismatch is a
-hard error, never a warning (ARCHITECTURE.md §4.2).
+hard error, never a warning (ARCHITECTURE.md §4).
 """
 
 from __future__ import annotations

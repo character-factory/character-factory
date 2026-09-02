@@ -34,9 +34,18 @@ UnityEyes2
   `assembly-assets` component, which carries this attribution and the
   pinned upstream revision in its metadata.
 
-Google Neutral Model (GNM), Google
+GNM: Generative aNthropometric Model (GNM Head), Google
+  https://github.com/google/GNM
   Licensed under the Apache License, Version 2.0.
-  Source of the mouth-interior anatomy (teeth, gum, and tongue geometry)
-  redistributed in the `assembly-assets` component in a form fitted to the
-  body model's canonical head; the component metadata carries this
-  attribution.
+  Source of the teeth, gum, and tongue geometry redistributed in the
+  `assembly-assets` component, fitted to the body model's canonical head;
+  the component metadata carries this attribution.
+
+VALID: Virtual Avatar Library for Inclusion and Diversity,
+University of Central Florida and Google
+  https://github.com/google/valid-avatar-library
+  Licensed under the MIT License.
+  Design reference for the `make-wig` hair engine: its wigs — opaque
+  sculpted shells rigidly bound to the head bone — are the convention the
+  engine produces. No VALID assets or code are redistributed; the hair
+  test suite can optionally run against a VALID head.

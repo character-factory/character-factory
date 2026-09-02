@@ -177,7 +177,7 @@ def _dense_weights(entries, vertex_count: int, joint_count: int):
 
     The rig's native skinning has at most 4 influences per vertex with
     weights summing to 1; both properties are asserted, not assumed, because
-    the glTF export carries them verbatim (ARCHITECTURE.md §3.5).
+    the glTF export carries them verbatim (ARCHITECTURE.md §3).
     """
     import numpy as np
 

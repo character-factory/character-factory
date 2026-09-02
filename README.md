@@ -53,7 +53,7 @@ Optional:
 - Endpoint interpreter (faster): set CHARACTER_FACTORY_INTERPRETER_ENDPOINT, _MODEL, _API_KEY.
 ```
 
-Or, for an agent that can browse the web:
+Or:
 
 ```
 Build a character-driven game using https://characterfactory.ai

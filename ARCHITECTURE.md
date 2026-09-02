@@ -315,6 +315,22 @@ interpreter overrides per key.**
   request is a structured, named error, never a silent quality
   downgrade. Records expose the requested and actual backend aliases and
   warnings.
+- **Readiness is reported, and the first run downloads in the open.**
+  Every configured backend is listed with whether a create against it
+  would succeed today and, if not, why: weights not downloaded (and how
+  many bytes), a declared VRAM need the device does not meet, no CUDA
+  device, an unreachable weights path. The checks are file existence and
+  a device property read — no hashing, no model load, no network. A
+  create whose local model is a registry component with uncached weights
+  fetches them as a `downloading` job stage of its own, with byte
+  progress, after the generation preflight passes (never gigabytes onto
+  a machine that cannot run them); cancelling mid-download discards the
+  partial file. Backends are written through the same contract they are
+  read from (`PUT`/`DELETE /v0/interpreters/{alias}`) into the machine's
+  mode-0600 `config.json`; an API key is accepted on write and reported
+  afterwards only as a boolean. The bundled browser view's setup panel
+  is a client of exactly that — the two ways README describes, nothing
+  the CLI cannot do.
 - **Endpoint diagnostics are private.** If an operator configures
   `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`, the server writes a mode-0600
   JSONL stream containing raw prompts, raw responses, HTTP status, response
@@ -349,9 +365,20 @@ POST   /v0/characters                  {prompt, interpreter?, allow_fallback?, t
                                        safe; unkeyed requests are new work
                                        interpreter: backend alias from /v0/interpreters —
                                        per-request model selection (hosted tiers use the same field)
-GET    /v0/interpreters                selectable interpreter backends: [{alias, kind}]
+GET    /v0/interpreters                selectable interpreter backends, default first:
+                                       [{alias, kind, default, label, ready, reason,
+                                         download_bytes, vram_bytes, fits, device_bytes,
+                                         endpoint_host, has_key}] — readiness and
+                                       cost, never model identities or keys
+PUT    /v0/interpreters/{alias}        configure a backend: {endpoint|model, api_key?,
+                                       mode?, label?, default?} → its row (the key
+                                       is write-only); a hosted deployment answers 405
+DELETE /v0/interpreters/{alias}        remove a configured backend
 GET    /v0/jobs                        lightweight job list
-GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error
+GET    /v0/jobs/{id}                   stage, progress, heartbeat, outcome/error;
+                                       `stages` is the planned step list (a create
+                                       may lead with `downloading`), `stage_progress`
+                                       the fraction of the current step when known
 DELETE /v0/jobs/{id}                   cancel queued work or request cancellation
 POST   /v0/jobs/{id}/retry             explicit new attempt after failure/cancel
 GET    /v0/characters                  completed records array, newest first

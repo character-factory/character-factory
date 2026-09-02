@@ -143,3 +143,35 @@ def test_public_job_carries_the_submitted_request_verbatim(tmp_path):
     assert "request_fingerprint" not in job
     rebuild = store.submit("assemble", {"character_id": "abc123"})
     assert store.get(rebuild["id"])["request"] == {"character_id": "abc123"}
+
+
+def test_stage_progress_fills_the_active_step_and_resets_on_the_next(tmp_path):
+    # A long stage (the interpreter download) reports fractional progress
+    # inside the step; the planned stage list is public so a client can
+    # draw every step before the first one starts.
+    store = JobStore(tmp_path / "jobs", lambda *_: None, start_worker=False)
+    job = store.submit("create", {"prompt": "one person"})
+    assert job["stages"] is None and job["stage_progress"] is None
+    store.update(job["id"], stages=["downloading", "creating"])
+    assert store.get(job["id"])["stages"] == ["downloading", "creating"]
+
+    store.stage(job["id"], "downloading", 0.02, "fetching (0.0 / 19.4 GB)")
+    assert store.advance(job["id"], 0.5, "fetching (9.7 / 19.4 GB)") is True
+    current = store.get(job["id"])
+    assert current["stage"] == "downloading"
+    assert current["stage_progress"] == 0.5
+    assert current["detail"] == "fetching (9.7 / 19.4 GB)"
+    assert current["progress"] == 0.02            # the overall bar is unmoved
+
+    assert store.advance(job["id"], 7.0) is True    # clamped, detail kept
+    current = store.get(job["id"])
+    assert current["stage_progress"] == 1.0
+    assert current["detail"] == "fetching (9.7 / 19.4 GB)"
+
+    store.stage(job["id"], "creating", 0.05, "creating")
+    assert store.get(job["id"])["stage_progress"] is None
+
+    # Once cancellation is requested, advancing reports False so the
+    # producer stops — the same contract stage() has.
+    store.cancel(job["id"])
+    assert store.advance(job["id"], 0.9) is False

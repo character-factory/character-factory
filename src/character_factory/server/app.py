@@ -151,12 +151,75 @@ def create_app(service: CharacterService):
         },
         "Interpreter": {
             "type": "object",
+            "description": "A selectable interpreter backend and what a "
+                           "create against it would do right now. Aliases "
+                           "and kinds only — no model identity.",
             "properties": {
                 "alias": {"type": "string"},
                 "kind": {"type": "string",
                          "enum": ["local-model", "endpoint"]},
+                "default": {"type": "boolean",
+                            "description": "True on the row an unaliased "
+                                           "request resolves to."},
+                "label": {"type": ["string", "null"],
+                          "description": "Operator-given display name."},
+                "mode": {"type": "string", "enum": ["single", "multi"]},
+                "ready": {"type": "boolean",
+                          "description": "False when a create against this "
+                                         "backend would fail today; see "
+                                         "reason."},
+                "reason": {"type": ["string", "null"]},
+                "download_bytes": {
+                    "type": ["integer", "null"],
+                    "description": "local-model: weight bytes a create would "
+                                   "fetch first (0 = cached; null = unknown).",
+                },
+                "vram_bytes": {"type": ["integer", "null"],
+                               "description": "local-model: declared peak "
+                                              "VRAM, when the registry "
+                                              "states it."},
+                "fits": {"type": ["boolean", "null"],
+                         "description": "local-model: whether the device "
+                                        "has that much (null = unknown)."},
+                "device_bytes": {"type": ["integer", "null"],
+                                 "description": "local-model: total memory "
+                                                "of the generation device "
+                                                "(null = none detected)."},
+                "description": {"type": ["string", "null"],
+                                "description": "local-model backed by a "
+                                               "registry component: that "
+                                               "component's public "
+                                               "description."},
+                "endpoint_host": {"type": ["string", "null"]},
+                "has_key": {"type": "boolean",
+                            "description": "endpoint: an API key is stored. "
+                                           "The key itself is never "
+                                           "returned."},
             },
-            "required": ["alias", "kind"],
+            "required": ["alias", "kind", "default", "ready"],
+        },
+        "InterpreterConfig": {
+            "type": "object",
+            "description": "A backend to configure. An endpoint entry needs "
+                           "endpoint (+ model, the served model name); a "
+                           "local entry needs model (registry component id "
+                           "or weights path). Omitting api_key keeps a "
+                           "stored key; an empty string removes it.",
+            "additionalProperties": False,
+            "properties": {
+                "endpoint": {"type": "string", "format": "uri"},
+                "model": {"type": "string"},
+                "api_key": {"type": "string", "writeOnly": True},
+                "mode": {"type": "string", "enum": ["auto", "single", "multi"]},
+                "max_new_tokens": {"type": "integer", "minimum": 1},
+                "repetition_penalty": {"type": "number", "exclusiveMinimum": 0},
+                "instruction": {"type": "string"},
+                "label": {"type": "string"},
+                "default": {"type": "boolean",
+                            "description": "True makes this alias the "
+                                           "default backend; false clears "
+                                           "that if it is."},
+            },
         },
         "ExportManifest": {
             **export_manifest_schema(),
@@ -187,7 +250,20 @@ def create_app(service: CharacterService):
                     "failed", "cancelled",
                 ]},
                 "stage": {"type": "string"},
+                "stages": {
+                    "type": ["array", "null"], "items": {"type": "string"},
+                    "description": "The stages this job walks, in order, "
+                                   "set when it starts (a create may begin "
+                                   "with \"downloading\" when its "
+                                   "interpreter weights are not cached).",
+                },
                 "progress": {"type": "number", "minimum": 0, "maximum": 1},
+                "stage_progress": {
+                    "type": ["number", "null"], "minimum": 0, "maximum": 1,
+                    "description": "Progress within the current stage when "
+                                   "the stage reports it (downloads do); "
+                                   "null otherwise.",
+                },
                 "detail": {"type": ["string", "null"]},
                 "queue_position": {"type": ["integer", "null"]},
                 "request": {
@@ -568,9 +644,28 @@ def create_app(service: CharacterService):
 
     @app.get("/v0/interpreters", responses={
         200: _json_response({"type": "array", "items": _ref("Interpreter")},
-                            "Selectable interpreter backends")})
+                            "Selectable interpreter backends with readiness, "
+                            "the default first")})
     async def interpreters():
         return service.interpreters()
+
+    # Backends are the operator's: these two write the local config file.
+    # A hosted deployment, whose backends are its tiers, answers 405.
+    @app.put(
+        "/v0/interpreters/{alias}",
+        responses={200: _json_response(_ref("Interpreter"),
+                                       "The configured backend's listing row"),
+                   **_ERROR_400},
+        openapi_extra={"requestBody": {"required": True, "content": {
+            "application/json": {"schema": _ref("InterpreterConfig")}}}},
+    )
+    async def configure_interpreter(alias: str, payload: dict = Body(...)):
+        return service.configure_interpreter(alias, payload)
+
+    @app.delete("/v0/interpreters/{alias}", status_code=204,
+                responses={**_ERROR_404})
+    async def remove_interpreter(alias: str):
+        service.remove_interpreter(alias)
 
     @app.get("/v0/health", responses={
         200: _json_response(_ref("Health"), "Service health and device state")})

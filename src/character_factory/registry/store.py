@@ -19,7 +19,10 @@ from typing import Callable
 
 from character_factory.registry.model import ComponentEntry, RegistryError
 
-__all__ = ["ComponentNotPublished", "IntegrityError", "cache_dir", "ensure_component"]
+__all__ = [
+    "ComponentNotPublished", "IntegrityError", "cache_dir", "ensure_component",
+    "missing_bytes",
+]
 
 _CHUNK = 1 << 20
 
@@ -78,11 +81,19 @@ def _request_headers(headers: dict[str, str] | None) -> dict[str, str]:
 def _download(
     url: str, target: Path, expected_bytes: int,
     headers: dict[str, str] | None = None,
+    progress: Callable[[int], None] | None = None,
 ) -> None:
+    """Fetch `url` to `target`; `progress` (if given) receives each chunk's
+    byte count as it lands — and may raise to abandon the download."""
     request = urllib.request.Request(url, headers=_request_headers(headers))
     try:
         with urllib.request.urlopen(request) as response, target.open("wb") as out:
-            shutil.copyfileobj(response, out, _CHUNK)
+            if progress is None:
+                shutil.copyfileobj(response, out, _CHUNK)
+            else:
+                while chunk := response.read(_CHUNK):
+                    out.write(chunk)
+                    progress(len(chunk))
     except urllib.error.URLError as error:
         raise RegistryError(f"download failed: {url} ({error})") from error
     actual = target.stat().st_size
@@ -105,11 +116,22 @@ def fetch_json(url: str, headers: dict[str, str] | None = None) -> dict:
         raise RegistryError(f"registry index fetch failed: {url} ({error})") from error
 
 
+def missing_bytes(entry: ComponentEntry) -> int:
+    """Bytes of `entry`'s artifacts not yet in the cache (existence only —
+    integrity is checked when the component is provisioned)."""
+    target_dir = component_dir(entry)
+    return sum(
+        artifact["bytes"] for artifact in entry.artifacts
+        if not (target_dir / artifact["path"]).is_file()
+    )
+
+
 def ensure_component(
     entry: ComponentEntry,
     *,
     fetch: Callable[[str, Path, int], None] | None = None,
     headers: dict[str, str] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Return the local directory holding `entry`'s verified artifacts,
     downloading whatever is missing.
@@ -117,10 +139,24 @@ def ensure_component(
     `fetch` is injectable for tests; the default downloads over HTTPS with
     the configured auth headers applied (private staging repositories work
     authenticated, then identically unauthenticated after a public flip).
+    `progress`, if given, is called with (bytes received so far, bytes to
+    fetch in total) as the default fetch streams — a job can show a
+    19 GB model arriving, and may raise from the callback to abandon it.
     """
     if fetch is None:
+        total = missing_bytes(entry)
+        received = 0
+
         def fetch(url: str, target: Path, expected: int) -> None:  # noqa: E731
-            _download(url, target, expected, headers)
+            def advance(count: int) -> None:
+                nonlocal received
+                received += count
+                progress(received, total)
+
+            if progress is None:
+                _download(url, target, expected, headers)
+            else:
+                _download(url, target, expected, headers, progress=advance)
     target_dir = component_dir(entry)
     # An empty artifact list must not "succeed" into a directory that does
     # not exist: unless the component is already provisioned locally, a

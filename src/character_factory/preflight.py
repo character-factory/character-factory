@@ -22,6 +22,7 @@ __all__ = [
     "PreflightCheck",
     "PreflightError",
     "check_generation_stack",
+    "device_memory",
     "require_generation_stack",
 ]
 
@@ -126,6 +127,20 @@ def check_generation_stack(
                     f"toolkit {torch.version.cuda}",
                 ))
     return checks
+
+
+def device_memory(device: str = "cuda") -> int | None:
+    """Total memory of `device` in bytes, or None when it is not a usable
+    CUDA device (no torch, CPU-only build, no card, or a bad index). A
+    property read, not an allocation — cheap enough for a request path."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+        return int(torch.cuda.get_device_properties(device).total_memory)
+    except Exception:  # noqa: BLE001 — "not usable" is the answer, not an error
+        return None
 
 
 # Devices that already passed in this process: repeated creates/bakes on a

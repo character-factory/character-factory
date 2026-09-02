@@ -163,7 +163,9 @@ class JobStore:
                 "request_fingerprint": fingerprint,
                 "status": "queued",
                 "stage": "queued",
+                "stages": None,
                 "progress": 0.0,
+                "stage_progress": None,
                 "detail": "waiting for the worker",
                 "error": None,
                 "result": None,
@@ -193,7 +195,8 @@ class JobStore:
         result = {
             key: job.get(key)
             for key in (
-                "id", "operation", "status", "stage", "progress", "detail",
+                "id", "operation", "status", "stage", "stages", "progress",
+                "stage_progress", "detail",
                 "error", "result", "requested_interpreter",
                 "actual_interpreter", "warnings",
                 "created_at", "updated_at", "stage_started_at",
@@ -266,9 +269,28 @@ class JobStore:
                 status="running",
                 stage=stage,
                 progress=float(progress),
+                stage_progress=None,
                 detail=detail,
                 stage_started_at=now,
                 last_heartbeat=now,
+            )
+            self._write(job)
+            return True
+
+    def advance(
+        self, job_id: str, stage_progress: float, detail: str | None = None
+    ) -> bool:
+        """Report progress within the current stage (0–1) without starting
+        a new one — a download's bytes, say. False once the job is no
+        longer active, so a long stage can stop early on cancellation."""
+        with self._lock:
+            job = self._read(job_id)
+            if job.get("status") in TERMINAL or job.get("cancel_requested"):
+                return False
+            job.update(
+                stage_progress=min(1.0, max(0.0, float(stage_progress))),
+                detail=detail if detail is not None else job.get("detail"),
+                last_heartbeat=_now(),
             )
             self._write(job)
             return True

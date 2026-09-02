@@ -360,7 +360,10 @@ def test_backend_aliases_resolve_and_list(monkeypatch, tmp_path):
         configuration.load_interpreter_config(alias="nope")
 
     listed = configuration.available_backends()
-    assert [row["alias"] for row in listed] == ["cloud", "local-a"]
+    # The file's default leads and is marked; no synthetic "default" row
+    # when a configured alias is the default.
+    assert [row["alias"] for row in listed] == ["local-a", "cloud"]
+    assert [row["default"] for row in listed] == [True, False]
     assert {row["kind"] for row in listed} == {"endpoint", "local-model"}
 
 
@@ -684,3 +687,161 @@ def test_local_model_load_is_not_charged_to_the_first_call(monkeypatch):
     assert backend.metrics.load_seconds == 300.0
     assert backend.metrics.calls["figure"] == 1.0
     assert backend.metrics.generate_seconds == 7.0
+
+
+# --- backend readiness and configuration ------------------------------------
+
+
+def _isolate_config(monkeypatch, tmp_path, document=None):
+    from character_factory.interpreter import config as configuration
+
+    if document is not None:
+        (tmp_path / "config.json").write_text(json.dumps(document))
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
+                configuration.ENV_API_KEY, configuration.ENV_MODE):
+        monkeypatch.delenv(env, raising=False)
+    return configuration
+
+
+def test_readiness_of_a_local_weights_path(monkeypatch, tmp_path):
+    configuration = _isolate_config(monkeypatch, tmp_path, {"interpreter": {
+        "backends": {"here": {"model": str(tmp_path / "weights"),
+                              "label": "workstation model"},
+                     "empty": {"model": str(tmp_path / "empty")}},
+    }})
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "weights" / "config.json").write_text("{}")
+    (tmp_path / "empty").mkdir()
+    monkeypatch.setattr(
+        "character_factory.preflight.device_memory", lambda device: 24 * 10**9
+    )
+    rows = {row["alias"]: row for row in configuration.available_backends()}
+    here = rows["here"]
+    assert here["ready"] is True and here["reason"] is None
+    assert here["download_bytes"] == 0 and here["label"] == "workstation model"
+    assert here["vram_bytes"] is None and here["fits"] is None   # undeclared
+    assert here["description"] is None                           # a path, not a component
+    assert rows["empty"]["ready"] is False
+    assert "no model config" in rows["empty"]["reason"]
+    # Nothing configured as default: the registry component leads.
+    assert rows["default"]["default"] is True and rows["default"]["kind"] == "local-model"
+    assert list(rows)[0] == "default"
+
+
+def test_readiness_of_the_registry_component(monkeypatch, tmp_path):
+    configuration = _isolate_config(monkeypatch, tmp_path)
+    monkeypatch.setenv("CHARACTER_FACTORY_HOME", str(tmp_path / "cache"))
+    from character_factory.registry import Registry
+
+    registry = Registry.default()
+    entry = registry.get("interpreter")
+    size = sum(artifact["bytes"] for artifact in entry.artifacts)
+
+    monkeypatch.setattr(
+        "character_factory.preflight.device_memory", lambda device: 24 * 10**9
+    )
+    (row,) = configuration.available_backends(registry=registry)
+    assert row["alias"] == "default" and row["default"] is True
+    assert row["ready"] is False and row["download_bytes"] == size
+    assert row["reason"].startswith("weights not downloaded (")
+    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]
+    assert row["fits"] is True and row["device_bytes"] == 24 * 10**9
+    assert row["description"] == entry.document["description"]
+
+    # A card too small for the model is the more important reason, and one
+    # a download would not fix.
+    monkeypatch.setattr(
+        "character_factory.preflight.device_memory", lambda device: 12 * 10**9
+    )
+    (row,) = configuration.available_backends(registry=registry)
+    assert row["fits"] is False and "of VRAM; 12.0 GB detected" in row["reason"]
+
+    # No CUDA at all; and a CPU device asks no VRAM question.
+    monkeypatch.setattr("character_factory.preflight.device_memory", lambda device: None)
+    (row,) = configuration.available_backends(registry=registry)
+    assert row["fits"] is False and "no CUDA device" in row["reason"]
+    (row,) = configuration.available_backends(registry=registry, device="cpu")
+    assert row["fits"] is None and "CUDA" not in row["reason"]
+
+
+def test_endpoint_rows_expose_host_and_key_presence_only(monkeypatch, tmp_path):
+    configuration = _isolate_config(monkeypatch, tmp_path, {"interpreter": {
+        "default": "cloud",
+        "backends": {"cloud": {"endpoint": "https://api.example.test/v1",
+                               "model": "tier-1", "api_key": "sk-secret"},
+                     "lan": {"endpoint": "http://box.local:8000/v1", "model": "m"}},
+    }})
+    rows = configuration.available_backends()
+    assert [row["alias"] for row in rows] == ["cloud", "lan"]
+    cloud, lan = rows
+    assert cloud["default"] is True and cloud["ready"] is True
+    assert cloud["endpoint_host"] == "api.example.test" and cloud["has_key"] is True
+    assert lan["has_key"] is False and lan["mode"] == "single"
+    assert "sk-secret" not in json.dumps(rows)
+    assert "tier-1" not in json.dumps(rows)
+
+
+def test_save_backend_writes_a_private_file_and_keeps_the_key(monkeypatch, tmp_path):
+    import os
+    import stat
+
+    configuration = _isolate_config(monkeypatch, tmp_path)
+    configuration.save_backend(
+        "cloud", {"endpoint": "https://api.example.test/v1", "model": "m",
+                  "api_key": "sk-secret"}, default=True,
+    )
+    path = tmp_path / "config.json"
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    stored = json.loads(path.read_text())["interpreter"]
+    assert stored["default"] == "cloud"
+    assert stored["backends"]["cloud"]["api_key"] == "sk-secret"
+
+    # Editing the URL without resubmitting the key keeps it.
+    configuration.save_backend(
+        "cloud", {"endpoint": "https://api.example.test/v2", "model": "m"}
+    )
+    stored = json.loads(path.read_text())["interpreter"]
+    assert stored["backends"]["cloud"]["endpoint"] == "https://api.example.test/v2"
+    assert stored["backends"]["cloud"]["api_key"] == "sk-secret"
+    assert stored["default"] == "cloud"          # untouched when not given
+
+    # An empty key removes it; default=False clears the pointer.
+    configuration.save_backend(
+        "cloud", {"endpoint": "https://api.example.test/v2", "model": "m",
+                  "api_key": ""}, default=False,
+    )
+    stored = json.loads(path.read_text())["interpreter"]
+    assert "api_key" not in stored["backends"]["cloud"]
+    assert "default" not in stored
+
+    # Unrelated sections of the file survive a write.
+    document = json.loads(path.read_text())
+    document["registry"] = {"index_url": "https://example.test/index.json"}
+    path.write_text(json.dumps(document))
+    configuration.save_backend("local", {"model": "interpreter"})
+    assert json.loads(path.read_text())["registry"]["index_url"].endswith("index.json")
+
+    configuration.delete_backend("cloud")
+    assert "cloud" not in json.loads(path.read_text())["interpreter"]["backends"]
+    with pytest.raises(KeyError):
+        configuration.delete_backend("cloud")
+
+
+@pytest.mark.parametrize("alias, values, message", [
+    ("default", {"model": "x"}, "reserved"),
+    ("Bad Alias", {"model": "x"}, "alias must be"),
+    ("c", {"endpoint": "ftp://h/v1"}, "http\\(s\\) URL"),
+    ("c", {"endpoint": "not a url"}, "http\\(s\\) URL"),
+    ("c", {"api_key": "k"}, "needs an endpoint URL or a model"),
+    ("c", {"model": "x", "mode": "fast"}, "mode must be"),
+    ("c", {"model": "x", "max_new_tokens": 0}, "positive integer"),
+    ("c", {"model": "x", "colour": "red"}, "unknown backend field"),
+])
+def test_backend_validation_names_the_problem(alias, values, message):
+    from character_factory.interpreter import config as configuration
+
+    with pytest.raises(ValueError, match=message):
+        configuration.validate_backend(alias, values)

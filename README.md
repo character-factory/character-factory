@@ -87,7 +87,11 @@ Measured numbers, not aspirations (details in
   10–15 s and writes noticeably richer clothing — with
   `CHARACTER_FACTORY_INTERPRETER_ENDPOINT`, `_MODEL`, and `_API_KEY`, or
   `interpreter.backends` in the cache `config.json`
-  ([ARCHITECTURE.md §2.2](ARCHITECTURE.md)).
+  ([ARCHITECTURE.md §2.2](ARCHITECTURE.md)). The browser view offers the
+  same two choices in its interpreter setup panel, and says up front what
+  pressing Create will do — create, download the local model first (a
+  visible job step with byte progress), or nothing until an interpreter
+  is set up.
 - **Assembly without generation runs anywhere** — including CPU-only
   machines and macOS: validate, assemble, and serve existing character
   files with no GPU at all.

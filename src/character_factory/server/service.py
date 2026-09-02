@@ -20,6 +20,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,6 +46,11 @@ class ResourceNotFound(ServiceError):
 
 class ServiceConflict(ServiceError):
     """A request conflicts with a resource reserved by an earlier request."""
+
+
+class _JobCancelled(Exception):
+    """Raised inside a long stage's progress callback to stop the work
+    when the job was cancelled; the worker's finalizer records the state."""
 
 
 class _IncompatibleCharacter(ServiceError):
@@ -314,20 +320,47 @@ class CharacterService:
     def _execute_job(self, job_id: str, job: dict) -> None:
         from character_factory.api import create
         from character_factory.interpreter.backend import InterpreterError
-        from character_factory.preflight import PreflightError
-        from character_factory.registry import ComponentNotPublished
+        from character_factory.preflight import (
+            PreflightError,
+            require_generation_stack,
+        )
+        from character_factory.registry import ComponentNotPublished, RegistryError
 
         request = job["request"]
         operation = job["operation"]
         character_id = request.get("character_id")
+        requested = request.get("interpreter", "default")
         try:
+            # The plan is recorded on the job before the first stage so a
+            # client can draw every step up front; a create whose
+            # interpreter weights are not cached yet fetches them as a
+            # stage of its own, with byte progress, instead of hiding a
+            # multi-gigabyte download inside "creating".
+            stages = {"create": ["creating", "baking", "assembling"],
+                      "bake": ["baking", "assembling"],
+                      "assemble": ["assembling"]}[operation]
+            pending = self._pending_interpreter_download(requested) \
+                if operation == "create" else None
+            if pending is not None:
+                stages = ["downloading", *stages]
+            self.jobs.update(job_id, stages=stages)
+            if pending is not None:
+                # Never fetch gigabytes onto a machine that cannot run
+                # them: the same seconds-long check create() runs first.
+                require_generation_stack(self.device)
+                if not self.jobs.stage(
+                    job_id, "downloading", 0.02,
+                    f"fetching the interpreter model (0.0 / {pending[1] / 1e9:.1f} GB)",
+                ):
+                    return
+                if not self._download_interpreter(job_id, pending[0], pending[1]):
+                    return
             if operation == "create":
                 if not self.jobs.stage(
                     job_id, "creating", 0.05,
                     "interpreting the prompt and creating the character recipe",
                 ):
                     return
-                requested = request.get("interpreter", "default")
                 with self._job_lock:
                     result = create(
                         request["prompt"], registry=self.registry,
@@ -382,7 +415,11 @@ class CharacterService:
                 classification=error.classification,
                 trace_id=error.trace_id,
             )
-        except (ComponentNotPublished, FileNotFoundError, PreflightError) as error:
+        except (ComponentNotPublished, RegistryError, FileNotFoundError,
+                PreflightError) as error:
+            # Unpublished, unfetchable, or integrity-failed components and a
+            # broken generation stack: named, retryable once the operator
+            # fixes the cause (network, disk, driver).
             self.jobs.fail(
                 job_id, "generation_unavailable", str(error), retryable=True
             )
@@ -406,6 +443,54 @@ class CharacterService:
                             last_job_id=job_id,
                         )
                         self._write_state(directory, state)
+
+    def _pending_interpreter_download(self, requested: str):
+        """(component ref, bytes to fetch) when the requested interpreter is
+        a registry component whose weights are not cached yet; None when
+        nothing needs downloading (a path, an endpoint, a cached component)
+        or when resolution itself fails — that failure belongs to the
+        creating stage, under its own error."""
+        from character_factory.interpreter.config import resolve_interpreter_config
+        from character_factory.registry.store import missing_bytes
+
+        try:
+            _, config = resolve_interpreter_config(
+                None if requested == "default" else requested
+            )
+            if config.endpoint is not None or not config.model:
+                return None
+            if Path(config.model).expanduser().exists():
+                return None
+            entry = self.registry.get(config.model)
+        except Exception:  # noqa: BLE001 — see the docstring
+            return None
+        missing = missing_bytes(entry)
+        return (entry.ref, missing) if missing else None
+
+    def _download_interpreter(self, job_id: str, ref: str, total: int) -> bool:
+        """Fetch the interpreter component, streaming byte progress onto
+        the job. False when the job was cancelled mid-download (the partial
+        file is discarded; a retry starts the fetch over)."""
+        last = [0.0]
+
+        def progress(received: int, expected: int) -> None:
+            now = time.monotonic()
+            done = received >= expected
+            if not done and now - last[0] < 1.0:
+                return
+            last[0] = now
+            if not self.jobs.advance(
+                job_id, received / expected if expected else 1.0,
+                f"fetching the interpreter model "
+                f"({received / 1e9:.1f} / {expected / 1e9:.1f} GB)",
+            ):
+                raise _JobCancelled()
+
+        try:
+            self.registry.ensure(ref, progress=progress)
+        except _JobCancelled:
+            return False
+        return self.jobs.active(job_id)
 
     def get_job(self, job_id: str) -> dict:
         try:
@@ -536,11 +621,42 @@ class CharacterService:
         return manifest
 
     def interpreters(self) -> list[dict]:
-        """Selectable interpreter backends: aliases and kinds only —
-        model identity is local configuration and never leaves it."""
+        """Selectable interpreter backends with readiness: aliases, kinds,
+        and what a create against each would do (fetch weights, fail for
+        want of VRAM, run) — model identity is local configuration and
+        never leaves it."""
         from character_factory.interpreter.config import available_backends
 
-        return available_backends()
+        return available_backends(registry=self.registry, device=self.device)
+
+    def configure_interpreter(self, alias: str, payload: dict) -> dict:
+        """Create or replace a configured backend from a client submission
+        and return its listing row. The key is write-only: the row reports
+        `has_key`, never the value."""
+        from character_factory.interpreter.config import save_backend
+
+        if not isinstance(payload, dict):
+            raise ServiceError("the body must be a JSON object")
+        values = {k: v for k, v in payload.items() if k != "default"}
+        default = payload.get("default")
+        if default is not None and not isinstance(default, bool):
+            raise ServiceError("default must be a boolean")
+        try:
+            save_backend(alias, values, default=default)
+        except ValueError as error:
+            raise ServiceError(str(error)) from error
+        return next(row for row in self.interpreters() if row["alias"] == alias)
+
+    def remove_interpreter(self, alias: str) -> None:
+        from character_factory.interpreter.config import delete_backend
+
+        try:
+            delete_backend(alias)
+        except KeyError as error:
+            raise ResourceNotFound(
+                f"no configured interpreter backend {alias!r}") from error
+        except ValueError as error:
+            raise ServiceError(str(error)) from error
 
     def components(self) -> list[dict]:
         # `active` marks the version that unpinned resolution picks today —

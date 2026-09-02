@@ -76,14 +76,126 @@ def _wait_for_job(service, job_id, timeout=3.0):
     raise AssertionError(f"job {job_id} did not become terminal")
 
 
-def test_create_from_prompt_reports_unavailable_as_a_job(service):
+def _no_interpreter_env(monkeypatch):
+    for env in ("CHARACTER_FACTORY_INTERPRETER_MODEL",
+                "CHARACTER_FACTORY_INTERPRETER_ENDPOINT",
+                "CHARACTER_FACTORY_INTERPRETER_API_KEY",
+                "CHARACTER_FACTORY_INTERPRETER_MODE"):
+        monkeypatch.delenv(env, raising=False)
+
+
+def test_create_from_prompt_reports_unavailable_as_a_job(service, monkeypatch):
     # Submission stays prompt even when the isolated cache has no generation
     # components; capability failure belongs to the accepted job resource.
+    # The isolated cache also has no interpreter weights, so the job would
+    # plan a download first: keep the test off the network regardless of
+    # what the host machine has installed.
+    _no_interpreter_env(monkeypatch)
+    monkeypatch.setattr(service, "_pending_interpreter_download", lambda requested: None)
     submitted = service.create_from_prompt("a tall person")
     failed = _wait_for_job(service, submitted["id"])
     assert failed["status"] == "failed"
     assert failed["error"]["code"] == "generation_unavailable"
     assert failed["error"]["retryable"] is True
+
+
+def _fake_interpreter_fetch(service, monkeypatch, steps, *, reached=None, release=None):
+    """Stand in for `registry.ensure`: report each (received, expected) in
+    `steps` through the progress callback, pausing on `reached`/`release`
+    when given so the test can look at the job mid-download."""
+    calls = []
+
+    def ensure(ref, *, progress=None, **_):
+        calls.append(ref)
+        for index, (received, expected) in enumerate(steps):
+            progress(received, expected)
+            if index == 0 and reached is not None:
+                reached.set()
+                release.wait(3.0)
+
+    monkeypatch.setattr(service.registry, "ensure", ensure)
+    monkeypatch.setattr(
+        "character_factory.preflight.require_generation_stack", lambda device: None
+    )
+    return calls
+
+
+def test_uncached_interpreter_weights_download_as_a_visible_stage(
+    service, monkeypatch
+):
+    import threading
+
+    _no_interpreter_env(monkeypatch)
+    reached, release = threading.Event(), threading.Event()
+    calls = _fake_interpreter_fetch(
+        service, monkeypatch,
+        [(9_700_000_000, 19_400_000_000), (19_400_000_000, 19_400_000_000)],
+        reached=reached, release=release,
+    )
+    submitted = service.create_from_prompt("a tall person")
+    assert reached.wait(3.0)
+    mid = service.get_job(submitted["id"])
+    assert mid["stages"] == ["downloading", "creating", "baking", "assembling"]
+    assert mid["stage"] == "downloading"
+    assert mid["stage_progress"] == pytest.approx(0.5)
+    assert "9.7 / 19.4 GB" in mid["detail"]
+    release.set()
+    done = _wait_for_job(service, submitted["id"])
+    assert calls[0] == "interpreter@0.1.0"      # pinned, not "latest"
+    # Past the download the job carried on into its normal stages (and
+    # failed there — the isolated cache holds no generation components).
+    assert done["status"] == "failed"
+    assert done["stage"] != "downloading"
+
+
+def test_cancelling_during_the_download_abandons_it(service, monkeypatch):
+    import threading
+
+    _no_interpreter_env(monkeypatch)
+    reached, release = threading.Event(), threading.Event()
+    _fake_interpreter_fetch(
+        service, monkeypatch,
+        [(1_000_000_000, 19_400_000_000), (19_400_000_000, 19_400_000_000)],
+        reached=reached, release=release,
+    )
+    submitted = service.create_from_prompt("a tall person")
+    assert reached.wait(3.0)
+    service.cancel_job(submitted["id"])
+    release.set()
+    done = _wait_for_job(service, submitted["id"])
+    assert done["status"] == "cancelled"
+
+
+def test_interpreter_fetch_failure_is_generation_unavailable(service, monkeypatch):
+    from character_factory.registry import RegistryError
+
+    _no_interpreter_env(monkeypatch)
+
+    def ensure(ref, **_):
+        raise RegistryError("index unreachable")
+
+    monkeypatch.setattr(service.registry, "ensure", ensure)
+    monkeypatch.setattr(
+        "character_factory.preflight.require_generation_stack", lambda device: None
+    )
+    done = _wait_for_job(service, service.create_from_prompt("a tall person")["id"])
+    assert done["status"] == "failed"
+    assert done["error"]["code"] == "generation_unavailable"
+    assert done["error"]["retryable"] is True
+    assert done["stages"][0] == "downloading"
+
+
+def test_no_download_stage_for_endpoints_or_cached_weights(service, monkeypatch, tmp_path):
+    _no_interpreter_env(monkeypatch)
+    monkeypatch.setenv("CHARACTER_FACTORY_INTERPRETER_ENDPOINT", "http://h/v1")
+    assert service._pending_interpreter_download("default") is None
+    monkeypatch.delenv("CHARACTER_FACTORY_INTERPRETER_ENDPOINT")
+    monkeypatch.setenv("CHARACTER_FACTORY_INTERPRETER_MODEL", str(tmp_path))
+    assert service._pending_interpreter_download("default") is None
+    monkeypatch.delenv("CHARACTER_FACTORY_INTERPRETER_MODEL")
+    ref, missing = service._pending_interpreter_download("default")
+    assert ref == "interpreter@0.1.0" and missing > 10**9
+    assert service._pending_interpreter_download("no-such-alias") is None
 
 
 def test_get_unknown_character(service):
@@ -282,9 +394,20 @@ def test_http_interpreters_lists_selectable_backends(client, monkeypatch, tmp_pa
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
     rows = client.get("/v0/interpreters").json()
-    assert [r["alias"] for r in rows] == ["cloud", "local-a"]
-    # No model identity leaves the config: aliases and kinds only.
-    assert all(set(r) == {"alias", "kind"} for r in rows)
+    # The unaliased default (here: the registry component, nothing named)
+    # leads; configured aliases follow.
+    assert [r["alias"] for r in rows] == ["default", "cloud", "local-a"]
+    assert [r["default"] for r in rows] == [True, False, False]
+    # No model identity leaves the config: no row carries the model
+    # string, the endpoint URL, or a key.
+    for row in rows:
+        assert "model" not in row and "endpoint" not in row and "api_key" not in row
+    cloud = rows[1]
+    assert cloud["kind"] == "endpoint" and cloud["ready"] is True
+    assert cloud["endpoint_host"] == "h" and cloud["has_key"] is False
+    local = rows[2]
+    assert local["kind"] == "local-model" and local["ready"] is False
+    assert "neither a registry component nor a weights path" in local["reason"]
 
 
 def test_http_create_rejects_unknown_interpreter_alias(client, monkeypatch, tmp_path):
@@ -297,6 +420,43 @@ def test_http_create_rejects_unknown_interpreter_alias(client, monkeypatch, tmp_
     )
     assert response.status_code == 400
     assert "unknown interpreter backend" in response.json()["error"]
+
+
+def test_http_interpreter_backends_are_configurable(client, monkeypatch, tmp_path):
+    import json as jsonlib
+
+    (tmp_path / "config.json").write_text("{}")
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    row = client.put("/v0/interpreters/cloud", json={
+        "endpoint": "https://api.example.test/v1", "model": "tier-1",
+        "api_key": "sk-secret", "label": "hosted", "default": True,
+    })
+    assert row.status_code == 200, row.text
+    body = row.json()
+    assert body["alias"] == "cloud" and body["default"] is True
+    assert body["kind"] == "endpoint" and body["has_key"] is True
+    assert body["endpoint_host"] == "api.example.test" and body["label"] == "hosted"
+    assert "sk-secret" not in row.text and "tier-1" not in row.text
+    stored = jsonlib.loads((tmp_path / "config.json").read_text())["interpreter"]
+    assert stored["default"] == "cloud"
+    assert stored["backends"]["cloud"]["api_key"] == "sk-secret"
+
+    rows = client.get("/v0/interpreters").json()
+    assert [r["alias"] for r in rows][0] == "cloud"
+    assert "sk-secret" not in jsonlib.dumps(rows)
+
+    bad = client.put("/v0/interpreters/cloud", json={"endpoint": "nope"})
+    assert bad.status_code == 400 and "http(s) URL" in bad.json()["error"]
+    bad = client.put("/v0/interpreters/default", json={"model": "x"})
+    assert bad.status_code == 400 and "reserved" in bad.json()["error"]
+    bad = client.put("/v0/interpreters/cloud", json={"model": "x", "default": "yes"})
+    assert bad.status_code == 400
+
+    assert client.delete("/v0/interpreters/cloud").status_code == 204
+    assert client.delete("/v0/interpreters/cloud").status_code == 404
+    assert "cloud" not in [r["alias"] for r in client.get("/v0/interpreters").json()]
 
 
 def test_records_carry_timestamps_and_list_is_newest_first(service, stored):

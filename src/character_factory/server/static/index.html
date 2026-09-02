@@ -85,6 +85,8 @@ button:disabled { opacity: .45; cursor: default; }
 .step { flex: 1; height: 4px; border-radius: 2px; background: rgba(246,252,249,.14);
   position: relative; overflow: hidden; }
 .step.done { background: var(--accent); }
+.step-fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px;
+  background: var(--accent); transition: width .6s linear; }
 .step.active::after { content: ''; position: absolute; inset: 0; width: 45%;
   border-radius: 2px; background: var(--accent);
   animation: stepslide 1.4s ease-in-out infinite; }
@@ -110,7 +112,35 @@ button:disabled { opacity: .45; cursor: default; }
 .chip select { background: transparent; color: var(--text); border: 0;
   outline: none; font: inherit; font-size: 12px; }
 .chip select option { background: var(--bar); }
+.chip select { max-width: 46vw; text-overflow: ellipsis; }
+button.chip { padding: 3px 9px; border-radius: 999px; line-height: 1.2; }
 .bar-note { font-size: 12px; color: var(--dim); min-height: 16px; margin-left: auto; }
+.bar-note.warn { color: var(--warn); }
+.bar-note a { color: inherit; }
+
+/* interpreter setup panel */
+.panel-back { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center; padding: 16px; }
+.panel { width: min(560px, 100%); max-height: 92dvh; overflow-y: auto;
+  background: var(--bar); border: 1px solid var(--line-hard); border-radius: 16px;
+  padding: 18px 20px; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+.panel-head { display: flex; justify-content: space-between; align-items: center; }
+.panel-head b { font-size: 15px; }
+.panel p { margin: 8px 0; }
+.option { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+.option h4 { margin: 0 0 4px; font-size: 13px; }
+.option .dim { font-size: 12px; }
+.field { display: grid; gap: 3px; font-size: 12px; color: var(--dim); margin-top: 8px; }
+.field input:not([type=checkbox]) { width: 100%; background: var(--fill); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; }
+.field-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.field-row label { font-size: 12px; color: var(--dim); display: flex; gap: 6px; align-items: center; }
+.backend-list { margin-top: 12px; font-size: 12px; }
+.backend-list div { display: flex; gap: 8px; align-items: center; padding: 4px 0;
+  border-top: 1px solid var(--line); }
+.backend-list .what { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backend-list button { padding: 1px 8px; font-size: 12px; }
+.ok { color: var(--good); } .no { color: var(--bad); }
 
 /* lightbox */
 .lightbox { position: fixed; inset: 0; background: var(--lb); display: flex; z-index: 30; }
@@ -172,15 +202,56 @@ button:disabled { opacity: .45; cursor: default; }
     <button class="primary" id="create">Create</button>
   </div>
   <div class="chip-row">
-    <label class="chip">writer
-      <select id="interpreter"><option value="">auto</option></select>
+    <label class="chip" title="The language model that turns your description into each component's prompt">Interpreter
+      <select id="interpreter"></select>
     </label>
+    <button class="chip" id="setup-open" title="Set up interpreters">⚙</button>
     <label class="chip" title="Bake textures on the fast distilled base — speed over fidelity">
       <input type="checkbox" id="turbo"> turbo
     </label>
+    <span class="bar-note" id="ready-note"></span>
     <span class="bar-note" id="note"></span>
   </div>
 </div></div>
+
+<div class="panel-back" id="setup-panel" hidden>
+  <div class="panel">
+    <div class="panel-head"><b>Interpreter setup</b><button id="setup-close">✕ close</button></div>
+    <p class="dim">The interpreter is the language model that turns your description
+      into each component's prompt. Creating a character needs one that is ready.
+      Two ways to get there:</p>
+    <section class="option" id="setup-local">
+      <h4>Use the default local model</h4>
+      <p class="dim" id="setup-local-desc"></p>
+      <div class="dim" id="setup-local-state"></div>
+      <div class="field-row"><button class="primary" id="setup-local-use">Use it</button>
+        <span class="dim" id="setup-local-hint"></span></div>
+    </section>
+    <section class="option">
+      <h4>Use an OpenAI-compatible endpoint</h4>
+      <p class="dim">A hosted API or a local server that speaks the chat-completions
+        protocol. The key is stored in this machine's configuration file and never
+        shown again.</p>
+      <form id="setup-endpoint">
+        <label class="field">URL
+          <input name="endpoint" type="url" placeholder="https://api.openai.com/v1" required></label>
+        <label class="field">Model
+          <input name="model" type="text" placeholder="the model name the endpoint expects" required></label>
+        <label class="field">API key
+          <input name="api_key" type="password" autocomplete="off"
+                 placeholder="optional for local servers"></label>
+        <label class="field">Name
+          <input name="alias" type="text" value="endpoint" pattern="[a-z0-9][a-z0-9._-]{0,31}"></label>
+        <div class="field-row">
+          <button class="primary" type="submit">Save</button>
+          <label><input type="checkbox" name="default" checked> make it the default</label>
+          <span class="dim" id="setup-endpoint-note"></span>
+        </div>
+      </form>
+    </section>
+    <div class="backend-list" id="setup-list"></div>
+  </div>
+</div>
 
 <div class="lightbox" id="lightbox" hidden>
   <div class="lb-stage" id="stage">
@@ -194,7 +265,7 @@ button:disabled { opacity: .45; cursor: default; }
     <div class="mono dim" id="lb-status"></div>
     <div class="mono dim" id="lb-created"></div>
     <p class="lb-prompt" id="lb-prompt"></p>
-    <div class="mono dim" id="lb-writer"></div>
+    <div class="mono dim" id="lb-interpreter"></div>
     <details open><summary class="mono dim">generated UV maps</summary>
       <div class="lb-textures" id="lb-textures"></div></details>
     <div class="lb-flex"></div>
@@ -230,7 +301,9 @@ setTimeout(async () => {
   fetch('/v0/interpreters').then(r => r.json()).then(items => {
     for (const item of items) {
       const option = document.createElement('option');
-      option.value = item.alias; option.textContent = item.alias;
+      option.value = item.alias;
+      option.textContent = `${item.default ? 'default · ' : ''}${item.label || item.alias}` +
+                           (item.ready ? '' : ` (${item.reason || 'not ready'})`);
       byId('interpreter').appendChild(option);
     }
   }).catch(() => {});
@@ -238,7 +311,8 @@ setTimeout(async () => {
     const prompt = byId('prompt').value.trim();
     if (!prompt) return;
     const body = {prompt};
-    if (byId('interpreter').value) body.interpreter = byId('interpreter').value;
+    const alias = byId('interpreter').value;
+    if (alias && alias !== 'default') body.interpreter = alias;
     if (byId('turbo').checked) body.turbo = true;
     const response = await fetch('/v0/characters', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -267,44 +341,199 @@ const $ = id => document.getElementById(id);
 const esc = s => (s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 const SLOTS = ['skin', 'garment', 'shoe', 'eye'];
 
-let rows = [], jobs = [], open = null, openRevision = -1;
+let rows = [], jobs = [], open = null, openRevision = -1, wasDownloading = false;
 
-/* ------------------------------------------------------------- selector */
-fetch('/v0/interpreters').then(r => r.json()).then(list => {
-  for (const {alias, kind} of list) {
-    const option = document.createElement('option');
-    option.value = alias;
-    option.textContent = kind === 'rules' ? `${alias} (fallback)` : alias;
-    $('interpreter').appendChild(option);
+/* ---------------------------------------------------------- interpreter */
+// The chip lists what /v0/interpreters reports — aliases and readiness,
+// never model identities — and the create button says what pressing it
+// will do about it (create; download first; nothing until set up).
+const INTERPRETER_KEY = 'cf-interpreter', SETUP_SEEN_KEY = 'cf-setup-seen';
+let interpreters = [];
+const gb = bytes => `${(bytes / 1e9).toFixed(bytes >= 1e10 ? 0 : 1)} GB`;
+const remembered = key => { try { return localStorage.getItem(key); } catch { return null; } };
+const remember = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
+const chosen = () => interpreters.find(r => r.alias === $('interpreter').value)
+                  || interpreters.find(r => r.default) || interpreters[0];
+const willDownload = row => !row.ready && row.download_bytes > 0 && row.fits !== false
+                            && !/no model config|neither a registry/.test(row.reason || '');
+
+function optionText(row) {
+  const what = row.kind === 'endpoint'
+    ? `endpoint · ${row.endpoint_host || '?'}${row.has_key ? '' : ' · no key'}`
+    : row.kind === 'rules' ? 'rules fallback' : 'local model';
+  const state = row.ready ? '' : willDownload(row) ? ` · download ${gb(row.download_bytes)}` : ' · not ready';
+  // The unaliased registry component lists as "default"; a named backend
+  // that is the default keeps its name behind the marker.
+  const name = row.label || (row.alias === 'default' ? 'default local model' : row.alias);
+  return `${row.default && row.alias !== 'default' ? 'default · ' : ''}${name} — ${what}${state}`;
+}
+
+function renderCreateState() {
+  const row = chosen(), button = $('create'), note = $('ready-note');
+  note.className = 'bar-note';
+  note.replaceChildren();
+  button.disabled = false;
+  button.textContent = 'Create';
+  if (!row) return;                       // list unavailable: let the server answer
+  if (row.ready) return;
+  if (willDownload(row)) {
+    button.textContent = `Download interpreter (≈${gb(row.download_bytes)}) & create`;
+    return;
   }
-}).catch(() => {});
+  button.disabled = true;
+  note.className = 'bar-note warn';
+  const link = document.createElement('a');
+  link.href = '#'; link.textContent = 'set up an interpreter';
+  link.onclick = e => { e.preventDefault(); openSetup(); };
+  note.append(`${row.reason || 'interpreter not ready'} — `, link);
+}
+
+async function loadInterpreters() {
+  try { interpreters = await fetch('/v0/interpreters').then(r => r.json()); }
+  catch { interpreters = []; }
+  const select = $('interpreter');
+  select.replaceChildren(...interpreters.map(row => {
+    const option = document.createElement('option');
+    option.value = row.alias; option.textContent = optionText(row);
+    option.title = row.reason || '';
+    return option;
+  }));
+  const pick = interpreters.find(r => r.alias === remembered(INTERPRETER_KEY))
+            || interpreters.find(r => r.default);
+  if (pick) select.value = pick.alias;
+  renderCreateState();
+  renderSetup();
+  if (interpreters.length && !interpreters.some(r => r.ready || willDownload(r))
+      && !remembered(SETUP_SEEN_KEY)) openSetup();
+}
+$('interpreter').onchange = () => { remember(INTERPRETER_KEY, $('interpreter').value); renderCreateState(); };
+
+// First-run panel: the same two ways README describes, saved through the
+// API into the machine's config (a hosted deployment answers 405 — its
+// operator configures backends; the panel just says so).
+function openSetup() { renderSetup(); $('setup-panel').hidden = false; remember(SETUP_SEEN_KEY, '1'); }
+function closeSetup() { $('setup-panel').hidden = true; }
+$('setup-open').onclick = openSetup;
+$('setup-close').onclick = closeSetup;
+$('setup-panel').onclick = e => { if (e.target === $('setup-panel')) closeSetup(); };
+
+function renderSetup() {
+  const local = interpreters.find(r => r.alias === 'default' && r.kind === 'local-model')
+             || interpreters.find(r => r.kind === 'local-model' && r.description);
+  $('setup-local').hidden = !local;
+  if (local) {
+    $('setup-local-desc').textContent = local.description || 'The registry\'s interpreter component.';
+    const facts = [];
+    if (local.download_bytes > 0) facts.push(`≈${gb(local.download_bytes)} to download`);
+    else if (local.download_bytes === 0) facts.push('weights already downloaded');
+    if (local.vram_bytes) facts.push(`needs ≈${gb(local.vram_bytes)} of VRAM`);
+    facts.push(local.device_bytes ? `${gb(local.device_bytes)} detected` : 'no CUDA device detected');
+    const state = $('setup-local-state');
+    state.replaceChildren();
+    const mark = document.createElement('span');
+    mark.className = local.fits === false ? 'no' : 'ok';
+    mark.textContent = local.fits === false ? '✕ ' : '✓ ';
+    state.append(mark, facts.join(' · '));
+    const use = $('setup-local-use');
+    use.disabled = local.fits === false;
+    $('setup-local-hint').textContent = local.fits === false
+      ? 'this machine cannot run it — use an endpoint instead'
+      : local.ready ? 'ready' : 'the first create downloads it, as a visible step';
+    use.onclick = () => {
+      $('interpreter').value = local.alias; remember(INTERPRETER_KEY, local.alias);
+      renderCreateState(); closeSetup();
+    };
+  }
+  const list = $('setup-list');
+  list.replaceChildren();
+  for (const row of interpreters) {
+    const line = document.createElement('div');
+    const [shown, rest] = optionText(row).split(' — ');
+    const name = document.createElement('b'); name.textContent = shown.replace(/^default · /, '');
+    const what = document.createElement('span'); what.className = 'what';
+    what.textContent = `${row.default ? 'default · ' : ''}${rest || ''}`;
+    const ready = document.createElement('span');
+    ready.className = row.ready ? 'ok' : 'no';
+    ready.textContent = row.ready ? 'ready' : 'not ready'; ready.title = row.reason || '';
+    line.append(name, what, ready);
+    if (row.alias !== 'default') {
+      const remove = document.createElement('button'); remove.textContent = 'remove';
+      remove.onclick = async () => {
+        remove.disabled = true;
+        const response = await fetch(`/v0/interpreters/${row.alias}`, { method: 'DELETE' }).catch(() => null);
+        if (response && !response.ok && response.status !== 404)
+          $('setup-endpoint-note').textContent = response.status === 405
+            ? 'this deployment\'s interpreters are managed by its operator' : `remove failed (${response.status})`;
+        await loadInterpreters();
+      };
+      line.append(remove);
+    }
+    list.append(line);
+  }
+}
+
+$('setup-endpoint').onsubmit = async e => {
+  e.preventDefault();
+  const form = e.target, note = $('setup-endpoint-note');
+  const alias = form.alias.value.trim() || 'endpoint';
+  const body = { endpoint: form.endpoint.value.trim(), model: form.model.value.trim(),
+                 default: form.default.checked };
+  if (form.api_key.value) body.api_key = form.api_key.value;   // omitted = keep the stored key
+  note.textContent = 'saving…';
+  try {
+    const response = await fetch(`/v0/interpreters/${encodeURIComponent(alias)}`, { method: 'PUT',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      note.textContent = response.status === 405
+        ? 'this deployment\'s interpreters are managed by its operator'
+        : (result.error || result.detail || `failed (${response.status})`);
+      return;
+    }
+    form.api_key.value = '';
+    note.textContent = '';
+    await loadInterpreters();
+    $('interpreter').value = result.alias; remember(INTERPRETER_KEY, result.alias);
+    renderCreateState(); closeSetup();
+  } catch (error) { note.textContent = String(error); }
+};
+loadInterpreters();
 
 /* ------------------------------------------------------------------ jobs */
-// The stages each operation walks (the server's job.stage values, in order).
+// The stages each operation walks (the server's job.stage values, in
+// order); a job records its own plan in `stages` once it starts (a create
+// may add `downloading` in front), and that wins when present.
 const STAGES = { create: ['creating', 'baking', 'assembling'],
                  bake: ['baking', 'assembling'], assemble: ['assembling'] };
-const STAGE_LABEL = { creating: 'writing the recipe', baking: 'baking textures',
-                      assembling: 'assembling the GLB', complete: 'done' };
+const STAGE_LABEL = { downloading: 'downloading the interpreter', creating: 'writing the recipe',
+                      baking: 'baking textures', assembling: 'assembling the GLB', complete: 'done' };
 const active = job => ['queued', 'running', 'cancelling'].includes(job?.status);
 const mmss = seconds => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 const since = iso => iso ? mmss(Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000))) : '';
 
 // Step-by-step progress: one segment per stage, done ones solid, the
-// current one sweeping (stages report no inner progress — the sweep plus
-// the running stage clock is what shows the job is alive).
+// current one filling when the stage reports inner progress (a download's
+// bytes) and sweeping when it does not (the sweep plus the running stage
+// clock is what shows the job is alive).
 function stepsMarkup(job) {
-  const steps = STAGES[job.operation] || ['assembling'];
+  const steps = job.stages || STAGES[job.operation] || ['assembling'];
   const at = steps.indexOf(job.stage);
   const running = job.status === 'running' || job.status === 'cancelling';
+  const fraction = typeof job.stage_progress === 'number' ? job.stage_progress : null;
   const segments = steps.map((_, i) => {
+    if (running && i === at && fraction !== null)
+      return `<span class="step"><span class="step-fill" style="width:${Math.round(fraction * 100)}%"></span></span>`;
     const cls = job.status === 'succeeded' || (running && i < at) ? 'done'
               : running && i === at ? 'active' : '';
     return `<span class="step ${cls}"></span>`;
   }).join('');
+  // A download's detail carries "(x / y GB)": show that instead of the clock.
+  const bytes = job.stage === 'downloading' && /\(([^)]*)\)/.exec(job.detail || '')?.[1];
   let label;
   if (job.status === 'queued') label = job.queue_position ? `queued · #${job.queue_position}` : 'queued';
   else if (job.status === 'submitting') label = 'submitting…';
   else if (job.status === 'cancelling') label = 'cancelling after this stage…';
+  else if (running && bytes) label = `downloading · ${bytes}`;
   else if (running) label = `${STAGE_LABEL[job.stage] || job.stage} · ${since(job.stage_started_at)}`;
   else label = job.status;
   const count = running && at >= 0 ? `${at + 1}/${steps.length}` : '';
@@ -435,6 +664,10 @@ async function refresh() {
   }
   catch { $('worker-status').textContent = 'server unreachable'; return; }
   const live = jobs.filter(active);
+  // When an interpreter download finishes, the chip's readiness changed.
+  const downloading = live.some(j => j.stage === 'downloading');
+  if (wasDownloading && !downloading) loadInterpreters();
+  wasDownloading = downloading;
   const busy = live.find(j => j.status !== 'queued');
   const waiting = live.length - (busy ? 1 : 0);
   $('worker-status').textContent = busy
@@ -462,7 +695,8 @@ $('create').onclick = async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt) return;
   const body = { prompt };
-  if ($('interpreter').value) body.interpreter = $('interpreter').value;
+  const alias = $('interpreter').value;
+  if (alias && alias !== 'default') body.interpreter = alias;
   if ($('turbo').checked) body.turbo = true;
   // The card appears the moment Create is pressed; the server's job record
   // replaces it on the next refresh (or the card goes away on a refusal).
@@ -481,8 +715,11 @@ $('create').onclick = async () => {
     else $('note').textContent = record.error || record.detail || 'failed';
   } catch (error) { $('note').textContent = String(error); }
   submitting = submitting.filter(j => j !== placeholder);
-  $('create').disabled = false;
+  renderCreateState();
   refresh();
+  // A download that just started (or a backend just saved) changes what
+  // the button should say next time.
+  loadInterpreters();
 };
 
 /* -------------------------------------------------------------- lightbox */
@@ -549,8 +786,8 @@ async function openLightbox(id) {
   const full = await (await fetch(`/v0/characters/${id}`)).json();
   const character = full.character || {};
   $('lb-prompt').textContent = character.provenance?.prompt || '';
-  const writer = character.provenance?.components?.interpreter?.version || '';
-  $('lb-writer').textContent = writer && `writer ${writer}`;
+  const interpreter = character.provenance?.components?.interpreter?.version || '';
+  $('lb-interpreter').textContent = interpreter && `interpreter ${interpreter}`;
   const holder = $('lb-textures');
   holder.innerHTML = '';
   const present = Object.keys(character.textures || {});

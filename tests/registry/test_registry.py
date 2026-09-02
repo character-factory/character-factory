@@ -311,3 +311,73 @@ def test_cache_dir_env_override(monkeypatch, tmp_path):
     monkeypatch.delenv("CHARACTER_FACTORY_HOME")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert cache_dir() == tmp_path / "xdg" / "character-factory"
+
+
+def _streaming_response(payload: bytes, chunk: int):
+    """A urlopen() stand-in that hands `payload` out `chunk` bytes at a time."""
+    import io
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+
+    def fake_urlopen(request):
+        assert request.get_header("User-agent") == "character-factory"
+        return Response(payload)
+
+    return fake_urlopen
+
+
+def test_missing_bytes_counts_only_absent_artifacts(tmp_path, monkeypatch):
+    from character_factory.registry.store import missing_bytes
+
+    payload = b"pretend weights"
+    registry, fake_fetch, _ = _fetching_registry(payload, tmp_path, monkeypatch)
+    entry = registry.get("skin")
+    assert missing_bytes(entry) == len(payload)
+    registry.ensure("skin", fetch=fake_fetch)
+    assert missing_bytes(entry) == 0
+
+
+def test_default_fetch_streams_byte_progress(tmp_path, monkeypatch):
+    from character_factory.registry import store
+
+    payload = b"0123456789" * 5
+    registry, _, _ = _fetching_registry(payload, tmp_path, monkeypatch)
+    monkeypatch.setattr(store, "_CHUNK", 16)
+    monkeypatch.setattr(
+        store.urllib.request, "urlopen", _streaming_response(payload, 16)
+    )
+    seen = []
+    directory = registry.ensure(
+        "skin", progress=lambda received, total: seen.append((received, total))
+    )
+    assert (directory / "adapter.safetensors").read_bytes() == payload
+    # Cumulative bytes against the total still to fetch, ending exactly there.
+    assert seen == [(16, 50), (32, 50), (48, 50), (50, 50)]
+
+
+def test_progress_callback_can_abandon_a_download(tmp_path, monkeypatch):
+    from character_factory.registry import store
+
+    payload = b"0123456789" * 5
+    registry, _, _ = _fetching_registry(payload, tmp_path, monkeypatch)
+    monkeypatch.setattr(store, "_CHUNK", 16)
+    monkeypatch.setattr(
+        store.urllib.request, "urlopen", _streaming_response(payload, 16)
+    )
+
+    class Stop(Exception):
+        pass
+
+    def progress(received, total):
+        if received >= 32:
+            raise Stop()
+
+    with pytest.raises(Stop):
+        registry.ensure("skin", progress=progress)
+    # No partial file survives; the next attempt starts over.
+    assert not list((cache_dir() / "components").rglob("adapter.safetensors*"))

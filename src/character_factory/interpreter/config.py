@@ -55,17 +55,24 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from character_factory.registry.store import cache_dir
 
 __all__ = [
+    "BACKEND_FIELDS",
     "DEFAULT_MODEL_COMPONENT",
     "MODES",
     "InterpreterConfig",
     "available_backends",
+    "delete_backend",
     "load_interpreter_config",
     "resolve_interpreter_config",
+    "save_backend",
+    "validate_backend",
 ]
 
 ENV_MODEL = "CHARACTER_FACTORY_INTERPRETER_MODEL"
@@ -187,15 +194,266 @@ def load_interpreter_config(alias: str | None = None) -> InterpreterConfig:
     return resolve_interpreter_config(alias)[1]
 
 
-def available_backends() -> list[dict]:
-    """The selectable backends: [{alias, kind}] — aliases and kinds only,
-    never model identities."""
+def _entry_kind(entry: dict) -> str:
+    return "endpoint" if entry.get("endpoint") else "local-model"
+
+
+def _gb(size: int) -> str:
+    return f"{size / 1e9:.1f} GB"
+
+
+def _local_readiness(config: InterpreterConfig, registry, device: str) -> dict:
+    """Readiness of a local model: are its weights on disk, and does it fit
+    the device — cheap checks only (existence and sizes; no hashing, no
+    model load, no network)."""
+    from pathlib import Path
+
+    from character_factory.preflight import device_memory
+    from character_factory.registry.store import component_dir, missing_bytes
+
+    row: dict = {"download_bytes": None, "vram_bytes": None, "fits": None,
+                 "device_bytes": None, "description": None}
+    reasons: list[str] = []
+    source = config.model or ""
+    path = Path(source).expanduser()
+    if path.exists():
+        if not (path / "config.json").is_file():
+            reasons.append("weights path holds no model config")
+        row["download_bytes"] = 0
+    else:
+        if registry is None:
+            from character_factory.registry import Registry
+
+            registry = Registry.default()
+        try:
+            entry = registry.get(source)
+        except Exception:  # noqa: BLE001 — not a path, not a component
+            reasons.append("neither a registry component nor a weights path")
+        else:
+            if entry.artifacts:
+                missing = missing_bytes(entry)
+                row["download_bytes"] = missing
+                if missing:
+                    reasons.append(f"weights not downloaded ({_gb(missing)})")
+            elif not component_dir(entry).is_dir():
+                reasons.append("component not published yet")
+            else:
+                row["download_bytes"] = 0
+            needed = entry.inference.get("peak_vram_bytes")
+            if isinstance(needed, int) and needed > 0:
+                row["vram_bytes"] = needed
+            # A published component is public knowledge (its index entry
+            # says what it is); a private weights path stays a path.
+            description = entry.document.get("description")
+            row["description"] = description if isinstance(description, str) else None
+    if device.partition(":")[0] != "cpu":
+        available = device_memory(device)
+        row["device_bytes"] = available
+        if available is None:
+            row["fits"] = False
+            reasons.append("no CUDA device detected")
+        elif row["vram_bytes"] is not None:
+            row["fits"] = available >= row["vram_bytes"]
+            if not row["fits"]:
+                reasons.append(
+                    f"needs {_gb(row['vram_bytes'])} of VRAM; "
+                    f"{_gb(available)} detected"
+                )
+    row["ready"] = not reasons
+    row["reason"] = "; ".join(reasons) or None
+    return row
+
+
+def _describe(alias: str, entry: dict, config: InterpreterConfig, *,
+              default: bool, registry, device: str) -> dict:
+    row = {
+        "alias": alias,
+        "kind": _entry_kind(entry),
+        "default": default,
+        "label": entry.get("label") if isinstance(entry.get("label"), str) else None,
+        "mode": config.effective_mode,
+    }
+    if row["kind"] == "endpoint":
+        from urllib.parse import urlsplit
+
+        row.update(
+            ready=True, reason=None,
+            endpoint_host=urlsplit(config.endpoint or "").hostname,
+            has_key=bool(config.api_key),
+        )
+    else:
+        row.update(_local_readiness(config, registry, device))
+    return row
+
+
+def available_backends(*, registry=None, device: str = "cuda") -> list[dict]:
+    """The selectable backends with their readiness, default first.
+
+    Aliases and kinds only, never model identities: an endpoint row carries
+    its host and whether a key is configured, a local-model row the bytes
+    still to download and whether the model fits `device`. ``ready`` is
+    false with a human ``reason`` when a create against that backend would
+    fail today; ``download_bytes`` > 0 with ``fits`` not false means a
+    create will fetch the weights first. The ``default`` row is what an
+    unaliased request resolves to right now — the file's `default` entry
+    (marked on its own row) or, with nothing configured, the registry's
+    ``interpreter`` component under the alias ``default``.
+    """
     section = _file_section()
+    instruction = section.get("instruction")
+    mode = section.get("mode")
     backends = section.get("backends", {})
+    if not isinstance(backends, dict):
+        backends = {}
+    default_alias, default_config = resolve_interpreter_config(None)
     rows = []
-    if isinstance(backends, dict):
-        for alias in sorted(backends):
-            entry = backends[alias] or {}
-            kind = "endpoint" if entry.get("endpoint") else "local-model"
-            rows.append({"alias": alias, "kind": kind})
+    if default_alias not in backends:
+        entry = {"endpoint": default_config.endpoint,
+                 "model": default_config.model}
+        rows.append(_describe(default_alias, entry, default_config,
+                              default=True, registry=registry, device=device))
+    for alias in sorted(backends):
+        entry = backends[alias] or {}
+        config = _config_from(entry, instruction, mode)
+        rows.append(_describe(alias, entry, config,
+                              default=alias == default_alias,
+                              registry=registry, device=device))
+    rows.sort(key=lambda row: not row["default"])
     return rows
+
+
+# -- writing the backends table ---------------------------------------------
+# The server's setup flow (and anything else that wants to configure a
+# backend without hand-editing the file) goes through these. The file may
+# hold API keys: writes are atomic and leave it owner-readable only.
+
+_ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
+BACKEND_FIELDS = frozenset({
+    "endpoint", "model", "api_key", "mode", "max_new_tokens",
+    "repetition_penalty", "instruction", "label",
+})
+
+
+def _read_document() -> tuple[Path, dict]:
+    path = cache_dir() / "config.json"
+    document: dict = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise ValueError(f"unreadable config {path}: {error}") from error
+        if isinstance(loaded, dict):
+            document = loaded
+    section = document.setdefault("interpreter", {})
+    if not isinstance(section, dict):
+        raise ValueError(f"{path}: 'interpreter' must be a JSON object")
+    if not isinstance(section.get("backends"), dict):
+        section["backends"] = {}
+    return path, document
+
+
+def _write_document(path: Path, document: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=path.parent, prefix=path.name + ".", suffix=".tmp",
+        delete=False, encoding="utf-8",
+    ) as output:
+        json.dump(document, output, indent=2)
+        output.write("\n")
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(output.name, 0o600)
+    os.replace(output.name, path)
+
+
+def validate_backend(alias: str, values: dict) -> dict:
+    """Check one backends-table entry as a client would submit it and
+    return it normalized. Raises ValueError with the reason."""
+    if not isinstance(alias, str) or not _ALIAS_RE.match(alias):
+        raise ValueError(
+            "backend alias must be 1–32 characters of a–z, 0–9, '.', '_' or "
+            "'-', starting with a letter or digit"
+        )
+    if alias == "default":
+        raise ValueError("'default' is reserved for the configured default")
+    if not isinstance(values, dict):
+        raise ValueError("backend must be a JSON object")
+    unknown = set(values) - BACKEND_FIELDS
+    if unknown:
+        raise ValueError(
+            f"unknown backend field(s): {', '.join(sorted(unknown))}; "
+            f"allowed: {', '.join(sorted(BACKEND_FIELDS))}"
+        )
+    clean: dict = {}
+    for key in ("endpoint", "model", "api_key", "instruction", "label"):
+        if key in values and values[key] is not None:
+            if not isinstance(values[key], str):
+                raise ValueError(f"{key} must be a string")
+            value = values[key].strip()
+            if value or key == "api_key":
+                clean[key] = value
+    if "endpoint" in clean:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(clean["endpoint"])
+        if parts.scheme not in {"http", "https"} or not parts.netloc:
+            raise ValueError("endpoint must be an http(s) URL")
+    if not clean.get("endpoint") and not clean.get("model"):
+        raise ValueError(
+            "a backend needs an endpoint URL or a model (registry component "
+            "id or local weights path)"
+        )
+    if "mode" in values and values["mode"] is not None:
+        if values["mode"] not in MODES:
+            raise ValueError(f"mode must be one of {', '.join(MODES)}")
+        clean["mode"] = values["mode"]
+    if "max_new_tokens" in values and values["max_new_tokens"] is not None:
+        tokens = values["max_new_tokens"]
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
+            raise ValueError("max_new_tokens must be a positive integer")
+        clean["max_new_tokens"] = tokens
+    if "repetition_penalty" in values and values["repetition_penalty"] is not None:
+        penalty = values["repetition_penalty"]
+        if isinstance(penalty, bool) or not isinstance(penalty, (int, float)) \
+                or penalty <= 0:
+            raise ValueError("repetition_penalty must be a positive number")
+        clean["repetition_penalty"] = float(penalty)
+    return clean
+
+
+def save_backend(alias: str, values: dict, *,
+                 default: bool | None = None) -> None:
+    """Create or replace the backends-table entry `alias`.
+
+    A submission without ``api_key`` keeps the stored key (so a URL or
+    model can be edited without re-entering it); an empty ``api_key``
+    removes it. `default` True makes the alias the default backend, False
+    clears that if it currently is; None leaves the default alone.
+    """
+    clean = validate_backend(alias, values)
+    path, document = _read_document()
+    section = document["interpreter"]
+    existing = section["backends"].get(alias) or {}
+    if "api_key" not in clean and existing.get("api_key"):
+        clean["api_key"] = existing["api_key"]
+    elif clean.get("api_key") == "":
+        del clean["api_key"]
+    section["backends"][alias] = clean
+    if default is True:
+        section["default"] = alias
+    elif default is False and section.get("default") == alias:
+        del section["default"]
+    _write_document(path, document)
+
+
+def delete_backend(alias: str) -> None:
+    """Remove the backends-table entry `alias` (and the default pointer if
+    it named it). Raises KeyError for an unknown alias."""
+    path, document = _read_document()
+    section = document["interpreter"]
+    if alias not in section["backends"]:
+        raise KeyError(alias)
+    del section["backends"][alias]
+    if section.get("default") == alias:
+        del section["default"]
+    _write_document(path, document)

@@ -248,7 +248,7 @@ def test_socket_uv_no_chart_overlap(rig, mouth_data, socket_uv_build):
 
 
 def test_socket_uv_density_even_and_bounded(rig, mouth_data, socket_uv_build):
-    """The stated density bounds (reported in the proof escalation): even
+    """The stated density bounds: even
     along the interior — band medians within 1.5x of each other, per-face
     p5-p95 spread within 15x — and no worse than 2% of the neighboring lip
     faces' texel density (the whole interior shares the small atlas region

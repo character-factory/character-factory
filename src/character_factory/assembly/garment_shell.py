@@ -95,9 +95,9 @@ class ShellConstants:
     excluded_removed_max: float = 0.25  # keyed fraction the excluded-region
                                         # masking may remove before the mask
                                         # itself is judged untrustworthy
-    # Seam-disagreement budget: D5 ruling — the value arrives as config/
-    # registry data once its derivation evidence lands. None = the
-    # detector runs report-only and never fails a character.
+    # Seam-disagreement budget: the value arrives as config/registry data
+    # once its derivation evidence lands. None = the detector runs
+    # report-only and never fails a character.
     seam_disagreement_budget: float | None = None
 
 

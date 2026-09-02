@@ -9,7 +9,7 @@ is local configuration, so no model identity ever appears in code or in
 a character's provenance.
 
 With nothing configured, the default is the registry's ``interpreter``
-component: the blessed local model, fetched and hash-verified like any
+component: the default local model, fetched and hash-verified like any
 other component. The model behind that id is registry data.
 
 ``mode`` chooses how the model is asked: ``single`` (one instruction, one
@@ -81,7 +81,7 @@ ENV_API_KEY = "CHARACTER_FACTORY_INTERPRETER_API_KEY"
 ENV_MODE = "CHARACTER_FACTORY_INTERPRETER_MODE"
 ENV_AUDIT_LOG = "CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG"
 
-# The registry component that names the blessed local model. The id is
+# The registry component that names the default local model. The id is
 # code; the model behind it is data.
 DEFAULT_MODEL_COMPONENT = "interpreter"
 MODES = ("auto", "single", "multi")

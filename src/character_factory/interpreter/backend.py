@@ -146,9 +146,9 @@ class ModelInterpreter:
             hint = ""
             if source == DEFAULT_MODEL_COMPONENT:
                 hint = (
-                    "; the default model is gated upstream: accept its terms "
-                    "and set CHARACTER_FACTORY_AUTH_TOKEN to a token for that "
-                    "account, or configure another backend "
+                    "; the default model is fetched from its upstream "
+                    "repository on first use — check network access and "
+                    "disk space, or configure another backend "
                     "(CHARACTER_FACTORY_INTERPRETER_MODEL / _ENDPOINT)"
                 )
             raise InterpreterError(

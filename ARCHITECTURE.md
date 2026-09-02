@@ -223,10 +223,10 @@ interpreter overrides per key.**
 
 - **Default backend: a small local model, named by a registry component**
   like every other model. The `interpreter` component pins an exact
-  upstream revision of an instruction-tuned ~4B-effective-parameter model
-  (Google's Gemma 4 E4B at launch; the entry records the license and the
-  fact that the upstream repository is gated behind its terms), and every
-  artifact is hash-pinned. Inference is grammar-constrained greedy decoding
+  upstream revision of an instruction-tuned ~9B-parameter model
+  (Qwen3.5-9B at launch, Apache-2.0, fetched anonymously — no account or
+  token; the entry records the license), and every artifact is
+  hash-pinned. Inference is grammar-constrained greedy decoding
   against a grammar derived from the interpretation schema, with schema
   validation as a repair loop. The runtime is **in-process and
   Python-native**: installed by pip as part of this package's
@@ -243,12 +243,13 @@ interpreter overrides per key.**
   proportions — each with the raw description verbatim, a literal
   template for that component's trained format, and a per-call grammar,
   and assembles the document from the answers; the same validator judges
-  it whole. The split is what makes a ~4B model usable: under the single
-  instruction it drops slots, echoes the description, and invents hair
-  families it was never shown; asked seven questions it answers each one
-  specifically (the hair call carries the full closed vocabulary inline).
-  It costs seven generations instead of one (60–90 s per description on
-  a 24 GB-class card with the default model, against ≈45 s single), and it
+  it whole. The split is what makes a small model usable: under the single
+  instruction it drops slots, echoes the description, leaks footwear into
+  the garment prompt, and invents hair families it was never shown; asked
+  seven questions it answers each one specifically (the hair call carries
+  the full closed vocabulary inline). It costs seven generations instead
+  of one (≈50 s per description on a 24 GB-class card with the default
+  model, about what its single prompt costs), and it
   is the wrong trade for a hosted frontier model, which gains nothing from
   the split and loses the descriptive richness the single instruction
   elicits. So `mode: auto` (the default) resolves to `multi` for local
@@ -306,13 +307,12 @@ interpreter overrides per key.**
   default path. **For speed and quality it is the recommended
   configuration when one is available:** a current hosted frontier model
   (the launch bench used an OpenAI GPT-5.6-class model) in single mode
-  interprets a description in ≈10–15 s against the local default's 60–90 s,
+  interprets a description in ≈10–15 s against the local default's ≈50 s,
   and writes richer garment prompts — the one place the local default
   visibly lags on screen.
 - **No degraded mode.** There is deliberately no non-model interpretation
-  backend: a default model that cannot be fetched (the upstream is gated;
-  `CHARACTER_FACTORY_AUTH_TOKEN` carries the access token) or a failed
-  model request is a structured, named error, never a silent quality
+  backend: a default model that cannot be fetched or a failed model
+  request is a structured, named error, never a silent quality
   downgrade. Records expose the requested and actual backend aliases and
   warnings.
 - **Endpoint diagnostics are private.** If an operator configures
@@ -661,7 +661,7 @@ throughout, matching the texture slot keys they serve.
 
 | Component | Contents | Approx. size |
 | --- | --- | --- |
-| `interpreter` | The default local language model (§2.2): an exact upstream revision of Gemma 4 E4B instruction-tuned, run in-process in bfloat16 with the multi-call plan and decoding grammar in this package; the upstream repository is gated behind Google's Gemma Terms of Use | ~15 GB |
+| `interpreter` | The default local language model (§2.2): an exact upstream revision of Qwen3.5-9B (Apache-2.0), run in-process in bfloat16 with the multi-call plan and decoding grammar in this package | ~19 GB |
 | `make-figure` | Text → body/face parameter heads + normalization stats | ~10 MB |
 | `make-skin` | Texture adapter for the `skin` slot's albedo (body atlas) | ~90 MB |
 | `make-eye` | Texture adapter for the `eye` slot's albedo (eyeball layout) | ~90 MB |
@@ -672,7 +672,7 @@ throughout, matching the texture slot keys they serve.
 | `assembly-assets` | Eyeball and mouth-interior meshes, UV occupancy templates, atlas metadata | ~20 MB |
 | *base model* | FLUX.2 Klein 4B (transformer + text encoder + VAE), fetched from its upstream repository, shared by `identity` (text encoder) and all texture adapters | ~16 GB |
 
-First-run download for full generation ≈ 32 GB with the default local
+First-run download for full generation ≈ 36 GB with the default local
 interpreter, ≈ 17 GB with an endpoint interpreter configured instead.
 Assembly-only use (no generation) needs only `body-rig` +
 `assembly-assets` ≈ 720 MB.
@@ -801,7 +801,7 @@ character and seeds per mode:
   peaks higher, so **the complete pipeline — identity, all texture
   slots, assembly — runs on a 12 GB card** under `nf4`, with
   interpretation on an endpoint or a smaller local model (the default
-  interpreter model needs ≈16 GB on its own; see below). 8 GB is not
+  interpreter model needs ≈18 GB on its own; see below). 8 GB is not
   supported.
 
 The pipeline loads the base model once and swaps ~90 MB adapters between
@@ -812,7 +812,7 @@ the full-precision footprint down further; that is anticipated but
 unmeasured, and no number is claimed for it in v0. The interpreter runs
 first and releases its VRAM before the diffusion stack loads — the two
 are never resident together — so it never adds to the diffusion peak.
-**It does set its own floor:** the default local model measured ≈16 GB
+**It does set its own floor:** the default local model measured ≈18 GB
 peak allocated in bfloat16, above the 12 GB `nf4` bake. A 12 GB card runs the
 complete pipeline with an endpoint interpreter configured (§2.2), or a
 smaller local model; a quantized default interpreter is unmeasured and

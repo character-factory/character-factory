@@ -117,16 +117,19 @@ def test_unpublished_component_fails_clearly(tmp_path, monkeypatch):
 
 def test_snapshot_interpreter_default_model_is_pinned_upstream():
     # The default interpreter model is registry data: an exact upstream
-    # revision with every artifact hash-pinned, and the gating recorded
-    # where a reader looks first.
+    # revision with every artifact hash-pinned, fetched anonymously — the
+    # install-and-run promise depends on the upstream not being gated, and
+    # the entry records that where a reader looks first.
     entry = Registry.default().get("interpreter")
     assert entry.document["source"]["hf_repo"]
     assert len(entry.document["source"]["revision"]) == 40
     paths = {a["path"] for a in entry.artifacts}
-    assert {"config.json", "model.safetensors", "tokenizer.json"} <= paths
+    assert {"config.json", "tokenizer.json", "model.safetensors.index.json"} <= paths
+    assert any(p.endswith(".safetensors") for p in paths)
     assert all(len(a["sha256"]) == 64 and a["bytes"] > 0 for a in entry.artifacts)
-    assert entry.document["upstream"]["gated"] is True
-    assert "CHARACTER_FACTORY_AUTH_TOKEN" in entry.document["description"]
+    assert entry.document["upstream"]["gated"] is False
+    assert entry.document["upstream"]["license"] == "Apache-2.0"
+    assert "token" in entry.document["description"]   # says none is needed
 
 
 # --- resolution -----------------------------------------------------------------

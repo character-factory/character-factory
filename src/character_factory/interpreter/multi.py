@@ -2,13 +2,13 @@
 
 A small local model writes markedly better component prompts when each
 call asks one question than when one call asks for the whole document.
-Under the single instruction a ~4B-class model drops slots, echoes the
+Under the single instruction a small model drops slots, echoes the
 description, or invents a hair family it was never shown; asked seven
 short questions — figure, skin, eye, garment, shoe, hair, proportions —
 it answers each one specifically, and the hair call can carry the full
-vocabulary inline. The cost is seven generations instead of one (sixty to
-ninety seconds per description on a 24 GB-class card with the default
-model, against about forty-five for the single prompt), which is why the mode is
+vocabulary inline. The cost is seven generations instead of one (about
+fifty seconds per description on a 24 GB-class card with the default
+model, roughly what its single prompt costs), which is why the mode is
 the default for local models and not for endpoints: a hosted frontier
 model gains nothing from the split and loses the descriptive richness
 the single instruction elicits (ARCHITECTURE §2.2, "mode").

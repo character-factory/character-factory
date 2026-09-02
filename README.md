@@ -59,10 +59,9 @@ Measured numbers, not aspirations (details in
   time) and an endpoint interpreter. 8 GB is not supported.
 - **Interpretation — the language model that turns your description into
   each component's prompt — runs locally by default:** the registry's
-  `interpreter` component names Gemma 4 E4B (Google, gated behind its
-  terms: accept them and set `CHARACTER_FACTORY_AUTH_TOKEN` to an access
-  token), ≈15 GB to download, ≈16 GB of VRAM, one to one and a half
-  minutes per description asked one component at a time. **For speed and quality,
+  `interpreter` component names Qwen3.5-9B (Apache-2.0, no account or
+  token needed), ≈19 GB to download, ≈18 GB of VRAM, about a minute per
+  description asked one component at a time. **For speed and quality,
   point it at an OpenAI-compatible endpoint instead** — a current hosted
   frontier model (an OpenAI GPT-5.6-class model in our bench) takes
   10–15 s and writes noticeably richer clothing — with

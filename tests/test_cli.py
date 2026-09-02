@@ -74,7 +74,7 @@ def test_interpret_without_configuration_uses_the_registry_default(
     monkeypatch.setattr(Registry, "ensure", refuse)
     with pytest.raises(InterpreterError, match="'interpreter' is not available") as excinfo:
         main(["interpret", "a lean runner"])
-    assert "CHARACTER_FACTORY_AUTH_TOKEN" in str(excinfo.value)
+    assert "CHARACTER_FACTORY_INTERPRETER_MODEL" in str(excinfo.value)
     assert excinfo.value.retryable is False
 
 

@@ -129,11 +129,12 @@ is safe to stop in.
   their own account. Agents verify only.
 - **Verify:** `scripts/flip-verify.py step1` (anonymous). Expected: one
   `ok` line per artifact, byte count and `sha256 verified`, ending
-  `all N declared artifacts fetch and verify (anonymous)`. The one
-  declared exception is the `interpreter` component, whose upstream
-  repository is gated behind its license terms by design: anonymously
-  its lines read `gated upstream refuses anonymous access as declared`,
-  and its bytes were verified by the authenticated precondition run.
+  `all N declared artifacts fetch and verify (anonymous)`. No launch
+  entry declares a gated upstream (the default interpreter model is
+  fetched anonymously — that is the install-and-run promise); should one
+  ever be added, its anonymous lines read `gated upstream refuses
+  anonymous access as declared` and its bytes must be verified by an
+  authenticated run.
 - **Stop-rule:** any `FAIL` line halts the sequence — a 401/403 means a
   repo is still private; a hash or byte-count mismatch means the staged
   upload is not the approved artifact, and **nothing else happens until

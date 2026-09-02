@@ -845,3 +845,41 @@ def test_backend_validation_names_the_problem(alias, values, message):
 
     with pytest.raises(ValueError, match=message):
         configuration.validate_backend(alias, values)
+
+
+PEAK_RSS_WITHOUT_RESOURCE = """
+import sys, types
+sys.modules["resource"] = None  # the POSIX-only module, absent as on Windows
+{psutil}
+from character_factory.interpreter.backend import peak_rss_bytes
+print(peak_rss_bytes())
+"""
+
+FAKE_PSUTIL = """
+psutil = types.ModuleType("psutil")
+class _Process:
+    def memory_info(self):
+        return types.SimpleNamespace(rss=1, peak_wset=4096)
+psutil.Process = _Process
+sys.modules["psutil"] = psutil
+"""
+
+
+@pytest.mark.parametrize("psutil_stub, expected", [
+    (FAKE_PSUTIL, "4096"),
+    ('sys.modules["psutil"] = None', "0"),
+])
+def test_backend_imports_and_measures_memory_without_resource(
+    psutil_stub, expected,
+):
+    """`resource` does not exist on Windows; the memory metric falls back
+    to psutil's peak working set, then to 0, and the import never fails."""
+    import subprocess
+    import sys
+
+    script = PEAK_RSS_WITHOUT_RESOURCE.format(psutil=psutil_stub)
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == expected

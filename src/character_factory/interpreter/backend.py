@@ -618,11 +618,7 @@ class ModelInterpreter:
         raise AssertionError("endpoint retry loop exhausted")
 
     def _record_memory(self) -> None:
-        import resource
-
-        self.metrics.peak_rss_bytes = (
-            resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
-        )
+        self.metrics.peak_rss_bytes = peak_rss_bytes()
         try:
             import torch
 
@@ -630,6 +626,25 @@ class ModelInterpreter:
                 self.metrics.peak_gpu_bytes = int(torch.cuda.max_memory_allocated())
         except ImportError:
             pass
+
+
+def peak_rss_bytes() -> int:
+    """Peak resident memory of this process, in bytes. `resource` is
+    POSIX-only; on Windows, psutil's peak working set stands in when psutil
+    is installed. 0 when neither is available — this is a metric, never a
+    dependency of the pipeline."""
+    try:
+        import resource
+    except ImportError:
+        resource = None
+    if resource is not None:
+        return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    memory = psutil.Process().memory_info()
+    return int(getattr(memory, "peak_wset", 0) or 0)
 
 
 def build_instruction(slot_guidance: dict[str, str],

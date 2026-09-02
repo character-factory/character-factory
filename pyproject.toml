@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "character-factory"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Turn a text description into a rigged, textured, realtime 3D human."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -83,7 +83,7 @@ Compression: `--compress web` writes `scene.web.glb` with WebP textures; `--comp
 
 ## The character file
 
-`character.char.json` is the character; the GLB is built from it. Trimmed from the [SPEC.md](SPEC.md) §3 example:
+`character.char.json` is the character; the GLB is built from it. Trimmed from the [SPEC.md](https://github.com/character-factory/character-factory/blob/main/SPEC.md) §3 example:
 
 ```json
 {
@@ -112,7 +112,7 @@ Compression: `--compress web` writes `scene.web.glb` with WebP textures; `--comp
 }
 ```
 
-Edit the file and resubmit it — `POST /v0/characters` with `{"character": …}`, or `bake` then `assemble` in Python. Assembly is deterministic. The format is specified in [SPEC.md](SPEC.md).
+Edit the file and resubmit it — `POST /v0/characters` with `{"character": …}`, or `bake` then `assemble` in Python. Assembly is deterministic. The format is specified in [SPEC.md](https://github.com/character-factory/character-factory/blob/main/SPEC.md).
 
 ## Interfaces
 
@@ -147,7 +147,7 @@ print(c.content_id, c.rig, sorted(c.textures))
 
 ## Hardware and install
 
-Measured on one RTX 3090; details in [ARCHITECTURE.md §6](ARCHITECTURE.md#6-install-and-hardware).
+Measured on one RTX 3090; details in [ARCHITECTURE.md §6](https://github.com/character-factory/character-factory/blob/main/ARCHITECTURE.md#6-install-and-hardware).
 
 | | Size / time |
 | --- | --- |
@@ -186,16 +186,16 @@ The server binds to `127.0.0.1` and does not authenticate. Do not expose it to t
 
 ## Going deeper
 
-- [SPEC.md](SPEC.md) — the character format.
-- [ARCHITECTURE.md](ARCHITECTURE.md) — the system.
+- [SPEC.md](https://github.com/character-factory/character-factory/blob/main/SPEC.md) — the character format.
+- [ARCHITECTURE.md](https://github.com/character-factory/character-factory/blob/main/ARCHITECTURE.md) — the system.
 - `/v0/docs` on a running server — the HTTP API.
 
 ## Built on
 
-MHR (Meta, Apache-2.0), FLUX.2 Klein 4B (Black Forest Labs, Apache-2.0), Qwen3.5-9B (Apache-2.0), UnityEyes2 (MIT), GNM (Google, Apache-2.0). See [NOTICE](NOTICE).
+MHR (Meta, Apache-2.0), FLUX.2 Klein 4B (Black Forest Labs, Apache-2.0), Qwen3.5-9B (Apache-2.0), UnityEyes2 (MIT), GNM (Google, Apache-2.0). See [NOTICE](https://github.com/character-factory/character-factory/blob/main/NOTICE).
 
 ## Status and license
 
 v0.1. File issues at [github.com/character-factory/character-factory/issues](https://github.com/character-factory/character-factory/issues).
 
-Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).
+Apache-2.0 ([LICENSE](https://github.com/character-factory/character-factory/blob/main/LICENSE), [NOTICE](https://github.com/character-factory/character-factory/blob/main/NOTICE)).

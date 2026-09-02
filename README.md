@@ -35,7 +35,7 @@ The first run downloads 36.4 GB of model weights (17.1 GB with an endpoint inter
 
 ## Agent quickstart
 
-Paste into Claude Code, Codex, or any coding agent. No additional API key or account required.
+Paste into Claude Code, Codex, or any coding agent.
 
 ```
 Set up Character Factory (NVIDIA GPU, 24 GB):
@@ -58,6 +58,8 @@ Or:
 ```
 Build a character-driven game using https://characterfactory.ai
 ```
+
+No additional API key or account required.
 
 ## What you get
 

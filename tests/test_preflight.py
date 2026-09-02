@@ -73,6 +73,8 @@ def test_cpu_only_torch_build_is_named(monkeypatch):
     checks = check_generation_stack(device="cuda", imports=(("torch", "torch"),))
     [failure] = [check for check in checks if not check.ok]
     assert failure.name == "torch-cpu-build"
+    assert "https://download.pytorch.org/whl/<cuXXX>" in failure.detail
+    assert "pip install --index-url" in failure.detail
 
 
 def test_missing_driver_is_classified(monkeypatch):

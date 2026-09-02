@@ -99,8 +99,11 @@ def check_generation_stack(
             checks.append(PreflightCheck(
                 "torch-cpu-build", False,
                 f"this torch build ({torch.__version__}) has no CUDA "
-                f"support; install a CUDA-enabled torch wheel for this "
-                f"platform",
+                f"support; install a CUDA-enabled torch wheel from the "
+                f"PyTorch CUDA index for your CUDA version "
+                f"(https://download.pytorch.org/whl/<cuXXX>): "
+                f"pip install --index-url "
+                f"https://download.pytorch.org/whl/<cuXXX> torch",
             ))
         else:
             try:

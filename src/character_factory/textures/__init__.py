@@ -6,6 +6,12 @@ explicit seed (and optional overrides) come from the character file. The
 pipeline object is injectable so the orchestration is testable without a
 GPU; the default factory loads the base model once and hot-swaps adapters
 between slots.
+
+A bake runs in two GPU phases so the base model's text encoder and its
+transformer are never resident together: every slot's prompt is encoded
+first, the encoder is released, and only then does the transformer load
+and denoise from the stored conditioning. The bake's peak memory is the
+larger phase rather than their sum.
 """
 
 from __future__ import annotations
@@ -77,33 +83,24 @@ class TextureBaker:
         over-subscribed card degrades to shared-memory paging (silently,
         on WSL2) instead of failing loudly.
         """
-        import gc
-
         self._pipeline = None
         # Reference cycles keep the weights alive past the del; collect
         # before returning the cache or the VRAM stays resident.
-        gc.collect()
-        try:
-            import torch
+        _release_device()
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
-
-    def bake_slot(self, slot: str, recipe: dict, out_path: Path) -> dict:
-        """Generate one slot's image; returns its SPEC.md §8 asset descriptor."""
-        entry = self.registry.get(recipe["component"], recipe["component_version"])
-        adapter_dir = self.registry.ensure(entry.ref)
-        pipeline = self._pipeline_for(entry)
-
-        inference = {
+    def _inference(self, entry: ComponentEntry, recipe: dict) -> dict:
+        return {
             **entry.inference,
             **self._turbo_overrides,
             **recipe.get("overrides", {}),
         }
+
+    def slot_prompt(self, recipe: dict) -> str:
+        """The caption a recipe conditions on: the component's declared
+        template filled from the recipe (SPEC.md §5.2)."""
+        entry = self.registry.get(recipe["component"], recipe["component_version"])
+        inference = self._inference(entry, recipe)
         template = inference.get("prompt_template", "{prompt}")
-        resolution = inference.get("resolution", 1024)
         fields = {"prompt": recipe["prompt"]}
         if "{shaft_clause}" in template:
             # Style-dependent conditioning: the component's foot chart maps
@@ -111,12 +108,35 @@ class TextureBaker:
             # the registry entry) completes the caption.
             from character_factory.assembly.footwear import FootChart, shaft_clause
 
-            chart = FootChart.load(adapter_dir)
+            chart = FootChart.load(self.registry.ensure(entry.ref))
             fields["shaft_clause"] = shaft_clause(
                 chart.style_for_prompt(recipe["prompt"]), inference
             )
+        return template.format(**fields)
+
+    def encode(self, recipes: list[dict]) -> None:
+        """Encode every recipe's caption up front, on a pipeline that
+        supports it (the default one does; a fake may not). The encoder
+        runs alone, then leaves the device before the transformer loads."""
+        if not recipes:
+            return
+        entry = self.registry.get(
+            recipes[0]["component"], recipes[0]["component_version"]
+        )
+        pipeline = self._pipeline_for(entry)
+        encode = getattr(pipeline, "encode", None)
+        if encode is not None:
+            encode([self.slot_prompt(recipe) for recipe in recipes])
+
+    def bake_slot(self, slot: str, recipe: dict, out_path: Path) -> dict:
+        """Generate one slot's image; returns its SPEC.md §8 asset descriptor."""
+        entry = self.registry.get(recipe["component"], recipe["component_version"])
+        adapter_dir = self.registry.ensure(entry.ref)
+        pipeline = self._pipeline_for(entry)
+        inference = self._inference(entry, recipe)
+        resolution = inference.get("resolution", 1024)
         image = pipeline.generate(
-            prompt=template.format(**fields),
+            prompt=self.slot_prompt(recipe),
             seed=recipe["seed"],
             steps=inference.get("steps", 20),
             guidance=inference.get("guidance", 4.0),
@@ -165,10 +185,17 @@ def bake(
     # albedo shorthand (SPEC.md §5.2, §8). Albedo files are named <slot>.png;
     # future secondary maps will be <slot>.<map>.png.
     descriptors: dict[str, dict] = {}
+    recipes = {
+        slot: maps["albedo"]
+        for slot, maps in sorted(character.texture_maps().items())
+    }
     try:
-        for slot, maps in sorted(character.texture_maps().items()):
+        # All captions first, then all images: the text encoder and the
+        # transformer take turns on the device instead of sharing it.
+        baker.encode(list(recipes.values()))
+        for slot, recipe in recipes.items():
             descriptors[slot] = baker.bake_slot(
-                slot, maps["albedo"], out_dir / f"{slot}.png"
+                slot, recipe, out_dir / f"{slot}.png"
             )
     finally:
         baker.close()
@@ -244,50 +271,114 @@ class _DiffusersPipeline:
     """The real backend: the base model via diffusers, adapters hot-swapped.
 
     Wrapped behind the same small interface the tests fake, so orchestration
-    and GPU specifics stay separable.
+    and GPU specifics stay separable. The base model loads in two halves,
+    never together: the text encoder (with its tokenizer) to turn captions
+    into conditioning, then the transformer, VAE and scheduler to denoise
+    from it. Captions encoded through `encode` are held on the device
+    (a few megabytes each); `generate` encodes any caption it has not
+    seen — correct either way, only the peak memory differs.
     """
+
+    # Conditioning for an empty caption, which classifier-free guidance
+    # pairs with every prompt.
+    _NEGATIVE = ""
 
     def __init__(self, base_dir: Path, device: str,
                  quantization: str | None = None):
+        self.base_dir = base_dir
+        self.device = device
+        self.quantization = quantization
+        self.pipeline = None       # the denoising half, loaded on first use
+        self._conditioning: dict[str, object] = {}   # caption → embeds
+        self._adapter: Path | None = None
+
+    def _load(self, **omit):
         import torch
         from diffusers import DiffusionPipeline
 
-        kwargs = {"torch_dtype": torch.bfloat16}
-        if quantization is not None:
-            kwargs["quantization_config"] = _quantization_config(quantization)
+        kwargs = {"torch_dtype": torch.bfloat16, **omit}
+        if self.quantization is not None:
+            kwargs["quantization_config"] = _quantization_config(self.quantization)
         # The base component's model_index.json declares the pipeline class;
         # resolving it from the distribution keeps this code base-model-
-        # agnostic (a registry data change, not a code change).
-        self.pipeline = DiffusionPipeline.from_pretrained(
-            str(base_dir), **kwargs
-        ).to(device)
-        if quantization is not None and hasattr(self.pipeline, "vae"):
-            # Quantized models report float32, so the pipeline prepares
-            # float32 latents; the (small) VAE runs float32 to match.
-            self.pipeline.vae.to(torch.float32)
-        self.device = device
-        self._adapter: Path | None = None
+        # agnostic (a registry data change, not a code change). Passing
+        # None for a component leaves it unloaded.
+        return DiffusionPipeline.from_pretrained(
+            str(self.base_dir), **kwargs
+        ).to(self.device)
+
+    def encode(self, prompts: list[str]) -> None:
+        """Encode captions (and the empty caption) with only the text
+        encoder resident, then release it."""
+        import torch
+
+        wanted = [p for p in [*prompts, self._NEGATIVE] if p not in self._conditioning]
+        if not wanted:
+            return
+        encoder = self._load(transformer=None, vae=None)
+        try:
+            with torch.no_grad():
+                for prompt in wanted:
+                    # The pipeline's own encode_prompt, with its own
+                    # defaults — the same conditioning a plain prompt
+                    # call would compute internally.
+                    embeds, *_ = encoder.encode_prompt(
+                        prompt=prompt, device=self.device
+                    )
+                    self._conditioning[prompt] = embeds
+        finally:
+            del encoder
+            _release_device()
+
+    def _denoiser(self):
+        if self.pipeline is None:
+            import torch
+
+            self.pipeline = self._load(text_encoder=None, tokenizer=None)
+            if self.quantization is not None and hasattr(self.pipeline, "vae"):
+                # Quantized models report float32, so the pipeline prepares
+                # float32 latents; the (small) VAE runs float32 to match.
+                self.pipeline.vae.to(torch.float32)
+        return self.pipeline
 
     def generate(self, *, prompt, seed, steps, guidance, resolution, adapter_dir):
         import torch
 
+        if prompt not in self._conditioning:
+            self.encode([prompt])
+        pipeline = self._denoiser()
         if self._adapter != adapter_dir:
-            self.pipeline.unload_lora_weights()
+            pipeline.unload_lora_weights()
             # Component convention: every component's weight artifact is
             # weights.safetensors.
-            self.pipeline.load_lora_weights(
+            pipeline.load_lora_weights(
                 str(adapter_dir), weight_name="weights.safetensors"
             )
             self._adapter = adapter_dir
         generator = torch.Generator(self.device).manual_seed(seed)
-        return self.pipeline(
-            prompt=prompt,
+        return pipeline(
+            prompt_embeds=self._conditioning[prompt],
+            negative_prompt_embeds=self._conditioning[self._NEGATIVE],
             num_inference_steps=steps,
             guidance_scale=guidance,
             width=resolution,
             height=resolution,
             generator=generator,
         ).images[0]
+
+
+def _release_device() -> None:
+    """Collect dropped modules and hand their VRAM back to the driver."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 def _default_pipeline_factory(base_dir: Path, device: str):

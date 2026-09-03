@@ -106,3 +106,33 @@ def test_cpu_device_skips_cuda_checks(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", _fake_torch(None))
     checks = check_generation_stack(device="cpu", imports=(("torch", "torch"),))
     assert all(check.ok for check in checks)
+
+
+def test_cuda_pass_prefers_expandable_segments(monkeypatch):
+    # A CUDA pass asks the allocator for expandable segments (reserved
+    # memory tracks allocated memory across the load/release sequence) —
+    # unless the user configured the allocator themselves.
+    settings = []
+    torch = _fake_torch("12.8", lambda *a, **k: None)
+    torch.cuda = types.SimpleNamespace(
+        get_device_properties=lambda d: types.SimpleNamespace(
+            name="card", total_memory=1),
+        memory=types.SimpleNamespace(_set_allocator_settings=settings.append),
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setattr(
+        preflight_module, "GENERATION_IMPORTS", (("json", "json"),))
+    monkeypatch.setattr(preflight_module, "_passed", set())
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    require_generation_stack("cuda")
+    assert settings == ["expandable_segments:True"]
+
+    monkeypatch.setattr(preflight_module, "_passed", set())
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:512")
+    require_generation_stack("cuda")
+    assert settings == ["expandable_segments:True"]     # user's setting kept
+
+    monkeypatch.setattr(preflight_module, "_passed", set())
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF")
+    require_generation_stack("cpu")
+    assert settings == ["expandable_segments:True"]     # cpu: nothing to set

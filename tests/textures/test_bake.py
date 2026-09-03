@@ -96,6 +96,30 @@ def test_bake_writes_assets_and_pins_hashes(environment, tmp_path):
     assert result.character.validate(strict=True).ok
 
 
+def test_bake_encodes_every_caption_before_any_image(environment, tmp_path):
+    # Two GPU phases: a pipeline that can encode up front sees every
+    # slot's finished caption (template applied) before its first
+    # generate call, so the encoder can leave before the transformer loads.
+    fake, registry, character = environment
+    log = []
+
+    class TwoPhase(FakePipeline):
+        def encode(self, prompts):
+            log.append(("encode", list(prompts)))
+
+        def generate(self, **kwargs):
+            log.append(("generate", kwargs["prompt"]))
+            return super().generate(**kwargs)
+
+    fake = TwoPhase()
+    bake(character, tmp_path / "out", registry=registry, device="cpu",
+         pipeline_factory=lambda base_dir, device: fake)
+    assert log[0][0] == "encode"
+    assert sorted(log[0][1]) == sorted(p for kind, p in log[1:])
+    assert all(kind == "generate" for kind, _ in log[1:])
+    assert log[0][1][0].startswith("eye sheet: ")
+
+
 def test_bake_uses_each_recipes_seed_and_template(environment, tmp_path):
     fake, registry, character = environment
     bake(character, tmp_path / "out", registry=registry,

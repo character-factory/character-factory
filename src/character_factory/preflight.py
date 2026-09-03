@@ -15,6 +15,7 @@ fails before any weights are touched.
 from __future__ import annotations
 
 import importlib
+import logging
 from dataclasses import dataclass
 
 __all__ = [
@@ -149,6 +150,7 @@ def device_memory(device: str = "cuda") -> int | None:
 # Devices that already passed in this process: repeated creates/bakes on a
 # long-lived server pay for the preflight once.
 _passed: set[str] = set()
+_LOG = logging.getLogger(__name__)
 
 
 def require_generation_stack(device: str = "cuda") -> None:
@@ -161,4 +163,31 @@ def require_generation_stack(device: str = "cuda") -> None:
     failures = [c for c in check_generation_stack(device) if not c.ok]
     if failures:
         raise PreflightError(failures)
+    if device.partition(":")[0] == "cuda":
+        _prefer_expandable_segments()
     _passed.add(key)
+
+
+def _prefer_expandable_segments() -> None:
+    """Ask torch's CUDA allocator to grow segments in place instead of
+    reserving a fresh block per size class. The generation path loads and
+    releases several multi-gigabyte models in one process; with fixed
+    segments the allocator keeps several gigabytes reserved beyond what
+    is allocated (fragmentation), and that reservation is what the card
+    — and anything sharing it — actually loses. This is the setting torch's
+    own out-of-memory message recommends. It is process-global for the
+    life of the process (which is why only `make` and server jobs, never
+    a bare library call, reach it) and it means CUDA tensors cannot be
+    shared with other processes — nothing here does. A user's own
+    ``PYTORCH_CUDA_ALLOC_CONF`` is respected; a torch without the setting
+    is left alone, with a debug line so the lost headroom is diagnosable."""
+    import os
+
+    if os.environ.get("PYTORCH_CUDA_ALLOC_CONF"):
+        return
+    try:
+        import torch
+
+        torch.cuda.memory._set_allocator_settings("expandable_segments:True")
+    except Exception as exc:  # noqa: BLE001 — an allocator preference, never a failure
+        _LOG.debug("expandable segments not enabled: %s", exc)

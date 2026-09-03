@@ -226,7 +226,8 @@ def test_endpoint_backend_speaks_openai_chat(monkeypatch):
     strict_schema = response_format["json_schema"]["schema"]
     assert set(strict_schema["required"]) == {
         "figure", "textures", "hair", "proportions"}
-    assert seen["body"]["max_completion_tokens"] >= 1800
+    assert "max_completion_tokens" not in seen["body"]   # never capped
+    assert "max_tokens" not in seen["body"]
     assert "temperature" not in seen["body"]   # hosted models reject overrides
     assert seen["auth"] == "Bearer k"
 

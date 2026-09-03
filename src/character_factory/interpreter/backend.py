@@ -289,13 +289,10 @@ class ModelInterpreter:
         import urllib.error
         import urllib.request
 
-        # Reasoning-capable endpoints account for hidden reasoning and
-        # visible JSON inside the same limit. The old 900-token floor could
-        # be exhausted entirely before content was emitted; a retry after a
-        # truncated or empty answer triples the budget.
-        budget = max(self.config.max_new_tokens, 1800)
-        if attempt > 1:
-            budget *= 3
+        # No token cap on endpoint requests: reasoning-capable models
+        # count hidden reasoning and the visible JSON inside the same
+        # limit, and any cap set here truncates the answer to nothing.
+        # `max_new_tokens` governs local decoding only.
         body = {
             "model": self.config.model or "default",
             "messages": [
@@ -310,7 +307,6 @@ class ModelInterpreter:
                     "schema": endpoint_schema(schema),
                 },
             },
-            "max_completion_tokens": budget,
         }
         headers = {"Content-Type": "application/json"}
         if self.config.api_key:

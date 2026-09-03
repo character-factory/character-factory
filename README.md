@@ -16,6 +16,8 @@ A free, open-source, locally-run text-to-3D character pipeline. Prompt in, rigge
 
 ## Quickstart
 
+Requires Python 3.11+.
+
 ```sh
 pip install "character-factory[generation]"
 ```
@@ -29,7 +31,7 @@ professor/character.char.json
 professor/scene.glb
 ```
 
-Timings: one RTX 3090, weights on disk, default local interpreter.
+Timings: one RTX 3090, all weights on disk, default local interpreter. On the first run, `create` includes the base-model download.
 
 The first run downloads 36.4 GB of model weights (17.1 GB with an endpoint interpreter). After that, generation is local and offline.
 
@@ -39,6 +41,8 @@ Paste into Claude Code, Codex, or any coding agent.
 
 ```
 Set up Character Factory (NVIDIA GPU, 24 GB):
+Requires Python 3.11+.
+On Windows, install torch from https://download.pytorch.org/whl/<cuXXX> before step 1.
 1. pip install "character-factory[generation,server]"
 2. character-factory make "<description>" -o <dir>
    Writes <dir>/character.char.json and <dir>/scene.glb; stdout is exactly those two paths.
@@ -152,6 +156,7 @@ Measured on one RTX 3090; details in [ARCHITECTURE.md §6](https://github.com/ch
 | | Size / time |
 | --- | --- |
 | Install | 5.6 GB (torch with CUDA) |
+| Windows | `pip install` installs CPU torch; install torch from `https://download.pytorch.org/whl/<cuXXX>` first |
 | Weights, first use | 36.4 GB: 19.3 GB interpreter + 16.0 GB base image model + 1.1 GB components. 17.1 GB with an endpoint interpreter |
 | Generation, 24 GB card | bf16: bake 17.4 GiB, 137 s. Whole character 3 min 38 s with the local interpreter |
 | Generation, 12 GB card | `nf4` (`textures.quantization` in the cache config): bake 8.9 GiB, 267 s, with an endpoint interpreter |
@@ -178,6 +183,8 @@ The interpreter is the language model that turns your description into each comp
 - The initial hair provider is a finite set of procedural components.
 - Garment textures may have warped details and edge artifacts.
 - Garment and shoe geometry are a single layer shell separated from the body.
+- No facial hair.
+- Clothing is one layer; outer garments are not represented.
 - Spec and architecture are an initial draft and will change rapidly.
 
 ## Trust boundary

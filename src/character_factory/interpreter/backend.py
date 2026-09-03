@@ -245,9 +245,14 @@ class ModelInterpreter:
                 # a mild penalty breaks the loop without fighting the
                 # grammar the way hard n-gram bans would.
                 generate_kwargs["repetition_penalty"] = self.config.repetition_penalty
+            # No output cap. transformers stops at generation_config's
+            # max_length (20) when nothing is given, so the stop length is
+            # the model's own context window; the grammar's closing brace
+            # and EOS end the call.
+            context = getattr(self._model.config, "max_position_embeddings", None)
             output = self._model.generate(
                 **inputs,
-                max_new_tokens=self.config.max_new_tokens,
+                max_length=context or (1 << 31),
                 do_sample=False,
                 prefix_allowed_tokens_fn=prefix_fn,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
@@ -265,7 +270,7 @@ class ModelInterpreter:
         end-of-text while the chat template ends turns with a different
         token; the grammar allows that end-of-turn token after the closing
         brace and nothing but whitespace afterwards, so the model emits it,
-        generation carries on, and the call pads to the token budget."""
+        generation carries on to the context window."""
         configured = self._model.generation_config.eos_token_id
         if configured is None:
             configured = []
@@ -292,7 +297,6 @@ class ModelInterpreter:
         # No token cap on endpoint requests: reasoning-capable models
         # count hidden reasoning and the visible JSON inside the same
         # limit, and any cap set here truncates the answer to nothing.
-        # `max_new_tokens` governs local decoding only.
         body = {
             "model": self.config.model or "default",
             "messages": [

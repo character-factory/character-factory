@@ -211,7 +211,6 @@ def create_app(service: CharacterService):
                 "model": {"type": "string"},
                 "api_key": {"type": "string", "writeOnly": True},
                 "mode": {"type": "string", "enum": ["auto", "single", "multi"]},
-                "max_new_tokens": {"type": "integer", "minimum": 1},
                 "repetition_penalty": {"type": "number", "exclusiveMinimum": 0},
                 "instruction": {"type": "string"},
                 "label": {"type": "string"},

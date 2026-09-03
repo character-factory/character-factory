@@ -171,14 +171,14 @@ def test_config_precedence_env_over_file(monkeypatch, tmp_path):
 
     (tmp_path / "config.json").write_text(
         json.dumps({"interpreter": {"default": "local-a", "backends": {
-            "local-a": {"model": "from-file", "max_new_tokens": 99}}}})
+            "local-a": {"model": "from-file", "repetition_penalty": 1.5}}}})
     )
     monkeypatch.setattr(
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
     loaded = configuration.load_interpreter_config()
     assert loaded.model == "from-file"
-    assert loaded.max_new_tokens == 99
+    assert loaded.repetition_penalty == 1.5
 
     monkeypatch.setenv(configuration.ENV_MODEL, "from-env")
     assert configuration.load_interpreter_config().model == "from-env"
@@ -838,7 +838,6 @@ def test_save_backend_writes_a_private_file_and_keeps_the_key(monkeypatch, tmp_p
     ("c", {"endpoint": "not a url"}, "http\\(s\\) URL"),
     ("c", {"api_key": "k"}, "needs an endpoint URL or a model"),
     ("c", {"model": "x", "mode": "fast"}, "mode must be"),
-    ("c", {"model": "x", "max_new_tokens": 0}, "positive integer"),
     ("c", {"model": "x", "colour": "red"}, "unknown backend field"),
 ])
 def test_backend_validation_names_the_problem(alias, values, message):

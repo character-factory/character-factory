@@ -92,7 +92,6 @@ class InterpreterConfig:
     model: str | None = None      # registry component id OR local weights path
     endpoint: str | None = None   # OpenAI-compatible chat-completions base URL
     api_key: str | None = None
-    max_new_tokens: int = 768
     instruction: str | None = None   # system-prompt override (data, not code)
     repetition_penalty: float = 1.0  # >1 damps greedy repetition loops
     audit_log: str | None = None     # protected JSONL; never served over HTTP
@@ -139,7 +138,6 @@ def _config_from(values: dict, instruction: str | None,
         model=values.get("model"),
         endpoint=values.get("endpoint"),
         api_key=values.get("api_key"),
-        max_new_tokens=int(values.get("max_new_tokens", 768)),
         instruction=values.get("instruction") or instruction,
         repetition_penalty=float(values.get("repetition_penalty", 1.0)),
         audit_log=os.environ.get(ENV_AUDIT_LOG) or values.get("audit_log"),
@@ -329,7 +327,7 @@ def available_backends(*, registry=None, device: str = "cuda") -> list[dict]:
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 BACKEND_FIELDS = frozenset({
-    "endpoint", "model", "api_key", "mode", "max_new_tokens",
+    "endpoint", "model", "api_key", "mode",
     "repetition_penalty", "instruction", "label",
 })
 
@@ -407,11 +405,6 @@ def validate_backend(alias: str, values: dict) -> dict:
         if values["mode"] not in MODES:
             raise ValueError(f"mode must be one of {', '.join(MODES)}")
         clean["mode"] = values["mode"]
-    if "max_new_tokens" in values and values["max_new_tokens"] is not None:
-        tokens = values["max_new_tokens"]
-        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
-            raise ValueError("max_new_tokens must be a positive integer")
-        clean["max_new_tokens"] = tokens
     if "repetition_penalty" in values and values["repetition_penalty"] is not None:
         penalty = values["repetition_penalty"]
         if isinstance(penalty, bool) or not isinstance(penalty, (int, float)) \

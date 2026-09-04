@@ -518,19 +518,28 @@ def test_multi_call_validates_the_assembled_document():
         backend.interpret("someone")
 
 
-def test_multi_call_plan_carries_the_installed_vocabulary():
+def test_multi_call_plan_carries_the_registry_guidance():
+    """Each prompt-writing call states its format with the same registry
+    text the single instruction lists — one source per component."""
     from character_factory.interpreter.multi import build_calls, hair_vocabulary_lines
 
-    calls = {call.name: call for call in build_calls(
-        {"shoe": {"styles": ["below_ankle", "tall_boot"]}})}
-    assert "flip flops" in calls["shoe"].instruction
-    assert "tall boots" in calls["shoe"].instruction
-    assert "ankle boots" not in calls["shoe"].instruction
+    guidance = {
+        "figure": "one sentence: build phrases then face phrases",
+        "shoe": "family, material, palette, finish; supported styles: "
+                "below_ankle, tall_boot — stay within this vocabulary",
+    }
+    calls = {call.name: call for call in build_calls(guidance)}
+    assert guidance["figure"] in calls["figure"].instruction
+    assert guidance["shoe"] in calls["shoe"].instruction
+    assert "empty prompt" in calls["shoe"].instruction      # barefoot rule
     assert "family: " in hair_vocabulary_lines()
     assert "loose_long" in calls["hair"].instruction
     assert "Never footwear" in calls["garment"].instruction
-    # a call that never sees the vocabulary shows every launch style
-    assert "mid boots" in {c.name: c for c in build_calls()}["shoe"].instruction
+    # without a registry every call still states some format
+    bare = {c.name: c for c in build_calls()}
+    for name in ("figure", "skin", "eye", "garment", "shoe"):
+        assert "comma-separated" in bare[name].instruction or "one sentence" in bare[name].instruction
+    assert build_instruction(guidance).count(guidance["shoe"]) == 1
 
 
 def test_mode_resolution_auto_by_backend_and_env(monkeypatch, tmp_path):
@@ -684,7 +693,7 @@ def test_local_model_load_is_not_charged_to_the_first_call(monkeypatch):
 
     monkeypatch.setattr(backend, "_ensure_loaded", load)
     monkeypatch.setattr(backend, "_generate_local", generate)
-    backend.interpret("a slight young woman", vocabulary={})
+    backend.interpret("a slight young woman")
     assert backend.metrics.load_seconds == 300.0
     assert backend.metrics.calls["figure"] == 1.0
     assert backend.metrics.generate_seconds == 7.0

@@ -93,8 +93,7 @@ def interpret(
     start = time.monotonic()
     runner = ModelInterpreter(config, registry=registry, device=device)
     try:
-        interpretation = runner.interpret(
-            prompt, _slot_guidance(registry), _vocabulary(registry))
+        interpretation = runner.interpret(prompt, _slot_guidance(registry))
         metrics = runner.metrics.as_dict()
     finally:
         runner.close()   # release before any diffusion loads (§2.2)
@@ -102,29 +101,6 @@ def interpret(
     metrics.setdefault("actual_interpreter", actual_alias)
     metrics["wall_seconds"] = time.monotonic() - start
     return interpretation, metrics
-
-
-def _vocabulary(registry=None) -> dict[str, dict]:
-    """Installed components' declared vocabularies by slot (registry
-    `constraints.vocabulary`), for the multi-call plan — the shoe call
-    lists the styles the installed footwear component supports."""
-    from character_factory.registry import Registry, RegistryError
-
-    try:
-        registry = registry or Registry.default()
-    except Exception:
-        return {}
-    vocabulary: dict[str, dict] = {}
-    for slot in vocab.ALL_SLOTS:
-        try:
-            resolved = registry.resolve_slots([slot])
-        except RegistryError:
-            continue
-        for name, entry in resolved.items():
-            declared = entry.document.get("constraints", {}).get("vocabulary", {})
-            if isinstance(declared, dict) and declared:
-                vocabulary[name] = declared
-    return vocabulary
 
 
 def _slot_guidance(registry=None) -> dict[str, str]:

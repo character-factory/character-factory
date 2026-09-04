@@ -459,14 +459,13 @@ class ModelInterpreter:
         self,
         prompt: str,
         slot_guidance: dict[str, str] | None = None,
-        vocabulary: dict[str, dict] | None = None,
     ):
         """Description → Interpretation. Raises InterpreterError on any
         failure; the caller decides whether to fall back to rules mode.
 
-        `slot_guidance` (registry per-slot guidance) feeds the single
-        instruction; `vocabulary` (installed components' declared
-        vocabularies by slot) feeds the multi-call plan."""
+        `slot_guidance` (the installed components' registry per-slot
+        guidance) feeds both the single instruction and the multi-call
+        plan — one source for every format."""
         from character_factory.interpreter import Interpretation
 
         mode = self.config.effective_mode
@@ -488,7 +487,7 @@ class ModelInterpreter:
             start = time.monotonic()
             if mode == "multi":
                 figure, slots, hair, notes, proportions = self._interpret_multi(
-                    prompt, vocabulary, trace_id)
+                    prompt, slot_guidance, trace_id)
             else:
                 figure, slots, hair, notes, proportions = self._interpret_single(
                     prompt, slot_guidance, trace_id)
@@ -528,7 +527,7 @@ class ModelInterpreter:
             raw = self._generate_local(instruction, prompt, schema)
         return _validate(_parse_json(raw), prompt)
 
-    def _interpret_multi(self, prompt, vocabulary, trace_id):
+    def _interpret_multi(self, prompt, slot_guidance, trace_id):
         """Run the call plan and assemble one interpretation document from
         the answers; the shared validator then judges it whole. A bald
         description skips the hair call — the validator would discard the
@@ -536,7 +535,7 @@ class ModelInterpreter:
         bald = any(word in prompt.lower() for word in _BALD_WORDS)
         document: dict = {"textures": {}}
         self.metrics.calls = {}
-        for call in build_calls(vocabulary):
+        for call in build_calls(slot_guidance):
             if call.name == "hair" and bald:
                 continue
             started = time.monotonic()
@@ -675,14 +674,13 @@ def build_instruction(slot_guidance: dict[str, str],
     lines = [
         header,
         "",
-        "The figure prompt generates the body and face shape: one dense "
-        "physique-first sentence — sex/age, height, build, body fat and "
-        "musculature, face structure. No name, no clothing, no backstory, "
-        "no scene or style words. When the description leaves physique or "
-        "face unstated, DERIVE them from who the character is — "
-        "occupation, discipline, age, demographics: an Olympic sprinter "
-        "gets an elite sprinter's build, an elderly scholar an elderly "
-        "scholar's. Specific and plausible, never a generic average.",
+        "The figure prompt generates the body and face shape. No name, no "
+        "clothing, no backstory, no scene or style words. When the "
+        "description leaves physique or face unstated, DERIVE them from "
+        "who the character is — occupation, discipline, age, "
+        "demographics: an Olympic sprinter gets an elite sprinter's build, "
+        "an elderly scholar an elderly scholar's. Specific and plausible, "
+        "never a generic average.",
         "",
         f"Texture slots (keys are singular, exactly these): "
         f"required {', '.join(vocab.REQUIRED_SLOTS)}; "

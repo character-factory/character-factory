@@ -25,9 +25,12 @@ fragile of the set: adding one unrelated sentence to it turned full
 physique phrases into word lists on three of seven descriptions. Change
 these templates against the bench, never by taste.
 
-The templates are bound to the launch component versions the same way
-the registry's per-slot guidance is; a component whose trained format
-changes updates its call here.
+What each prompt must look like — the field order, the vocabulary, the
+example forms — is NOT written here. It is the installed component's
+declared `interpretation.fields` (registry data bound to the component
+version), the same text the single instruction lists per slot, so the
+two modes never disagree about a format. This module supplies only the
+task framing around it.
 """
 
 from __future__ import annotations
@@ -47,14 +50,19 @@ PROMPT_SCHEMA = {
 }
 _PROMPT_TAIL = 'Reply with JSON only: {"prompt": "<your text>"}'
 
-# Registry shoe-style tokens rendered the way a person names them; a
-# token the table does not know is shown with its underscores removed.
-_SHOE_STYLE_WORDS = {
-    "below_ankle": "flip flops, sandals, loafers, sneakers",
-    "high_top": "high tops",
-    "ankle_boot": "ankle boots",
-    "mid_boot": "mid boots",
-    "tall_boot": "tall boots",
+# What a call says about the format when no installed component declares
+# one (no registry, or a component without `interpretation.fields`).
+_FALLBACK_GUIDANCE = {
+    "figure": "Write it as one sentence of physique words only — no name, "
+              "clothing, occupation, scene, or style words.",
+    "skin": "Write it comma-separated: skin tone first, then age, gender "
+            "presentation, ancestry, brows, lips, pores.",
+    "eye": "Write it comma-separated: iris color, radial fibers, limbal ring, "
+           "pupil, sclera, sclera veins.",
+    "garment": "Write it comma-separated: each garment with its color and "
+               "material, most visible piece first.",
+    "shoe": "Write it comma-separated: style, construction, material, color "
+            "palette, finish.",
 }
 
 
@@ -79,38 +87,31 @@ def hair_vocabulary_lines() -> str:
     return "\n".join(lines)
 
 
-def _shoe_styles(styles: list[str] | None) -> str:
-    tokens = list(styles) if styles else list(_SHOE_STYLE_WORDS)
-    words = [_SHOE_STYLE_WORDS.get(token, token.replace("_", " ")) for token in tokens]
-    return ", ".join(words) + " (and other shoes of those heights)"
-
-
-def build_calls(vocabulary: dict[str, dict] | None = None) -> list[Call]:
-    """The call plan, in execution order. `vocabulary` is the installed
-    components' declared vocabularies by slot (today: shoe styles)."""
+def build_calls(slot_guidance: dict[str, str] | None = None) -> list[Call]:
+    """The call plan, in execution order. `slot_guidance` is the installed
+    components' declared format guidance by slot (plus "figure"), exactly
+    what the single instruction lists."""
     schema = interpretation_schema()
-    vocabulary = vocabulary or {}
-    shoe_styles = _shoe_styles(vocabulary.get("shoe", {}).get("styles"))
+    guidance = dict(_FALLBACK_GUIDANCE)
+    guidance.update({k: v for k, v in (slot_guidance or {}).items() if v})
 
     figure = [
         "Given this character description, decide what the character's body and face shape should look like. "
         "Derive anything unstated from who they are (age, occupation, background) — specific, never an average.",
-        "Write it as one sentence, in this order: sex and age, height, overall build and body fat, musculature, face and head structure (jaw, cheeks, brow). "
-        "Physique words only — no name, clothing, occupation, scene, or style words.",
+        guidance["figure"],
         _PROMPT_TAIL,
     ]
     skin = [
         "Given this character description, decide what the character's skin should look like. "
-        "The skin tone must be plausible for the character's stated nationality or ancestry (use the description's own complexion if it gives one). "
-        "Invent specific facial features that fit their age and life — no generic placeholders.",
-        "Write it like this, comma-separated: <lightness and undertone, e.g. 'deep warm-toned skin'>, <age>, <gender presentation>, <ancestry>, <brow character>, <facial structure>, <lips>, <pores and wrinkles>",
+        "Use the description's own complexion when it gives one; otherwise choose a tone plausible for the stated nationality or ancestry.",
+        guidance["skin"],
         "Skin only — no clothing, hair, or body-shape words.",
         _PROMPT_TAIL,
     ]
     eye = [
-        "Given this character description, decide what the character's eyes should look like (iris color plausible for their ancestry and age unless the description says otherwise).",
-        "Each field is a short phrase, not a single word. Sclera is off-white or ivory — never pure white.",
-        "Write it like this, comma-separated: <iris color> iris, <radial fiber phrase>, <limbal ring phrase>, <pupil>, <sclera tone>, <sclera veins>",
+        "Given this character description, decide what the character's eyes should look like "
+        "(iris color plausible for their ancestry and age unless the description says otherwise).",
+        guidance["eye"],
         _PROMPT_TAIL,
     ]
     garment = [
@@ -118,7 +119,7 @@ def build_calls(vocabulary: dict[str, dict] | None = None) -> list[Call]:
         "Pieces the description names are mandatory and stay exactly as described. "
         "If they do not add up to a complete outfit — a top and a bottom, or one full-body garment — add the missing piece(s) this person would wear. "
         "Rule out coverage only when the description does (swimsuit, barefoot, unclothed).",
-        "Write it like this, comma-separated: <color> <material> <garment>, <color> <material> <garment>, … — most visible piece first.",
+        guidance["garment"],
         "Never footwear, never the body.",
         _PROMPT_TAIL,
     ]
@@ -127,8 +128,7 @@ def build_calls(vocabulary: dict[str, dict] | None = None) -> list[Call]:
         "If the description names footwear, use exactly that; otherwise choose footwear that suits who they are. "
         "If the character is barefoot or unclothed, reply with an empty prompt.",
         "Choose what this person wears while doing what the description says they do (working, running, at home). Practical over fashionable when the two conflict.",
-        f"Styles available: {shoe_styles}.",
-        "Write it like this, comma-separated: <style>, <construction details>, <material>, <color palette>, <finish or pattern>",
+        guidance["shoe"],
         _PROMPT_TAIL,
     ]
     hair = [

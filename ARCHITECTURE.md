@@ -108,11 +108,11 @@ CLI commands: `make`, `validate`, `assemble`, `compress`, `interpret`, `prefligh
 
 The interpreter turns the description into every component's prompt: the figure prompt for identity, one prompt per texture slot, the hair block, and optional skeletal-proportion overrides. Its output is validated against the interpretation schema before anything runs.
 
-**Default backend: a local model named by the `interpreter` registry component.** Qwen3.5-9B at launch — an exact upstream revision, hash-pinned, no account or token. It runs in-process on the same torch/transformers stack generation uses, in bfloat16, with grammar-constrained decoding. No external daemon.
+**Default backend: a local model named by the `interpreter` registry component.** Qwen3.5-9B at launch — an exact upstream revision, hash-pinned, no account or token. It runs in-process on the same torch/transformers stack generation uses, with grammar-constrained decoding, and no external daemon. The download is the full-precision weights; on CUDA they are quantized to 4-bit (nf4, bf16 compute) as they load. A CPU device loads full precision.
 
-**Optional backend: any OpenAI-compatible endpoint.** Configured per alias with `CHARACTER_FACTORY_INTERPRETER_ENDPOINT` / `_MODEL` / `_API_KEY` / `_MODE`, `interpreter.backends` in the cache `config.json`, or `PUT /v0/interpreters/{alias}`. Uses strict JSON-Schema response formatting where supported. An empty or truncated response gets one retry with a tripled completion budget; malformed or schema-invalid output fails. This is the recommended configuration when available. On one RTX 3090 with weights on disk, the local default interprets a description in 78 s in multi mode; a hosted frontier model answers the same description in 14 s in single mode, and writes better prompts.
+**Optional backend: any OpenAI-compatible endpoint.** Configured per alias with `CHARACTER_FACTORY_INTERPRETER_ENDPOINT` / `_MODEL` / `_API_KEY`, `interpreter.backends` in the cache `config.json`, or `PUT /v0/interpreters/{alias}`. Uses strict JSON-Schema response formatting where supported. An empty or truncated response gets one retry with a tripled completion budget; malformed or schema-invalid output fails.
 
-**Two modes.** `single` decodes the whole interpretation in one pass from one instruction that folds in each component's registry guidance. `multi` asks one question per component (figure, skin, eye, garment, shoe, hair, proportions), each with a literal template for that component's format and its own grammar. In our bench, small local models did better in multi mode and hosted models in single mode. `mode: auto` (the default) picks `multi` for local models and `single` for endpoints. The multi-call templates live in `interpreter/multi.py` and are bound to the launch component versions.
+**The instruction.** One system instruction states the task, the slot surface, and each installed component's registry guidance (what that component version wants to be told). The model answers with the whole interpretation document in one response; the same validator judges it whichever backend produced it.
 
 **Skeletal proportions.** The identity component writes them on every create; an interpreter backend may emit explicit values on clear signal in the description, and those override per key.
 
@@ -126,7 +126,7 @@ The interpreter turns the description into every component's prompt: the figure 
 
 **Audit log.** With `CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG` set, the server appends a mode-0600 JSONL record per request (raw prompt and response, status, latency, usage, attempt, trace id). Public job errors carry only the trace id and a classification (`empty_response`, `truncated_response`, `invalid_json`, `schema_invalid`, `transport_error`).
 
-**Comparing models.** `character-factory interpret "<text>" [--backend ALIAS] [--mode single|multi]` runs the production path without generation and prints the interpretation, wall time, peak memory, and per-call seconds.
+**Comparing models.** `character-factory interpret "<text>" [--backend ALIAS]` runs the production path without generation and prints the interpretation, wall time, and peak memory.
 
 ### 2.3 The HTTP server
 
@@ -161,8 +161,8 @@ GET    /v0/interpreters                backends: alias, kind, default, label,
                                        vram_bytes, fits, device_bytes,
                                        endpoint_host, has_key — no model
                                        identities or keys
-PUT    /v0/interpreters/{alias}        {endpoint|model, api_key?, mode?,
-                                       label?, default?}; key is write-only;
+PUT    /v0/interpreters/{alias}        {endpoint|model, api_key?, label?,
+                                       default?}; key is write-only;
                                        remote deployments may answer 405
 DELETE /v0/interpreters/{alias}
 
@@ -330,20 +330,10 @@ pip install "character-factory[generation]"
 character-factory make "a lean marathon runner with cropped dark hair" -o runner/
 ```
 
+- GPU: NVIDIA, 12 GB of memory recommended. The default path — interpreter in nf4, text encoder and textures in bf16 — is sized for it.
 - Python ≥ 3.11. Base install 5.6 GB (torch with CUDA); `[generation]`, `[server]`, `[mcp]` extras on top.
 - Linux + NVIDIA CUDA is first-class. Native Windows runs the full pipeline; `pip install` on Windows installs CPU torch; install torch from the PyTorch CUDA index (`https://download.pytorch.org/whl/<cuXXX>`) first. WSL2 runs the Linux path. macOS runs the CLI, schema tools, server, and assembly.
 - `character-factory preflight` checks the generation import set, the torch CUDA build, and the driver with a real CUDA call. `make` and every server generation job run it before loading weights.
-
-### 6.1 Measured VRAM
-
-Measured on one RTX 3090 (24 GiB) with the launch components and weights on disk; peak torch allocation, including pipeline load.
-
-| Stage | Precision | Allocated | Reserved | Time |
-| --- | --- | --- | --- | --- |
-| Four-slot bake at 1024² | bf16 (default) | 17.4 GiB | 20.3 GiB | 137 s |
-| Local interpreter (Qwen3.5-9B, multi mode) | bf16 | 16.9 GiB | — | 78 s; 68 s with the model files in the OS page cache |
-
-GPU stages are serialized and release before the next loads, so the bake sets the floor.
 
 ## 7. Tests
 
@@ -373,7 +363,7 @@ Runs that need cached components skip when they are absent.
 │   ├── preflight.py
 │   ├── schema/           format model, validation, canonical form, JSON Schema
 │   ├── registry/         index, fetch, cache, integrity; vendored snapshot
-│   ├── interpreter/      backends, multi-call templates, grammar, config
+│   ├── interpreter/      backends, grammar, config
 │   ├── identity/         figure prompt → body parameters (lazy torch)
 │   ├── textures/         diffusion runner, adapters (lazy torch)
 │   ├── hair/             HairProvider + vendored make-wig engine

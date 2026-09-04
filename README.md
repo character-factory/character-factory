@@ -24,29 +24,24 @@ pip install "character-factory[generation]"
 
 ```console
 $ character-factory make "A retired astronomy professor, tweed waistcoat, round spectacles, white beard" -o professor
-create      77.6 s
-bake       134.3 s
-assemble     5.2 s
 professor/character.char.json
 professor/scene.glb
 ```
 
-Timings: one RTX 3090, all weights on disk, default local interpreter. On the first run, `create` includes the base-model download.
-
-The first run downloads 36.4 GB of model weights (17.1 GB with an endpoint interpreter). After that, generation is local and offline.
+The first run downloads the model weights (36.4 GB; 17.1 GB with an endpoint interpreter). After that, generation is local and offline.
 
 ## Agent quickstart
 
 Paste into Claude Code, Codex, or any coding agent.
 
 ```
-Set up Character Factory (NVIDIA GPU, 24 GB):
+Set up Character Factory (NVIDIA GPU, 12 GB of memory recommended):
 Requires Python 3.11+.
 On Windows, install torch from https://download.pytorch.org/whl/<cuXXX> before step 1.
 1. pip install "character-factory[generation,server]"
 2. character-factory make "<description>" -o <dir>
    Writes <dir>/character.char.json and <dir>/scene.glb; stdout is exactly those two paths.
-   Interpreter: Qwen3.5-9B, local by default (Apache-2.0, ungated — no token, no account).
+   The interpreter runs locally by default; no token, no account.
    First run downloads 36.4 GB of model weights.
 Optional:
 - MCP: pip install "character-factory[mcp]"; add `character-factory mcp` to the agent's MCP config.
@@ -54,7 +49,7 @@ Optional:
   "com.character-factory.unity": "https://github.com/character-factory/character-factory-unity.git"
   to Packages/manifest.json; then unity cmd cf-create --prompt "<description>" --walking true --json
   and unity cmd cf-verify --target "<name>" --json.
-- Endpoint interpreter (faster): set CHARACTER_FACTORY_INTERPRETER_ENDPOINT, _MODEL, _API_KEY.
+- Endpoint interpreter: set CHARACTER_FACTORY_INTERPRETER_ENDPOINT, _MODEL, _API_KEY.
 ```
 
 Or:
@@ -151,25 +146,23 @@ print(c.content_id, c.rig, sorted(c.textures))
 
 ## Hardware and install
 
-Measured on one RTX 3090; details in [ARCHITECTURE.md §6](https://github.com/character-factory/character-factory/blob/main/ARCHITECTURE.md#6-install-and-hardware).
-
-| | Size / time |
+| | |
 | --- | --- |
+| GPU | NVIDIA, 12 GB of memory recommended |
 | Install | 5.6 GB (torch with CUDA) |
 | Windows | `pip install` installs CPU torch; install torch from `https://download.pytorch.org/whl/<cuXXX>` first |
 | Weights, first use | 36.4 GB: 19.3 GB interpreter + 16.0 GB base image model + 1.1 GB components. 17.1 GB with an endpoint interpreter |
-| Generation, 24 GB card | bf16: bake 17.4 GiB, 137 s. Whole character 3 min 38 s with the local interpreter |
 | Assembly and consumption | no GPU — character file → GLB runs on CPU, including macOS |
 
 `character-factory preflight` checks the install, CUDA build, and driver. `make` runs it first.
 
 ## The interpreter
 
-The interpreter is the language model that turns your description into each component's prompt.
+The interpreter is the language model that reads your description and writes the prompt each component generates from.
 
-**Local (default).** The registry's `interpreter` component names Qwen3.5-9B (Apache-2.0, ungated — no token, no account). 19.3 GB to download, 16.9 GiB of VRAM, 78 s per description on the 3090.
+**Local (default).** Runs in-process on your GPU. The weights download on first use; no token, no account.
 
-**Endpoint (faster, better prompts).** Point it at any OpenAI-compatible endpoint. A hosted frontier model (an OpenAI GPT-5.6-class model in our bench) takes 14 s and writes better prompts. Configure with one of:
+**Endpoint.** Point it at any OpenAI-compatible endpoint instead. Configure with one of:
 
 - environment: `CHARACTER_FACTORY_INTERPRETER_ENDPOINT`, `_MODEL`, `_API_KEY`
 - `interpreter.backends` in the cache `config.json`

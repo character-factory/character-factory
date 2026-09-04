@@ -189,6 +189,25 @@ def test_barefoot_character_needs_no_footwear_asset(tmp_path):
     assert abs(plane - float(pos[:, 1].min())) < 1e-5
 
 
+def test_unclothed_character_needs_no_garment_asset(tmp_path):
+    """No garment slot, no garment shell: the body renders skin alone."""
+    import json as jsonlib
+
+    from character_factory.api import assemble
+
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    solid_png(assets / "skin.png", (128, 128, 128))
+    solid_png(assets / "eye.png", (90, 60, 40))
+    document = jsonlib.loads((EXAMPLES / "freediver.char.json").read_text())
+    del document["textures"]["garment"]
+    out = assemble(Character.from_document(document), assets, tmp_path / "bare.glb")
+    gltf, _ = parse_glb(out.read_bytes())
+    names = {m["name"] for m in gltf["meshes"]}
+    assert "body" in names and "garment" not in names
+    assert "garment" not in gltf["asset"]["extras"].get("garments", {})
+
+
 def test_mouth_interior_refused_without_rig_mouth_data(tmp_path):
     # SPEC.md §4.2: assembling a mouth-interior document against a body-rig
     # version that declares no mouth data is a defined error — never a

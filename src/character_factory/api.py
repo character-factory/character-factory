@@ -265,7 +265,7 @@ def assemble(
     """Build the rigged .glb for a character from its baked assets.
 
     Albedo asset files are looked up in `assets_dir` by slot name
-    (`skin.png`, `eye.png`, `garment.png`, optional `shoe.png`). When the
+    (`skin.png`, `eye.png`, optional `garment.png` and `shoe.png`). When the
     character carries an `assets` block, every file is verified against its
     pinned hash before use; a mismatch is a hard error.
 
@@ -308,7 +308,9 @@ def assemble(
         return np.asarray(Image.open(path).convert("RGB"))
 
     skin = layer("skin")
-    garment = layer("garment")
+    # Garments are a layer the character may not have (unclothed): no
+    # slot, no shell — the body renders skin alone.
+    garment = layer("garment") if "garment" in character.textures else None
 
     # assembly-assets is a hard requirement of the character contract —
     # region masks, the eyeball asset, placement data, and the mouth
@@ -542,7 +544,7 @@ def assemble(
             },
         }
 
-    if "garment" in character.textures:
+    if garment is not None:
         # Region masks scale to each slot texture's own resolution.
         _shell("garment", garment, None,
                atlas.at_resolution(garment.shape[0]).head_mask)

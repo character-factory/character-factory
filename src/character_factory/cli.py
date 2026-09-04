@@ -203,18 +203,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="select a configured backend by alias (see the server's "
              "/v0/interpreters)",
     )
-    interpret.add_argument(
-        "--mode", choices=("auto", "single", "multi"),
-        help="how the model is asked: one instruction (single) or one call "
-             "per component (multi); auto picks multi for local models "
-             "(also CHARACTER_FACTORY_INTERPRETER_MODE)",
-    )
-    interpret.add_argument(
-        "--quantization", choices=("nf4", "int8", "bf16"),
-        help="weight format a local model is loaded in; nf4 (the default) "
-             "is the smallest, bf16 the full-precision weights (also "
-             "CHARACTER_FACTORY_INTERPRETER_QUANTIZATION)",
-    )
     interpret.set_defaults(func=_cmd_interpret)
 
     preflight = commands.add_parser(
@@ -252,10 +240,6 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
     config = load_interpreter_config(alias=args.backend)
     if args.model:
         config = dataclasses.replace(config, model=args.model, endpoint=None)
-    if args.mode:
-        config = dataclasses.replace(config, mode=args.mode)
-    if args.quantization:
-        config = dataclasses.replace(config, quantization=args.quantization)
     interpretation, metrics = interpret(
         args.text, device=args.device, config=config
     )
@@ -270,7 +254,7 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
             "hair": interpretation.hair,
             "proportions": interpretation.proportions,
             "notes": interpretation.notes,
-            "metrics": metrics,   # includes mode and, in multi, seconds per call
+            "metrics": metrics,
         },
         indent=2,
     ))

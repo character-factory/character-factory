@@ -53,9 +53,9 @@ def good_document() -> dict:
 
 
 def backend_with(output, config=None) -> ModelInterpreter:
-    # Single mode: one instruction, one whole document from the generator.
+    # One instruction, one whole document from the generator.
     return ModelInterpreter(
-        config or InterpreterConfig(model="test", mode="single"),
+        config or InterpreterConfig(model="test"),
         generate=lambda instruction, description, schema: output,
     )
 
@@ -458,224 +458,26 @@ def test_endpoint_schema_makes_optional_fields_nullable_and_required():
     assert set(proportions["required"]) == set(proportions["properties"])
 
 
-# --- multi-call mode ------------------------------------------------------------
+# --- load settings and timing ---------------------------------------------------
 
 
-def multi_answers(**overrides) -> dict:
-    """What each call of the plan answers, keyed by call name."""
-    answers = {
-        "figure": {"prompt": "a slight young woman, five foot three, slim build"},
-        "skin": {"prompt": "fair cool-toned skin, 19 years old"},
-        "eye": {"prompt": "dark brown iris, ivory sclera"},
-        "garment": {"prompt": "white cotton crop top, blue denim shorts"},
-        "shoe": {"prompt": "flip flops, thin straps, rubber, black"},
-        "hair": full_hair(),
-        "proportions": {},
-    }
-    answers.update(overrides)
-    answers["hair"] = {"hair": answers["hair"]}     # the call's wrapped form
-    return answers
-
-
-def multi_backend(answers, config=None) -> ModelInterpreter:
-    """A generator that answers by the call's instruction: the plan's
-    calls are told apart by the words that open them."""
-    seen = []
-
-    def generate(instruction, description, schema):
-        head = instruction.split("\n", 1)[0].lower()
-        for name, cue in (("figure", "body and face shape"), ("skin", "skin"),
-                          ("eye", "eyes"), ("garment", "wears on their body"),
-                          ("shoe", "footwear"), ("hair", "hairstyle"),
-                          ("proportions", "skeletal build")):
-            if cue in head:
-                seen.append((name, description, schema))
-                return json.dumps(answers[name])
-        raise AssertionError(f"unrecognized call: {head}")
-
-    backend = ModelInterpreter(
-        config or InterpreterConfig(model="test"), generate=generate)
-    backend.seen = seen
-    return backend
-
-
-def test_local_model_defaults_to_multi_call_and_assembles_the_document():
-    backend = multi_backend(multi_answers(proportions={"leg_length": 25}))
-    result = backend.interpret("a 19 year old wearing flip flops")
-    assert backend.metrics.mode == "multi"
-    assert [name for name, _, _ in backend.seen] == [
-        "figure", "skin", "eye", "garment", "shoe", "hair", "proportions"]
-    assert all(desc == "a 19 year old wearing flip flops" for _, desc, _ in backend.seen)
-    assert result.figure.startswith("a slight young woman")
-    assert result.slot_prompts == {
-        "skin": "fair cool-toned skin, 19 years old",
-        "eye": "dark brown iris, ivory sclera",
-        "garment": "white cotton crop top, blue denim shorts",
-        "shoe": "flip flops, thin straps, rubber, black",
-    }
-    assert result.hair["family"] == "loose_long"
-    assert result.proportions == {"leg_length": 0.25}
-    assert set(backend.metrics.calls) == {
-        "figure", "skin", "eye", "garment", "shoe", "hair", "proportions"}
-
-
-def test_multi_call_schemas_are_per_call_and_empty_shoe_is_dropped():
-    backend = multi_backend(multi_answers(shoe={"prompt": ""}))
-    result = backend.interpret("a barefoot swimmer")
-    schemas = dict((name, schema) for name, _, schema in backend.seen)
-    assert schemas["figure"]["required"] == ["prompt"]
-    assert "family" in schemas["hair"]["properties"]["hair"]["anyOf"][0]["properties"]
-    assert "leg_length" in schemas["proportions"]["properties"]
-    assert "shoe" not in result.slot_prompts
-    assert result.proportions is None
-
-
-def test_multi_call_null_hair_answer_means_no_hair():
-    backend = multi_backend(multi_answers(hair=None))
-    result = backend.interpret("a bald middle-aged man")
-    assert "hair" in [name for name, _, _ in backend.seen]
-    assert result.hair is None
-    assert any("without hair" in note for note in result.notes)
-
-
-def test_multi_call_hair_schema_is_nullable_but_keeps_the_vocabulary():
-    backend = multi_backend(multi_answers())
-    backend.interpret("someone")
-    schemas = dict((name, schema) for name, _, schema in backend.seen)
-    assert schemas["hair"]["required"] == ["hair"]
-    block, null = schemas["hair"]["properties"]["hair"]["anyOf"]
-    assert null == {"type": "null"}
-    assert "loose_long" in block["properties"]["family"]["enum"]
-
-
-def test_multi_call_empty_garment_answer_is_dropped():
-    backend = multi_backend(multi_answers(garment={"prompt": ""}))
-    result = backend.interpret("an unclothed figure study")
-    assert "garment" not in result.slot_prompts
-
-
-def test_multi_call_validates_the_assembled_document():
-    backend = multi_backend(multi_answers(eye={"prompt": "   "}))
-    with pytest.raises(InterpreterError, match="'eye' has no prompt"):
-        backend.interpret("someone")
-
-
-def test_multi_call_plan_carries_the_registry_guidance():
-    """Each prompt-writing call states its format with the same registry
-    text the single instruction lists — one source per component."""
-    from character_factory.interpreter.multi import build_calls, hair_vocabulary_lines
-
-    guidance = {
-        "figure": "one sentence: build phrases then face phrases",
-        "shoe": "family, material, palette, finish; supported styles: "
-                "below_ankle, tall_boot — stay within this vocabulary",
-    }
-    calls = {call.name: call for call in build_calls(guidance)}
-    assert guidance["figure"] in calls["figure"].instruction
-    assert guidance["shoe"] in calls["shoe"].instruction
-    assert "empty prompt" in calls["shoe"].instruction      # barefoot rule
-    assert "family: " in hair_vocabulary_lines()
-    assert "loose_long" in calls["hair"].instruction
-    assert "Never footwear" in calls["garment"].instruction
-    # without a registry every call still states some format
-    bare = {c.name: c for c in build_calls()}
-    for name in ("figure", "skin", "eye", "garment", "shoe"):
-        assert "comma-separated" in bare[name].instruction or "one sentence" in bare[name].instruction
-    assert build_instruction(guidance).count(guidance["shoe"]) == 1
-
-
-def test_mode_resolution_auto_by_backend_and_env(monkeypatch, tmp_path):
-    from character_factory.interpreter import config as configuration
-
-    assert InterpreterConfig(model="x").effective_mode == "multi"
-    assert InterpreterConfig(model="x", endpoint="http://h/v1").effective_mode == "single"
-    assert InterpreterConfig(model="x", mode="single").effective_mode == "single"
-    with pytest.raises(ValueError, match="mode"):
-        InterpreterConfig(model="x", mode="triple")
-
-    (tmp_path / "config.json").write_text(json.dumps({"interpreter": {
-        "default": "cloud", "mode": "multi",
-        "backends": {
-            "cloud": {"endpoint": "http://host/v1", "model": "tier-1"},
-            "local-a": {"model": "some/weights", "mode": "single"},
-        },
-    }}))
-    monkeypatch.setattr(
-        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
-    )
-    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
-                configuration.ENV_MODE):
-        monkeypatch.delenv(env, raising=False)
-    assert configuration.load_interpreter_config().effective_mode == "multi"
-    assert configuration.load_interpreter_config("local-a").effective_mode == "single"
-    monkeypatch.setenv(configuration.ENV_MODE, "single")
-    assert configuration.load_interpreter_config().effective_mode == "single"
-
-
-def test_quantization_resolution_default_file_env(monkeypatch, tmp_path):
-    from character_factory.interpreter import config as configuration
-
-    # nf4 is the default: the generation path is sized to fit beside the
-    # rest of what a card is doing, and the download is the same file.
-    assert InterpreterConfig(model="x").quantization == "nf4"
-    with pytest.raises(ValueError, match="quantization"):
-        InterpreterConfig(model="x", quantization="fp8")
-
-    (tmp_path / "config.json").write_text(json.dumps({"interpreter": {
-        "default": "local-a", "quantization": "int8",
-        "backends": {
-            "local-a": {"model": "some/weights"},
-            "local-b": {"model": "other/weights", "quantization": "bf16"},
-        },
-    }}))
-    monkeypatch.setattr(
-        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
-    )
-    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
-                configuration.ENV_QUANTIZATION):
-        monkeypatch.delenv(env, raising=False)
-    # Section-level setting, per-backend override, environment over both.
-    assert configuration.load_interpreter_config().quantization == "int8"
-    assert configuration.load_interpreter_config("local-b").quantization == "bf16"
-    monkeypatch.setenv(configuration.ENV_QUANTIZATION, "nf4")
-    assert configuration.load_interpreter_config().quantization == "nf4"
-    assert configuration.load_interpreter_config("local-b").quantization == "nf4"
-
-    # Saved through the setup flow it is validated like the others.
-    assert configuration.validate_backend(
-        "local-c", {"model": "w", "quantization": "bf16"}
-    ) == {"model": "w", "quantization": "bf16"}
-
-
-@pytest.mark.parametrize("quantization, device, expected", [
-    ("nf4", "cuda", {"quantization": {
+@pytest.mark.parametrize("device, expected", [
+    ("cuda", {"quantization": {
         "load_in_4bit": True, "bnb_4bit_quant_type": "nf4",
         "bnb_4bit_compute_dtype": "bfloat16", "bnb_4bit_use_double_quant": True,
     }, "device_map": {"": "cuda"}}),
-    ("int8", "cuda:1", {"quantization": {"load_in_8bit": True},
-                        "device_map": {"": "cuda:1"}}),
-    ("bf16", "cuda", {"dtype": "bfloat16"}),
-    ("nf4", "cpu", {"dtype": "float32"}),   # quantization needs CUDA
+    ("cuda:1", {"quantization": {
+        "load_in_4bit": True, "bnb_4bit_quant_type": "nf4",
+        "bnb_4bit_compute_dtype": "bfloat16", "bnb_4bit_use_double_quant": True,
+    }, "device_map": {"": "cuda:1"}}),
+    ("cpu", {"dtype": "float32"}),   # quantization needs CUDA
 ])
-def test_local_model_load_settings_follow_the_quantization(
-    quantization, device, expected
-):
-    backend = ModelInterpreter(
-        InterpreterConfig(model="x", quantization=quantization), device=device
-    )
+def test_local_model_load_settings_follow_the_device(device, expected):
+    # There is one weight format per device: 4-bit on CUDA, so the
+    # generation path fits beside whatever else the card is doing, and
+    # full precision on CPU. Nothing in the config chooses otherwise.
+    backend = ModelInterpreter(InterpreterConfig(model="x"), device=device)
     assert backend._load_settings() == expected
-
-
-def test_peak_vram_is_declared_per_weight_format():
-    from character_factory.interpreter.config import peak_vram_bytes
-
-    table = {"peak_vram_bytes": {"nf4": 8, "bf16": 18}}
-    assert peak_vram_bytes(table, "nf4") == 8
-    assert peak_vram_bytes(table, "bf16") == 18
-    assert peak_vram_bytes(table, "int8") is None       # unstated, not zero
-    assert peak_vram_bytes({"peak_vram_bytes": 18}, "nf4") == 18   # one number
-    assert peak_vram_bytes({}, "nf4") is None
-    assert peak_vram_bytes({"peak_vram_bytes": True}, "nf4") is None
 
 
 def test_unconfigured_installation_resolves_to_the_registry_component(
@@ -686,69 +488,12 @@ def test_unconfigured_installation_resolves_to_the_registry_component(
     monkeypatch.setattr(
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
-    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
-                configuration.ENV_MODE):
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT):
         monkeypatch.delenv(env, raising=False)
     alias, config = configuration.resolve_interpreter_config()
     assert alias == "default"
     assert config.model == configuration.DEFAULT_MODEL_COMPONENT
     assert config.endpoint is None
-    assert config.effective_mode == "multi"
-
-
-def test_endpoint_multi_mode_uses_strict_per_call_schemas_and_drops_nulls(
-    monkeypatch
-):
-    answers = multi_answers()
-    answers["hair"] = {"hair": {**full_hair(), "color": {"family": "black", "rgb": None}}}
-    answers["proportions"] = {name: None for name in (
-        "spine_length", "neck_length", "shoulder_width", "arm_length",
-        "hip_width", "leg_length")}
-    requests = []
-
-    class FakeResponse:
-        status = 200
-        headers = {}
-
-        def __init__(self, content):
-            self.content = content
-
-        def read(self):
-            return json.dumps({"choices": [{"finish_reason": "stop", "message": {
-                "content": json.dumps(self.content)}}]}).encode()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    def fake_urlopen(request, timeout):
-        body = json.loads(request.data.decode())
-        requests.append(body)
-        head = body["messages"][0]["content"].split("\n", 1)[0].lower()
-        for name, cue in (("figure", "body and face shape"), ("skin", "skin"),
-                          ("eye", "eyes"), ("garment", "wears on their body"),
-                          ("shoe", "footwear"), ("hair", "hairstyle"),
-                          ("proportions", "skeletal build")):
-            if cue in head:
-                return FakeResponse(answers[name])
-        raise AssertionError(head)
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    backend = ModelInterpreter(InterpreterConfig(
-        model="served-name", endpoint="http://localhost:1", mode="multi"))
-    result = backend.interpret("a 19 year old wearing flip flops")
-    assert backend.metrics.mode == "multi"
-    assert len(requests) == 7
-    schemas = [r["response_format"]["json_schema"]["schema"] for r in requests]
-    assert schemas[0]["required"] == ["prompt"]
-    assert schemas[0]["additionalProperties"] is False
-    hair_schema = schemas[5]["properties"]["hair"]["anyOf"][0]
-    assert set(hair_schema["required"]) == set(hair_schema["properties"])
-    assert result.hair["color"] == {"family": "black"}
-    assert result.proportions is None
-    assert result.slot_prompts["shoe"].startswith("flip flops")
 
 
 @pytest.mark.parametrize(
@@ -773,19 +518,18 @@ def test_local_generation_stops_on_the_end_of_turn_token(
     class Tokenizer:
         eos_token_id = end_of_turn
 
-    backend = ModelInterpreter(InterpreterConfig(model="x", mode="multi"))
+    backend = ModelInterpreter(InterpreterConfig(model="x"))
     backend._model, backend._tokenizer = Model(), Tokenizer()
     assert backend._stop_ids() == expected
 
 
 def test_local_model_load_is_not_charged_to_the_first_call(monkeypatch):
     # A cold start (fetch + load) happens before the generation clock
-    # starts: it is reported once as load time, not folded into the first
+    # starts: it is reported once as load time, not folded into the
     # call's latency and the generation total.
     import time as _time
 
-    answers = multi_answers()
-    backend = ModelInterpreter(InterpreterConfig(model="x", mode="multi"))
+    backend = ModelInterpreter(InterpreterConfig(model="x"))
     clock = {"now": 0.0}
     monkeypatch.setattr(_time, "monotonic", lambda: clock["now"])
 
@@ -797,14 +541,13 @@ def test_local_model_load_is_not_charged_to_the_first_call(monkeypatch):
     def generate(instruction, description, schema):
         assert backend._model is not None
         clock["now"] += 1.0
-        return multi_backend(answers).generate(instruction, description, schema)
+        return json.dumps(good_document())
 
     monkeypatch.setattr(backend, "_ensure_loaded", load)
     monkeypatch.setattr(backend, "_generate_local", generate)
     backend.interpret("a slight young woman")
     assert backend.metrics.load_seconds == 300.0
-    assert backend.metrics.calls["figure"] == 1.0
-    assert backend.metrics.generate_seconds == 7.0
+    assert backend.metrics.generate_seconds == 1.0
 
 
 # --- backend readiness and configuration ------------------------------------
@@ -819,8 +562,7 @@ def _isolate_config(monkeypatch, tmp_path, document=None):
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
     for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
-                configuration.ENV_API_KEY, configuration.ENV_MODE,
-                configuration.ENV_QUANTIZATION):
+                configuration.ENV_API_KEY):
         monkeypatch.delenv(env, raising=False)
     return configuration
 
@@ -866,28 +608,19 @@ def test_readiness_of_the_registry_component(monkeypatch, tmp_path):
     assert row["alias"] == "default" and row["default"] is True
     assert row["ready"] is False and row["download_bytes"] == size
     assert row["reason"].startswith("weights not downloaded (")
-    # The declared peak is per weight format; the default format is the
-    # smallest and is what the row reports.
-    assert row["quantization"] == "nf4"
-    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]["nf4"]
-    assert row["vram_bytes"] < entry.inference["peak_vram_bytes"]["bf16"]
+    # The declared peak is the component's one shipped weight format.
+    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]
+    assert entry.inference["quantization"] == "nf4"
     assert row["fits"] is True and row["device_bytes"] == 24 * 10**9
     assert row["description"] == entry.document["description"]
 
     # A card too small for the model is the more important reason, and one
-    # a download would not fix. The default format fits a 12 GB card; the
-    # full-precision one does not.
+    # a download would not fix. The declared peak fits a 12 GB card.
     monkeypatch.setattr(
         "character_factory.preflight.device_memory", lambda device: 12 * 10**9
     )
     (row,) = configuration.available_backends(registry=registry)
     assert row["fits"] is True
-    monkeypatch.setenv(configuration.ENV_QUANTIZATION, "bf16")
-    (row,) = configuration.available_backends(registry=registry)
-    assert row["quantization"] == "bf16"
-    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]["bf16"]
-    assert row["fits"] is False and "of VRAM; 12.0 GB detected" in row["reason"]
-    monkeypatch.delenv(configuration.ENV_QUANTIZATION)
     monkeypatch.setattr(
         "character_factory.preflight.device_memory", lambda device: 6 * 10**9
     )
@@ -914,7 +647,7 @@ def test_endpoint_rows_expose_host_and_key_presence_only(monkeypatch, tmp_path):
     cloud, lan = rows
     assert cloud["default"] is True and cloud["ready"] is True
     assert cloud["endpoint_host"] == "api.example.test" and cloud["has_key"] is True
-    assert lan["has_key"] is False and lan["mode"] == "single"
+    assert lan["has_key"] is False and "mode" not in lan
     assert "sk-secret" not in json.dumps(rows)
     assert "tier-1" not in json.dumps(rows)
 
@@ -971,8 +704,6 @@ def test_save_backend_writes_a_private_file_and_keeps_the_key(monkeypatch, tmp_p
     ("c", {"endpoint": "ftp://h/v1"}, "http\\(s\\) URL"),
     ("c", {"endpoint": "not a url"}, "http\\(s\\) URL"),
     ("c", {"api_key": "k"}, "needs an endpoint URL or a model"),
-    ("c", {"model": "x", "mode": "fast"}, "mode must be"),
-    ("c", {"model": "x", "quantization": "fp8"}, "quantization must be"),
     ("c", {"model": "x", "colour": "red"}, "unknown backend field"),
 ])
 def test_backend_validation_names_the_problem(alias, values, message):

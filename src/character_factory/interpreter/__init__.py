@@ -10,10 +10,8 @@ the side-by-side bench. With nothing configured the registry's
 interpretation mode: a failing backend is a hard, named error, never a
 silent quality downgrade.
 
-How the model is asked is the `mode`: one instruction for the whole
-document (``single``, what a hosted frontier model does best) or one
-narrow call per component (``multi``, what a small local model does
-best — `interpreter/multi.py`). ``auto``, the default, picks by backend.
+The model is asked once per description: one instruction, one whole
+interpretation document, the same for a local model and an endpoint.
 
 The interpreter writes every component's prompt, in that component's
 trained format: per-slot texture prompts, the semantic hair block, and

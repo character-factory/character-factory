@@ -7,12 +7,9 @@ no telemetry — `transformers` in this process, like every other generation
 stage (ARCHITECTURE §2.2). An OpenAI-compatible endpoint can be selected
 instead through the `endpoint` config field.
 
-Two modes ask the same model differently: ``single`` sends one instruction
-and decodes the whole interpretation document; ``multi`` sends one narrow
-call per component (`interpreter/multi.py`) and assembles the document
-from the answers. The config's `effective_mode` picks (multi for local
-models, single for endpoints, unless configured otherwise); validation
-is the same function either way.
+One description is one call: the model receives one instruction (the
+installed components' registry guidance folded in) and decodes the whole
+interpretation document, which the shared validator then judges.
 
 The backend releases its weights (and CUDA cache) in `close()`; callers
 must close before any diffusion pipeline loads — interpretation and
@@ -34,7 +31,6 @@ from character_factory.interpreter.config import (
     DEFAULT_MODEL_COMPONENT,
     InterpreterConfig,
 )
-from character_factory.interpreter.multi import build_calls
 from character_factory.interpreter.schema import (
     endpoint_schema,
     interpretation_schema,
@@ -86,11 +82,9 @@ class EndpointResult:
 @dataclass
 class InterpreterMetrics:
     backend: str
-    mode: str = "single"
     quantization: str | None = None   # local model: the weight format loaded
     load_seconds: float = 0.0
     generate_seconds: float = 0.0
-    calls: dict[str, float] | None = None   # multi mode: seconds per call
     peak_gpu_bytes: int | None = None
     peak_rss_bytes: int | None = None
 
@@ -158,31 +152,23 @@ class ModelInterpreter:
             ) from error
 
     def _load_settings(self) -> dict:
-        """How the weights are loaded for this device and quantization.
+        """How the weights are loaded for this device.
 
-        Quantized formats are bitsandbytes settings applied as the weights
-        stream in (the download is always the full-precision model); they
-        need CUDA, so a CPU device loads full precision whatever is
-        configured. The returned dict is exactly what `from_pretrained`
+        On CUDA the model is 4-bit quantized (nf4, bf16 compute) by
+        bitsandbytes as the weights stream in — the download is always the
+        full-precision model. That needs CUDA, so a CPU device loads full
+        precision. The returned dict is exactly what `from_pretrained`
         receives, minus torch objects, so it can be asserted without a
         model.
         """
         if self.device.partition(":")[0] == "cpu":
             return {"dtype": "float32"}
-        quantization = self.config.quantization
-        if quantization == "bf16":
-            return {"dtype": "bfloat16"}
-        if quantization == "nf4":
-            settings = {
-                "load_in_4bit": True,
-                "bnb_4bit_quant_type": "nf4",
-                "bnb_4bit_compute_dtype": "bfloat16",
-                "bnb_4bit_use_double_quant": True,
-            }
-        elif quantization == "int8":
-            settings = {"load_in_8bit": True}
-        else:  # unreachable past InterpreterConfig validation
-            raise InterpreterError(f"unknown interpreter quantization {quantization!r}")
+        settings = {
+            "load_in_4bit": True,
+            "bnb_4bit_quant_type": "nf4",
+            "bnb_4bit_compute_dtype": "bfloat16",
+            "bnb_4bit_use_double_quant": True,
+        }
         # bitsandbytes places the model itself; `.to(device)` afterwards is
         # refused, so the target device goes in here.
         return {"quantization": settings, "device_map": {"": self.device}}
@@ -214,10 +200,8 @@ class ModelInterpreter:
                 )
             except ImportError as error:
                 raise InterpreterError(
-                    f"interpreter quantization {self.config.quantization!r} "
-                    f"needs the bitsandbytes package ({error}); install it, "
-                    "or set quantization to bf16 to load the full-precision "
-                    "weights",
+                    "loading the interpreter model needs the bitsandbytes "
+                    f"package ({error}); install the [generation] extra",
                     retryable=False,
                 ) from error
         else:
@@ -225,11 +209,8 @@ class ModelInterpreter:
                 weights, dtype=getattr(torch, settings["dtype"])
             ).to(self.device)
         self._model = model.eval()
-        # What actually loaded: the configured format, or full precision on
-        # a CPU device.
-        self.metrics.quantization = (
-            "float32" if settings.get("dtype") == "float32" else self.config.quantization
-        )
+        # What actually loaded: nf4 on CUDA, full precision on a CPU device.
+        self.metrics.quantization = settings.get("dtype", "nf4")
         self.metrics.load_seconds = time.monotonic() - start
 
     def close(self) -> None:
@@ -518,12 +499,10 @@ class ModelInterpreter:
         failure; the caller decides whether to fall back to rules mode.
 
         `slot_guidance` (the installed components' registry per-slot
-        guidance) feeds both the single instruction and the multi-call
-        plan — one source for every format."""
+        guidance) is folded into the instruction — one source for every
+        format."""
         from character_factory.interpreter import Interpretation
 
-        mode = self.config.effective_mode
-        self.metrics.mode = mode
         try:
             import torch
 
@@ -539,12 +518,8 @@ class ModelInterpreter:
             if self.config.endpoint is None and self.generate is None:
                 self._ensure_loaded()
             start = time.monotonic()
-            if mode == "multi":
-                figure, slots, hair, notes, proportions = self._interpret_multi(
-                    prompt, slot_guidance, trace_id)
-            else:
-                figure, slots, hair, notes, proportions = self._interpret_single(
-                    prompt, slot_guidance, trace_id)
+            figure, slots, hair, notes, proportions = self._interpret_document(
+                prompt, slot_guidance, trace_id)
         except InterpreterError:
             raise
         except Exception as error:
@@ -561,7 +536,7 @@ class ModelInterpreter:
             proportions=proportions,
         )
 
-    def _interpret_single(self, prompt, slot_guidance, trace_id):
+    def _interpret_document(self, prompt, slot_guidance, trace_id):
         schema = interpretation_schema()
         instruction = build_instruction(
             slot_guidance or {},
@@ -571,60 +546,25 @@ class ModelInterpreter:
             schema=None,
         )
         if self.config.endpoint is not None and self.generate is None:
-            return self._endpoint_document(
-                instruction, prompt, schema, trace_id,
-                validate=lambda document: _validate(document),
-            )
+            return self._endpoint_document(instruction, prompt, schema, trace_id)
         if self.generate is not None:
             raw = self.generate(instruction, prompt, schema)
         else:
             raw = self._generate_local(instruction, prompt, schema)
         return _validate(_parse_json(raw))
 
-    def _interpret_multi(self, prompt, slot_guidance, trace_id):
-        """Run the call plan and assemble one interpretation document from
-        the answers; the shared validator then judges it whole."""
-        document: dict = {"textures": {}}
-        self.metrics.calls = {}
-        for call in build_calls(slot_guidance):
-            started = time.monotonic()
-            if self.config.endpoint is not None and self.generate is None:
-                value = self._endpoint_document(
-                    call.instruction, prompt, call.schema, trace_id,
-                    validate=lambda document: document, name=call.name,
-                )
-            else:
-                if self.generate is not None:
-                    raw = self.generate(call.instruction, prompt, call.schema)
-                else:
-                    raw = self._generate_local(call.instruction, prompt, call.schema)
-                value = _drop_nulls(_parse_json(raw))
-            self.metrics.calls[call.name] = round(time.monotonic() - started, 2)
-            if call.name == "figure":
-                document["figure"] = value
-            elif call.name == "hair":
-                document["hair"] = value.get("hair")   # null was dropped
-            elif call.name == "proportions":
-                document["proportions"] = value or None
-            else:
-                document["textures"][call.name] = value
-        return _validate(document)
-
     def _endpoint_document(
         self, instruction: str, prompt: str, schema: dict, trace_id: str,
-        *, validate, name: str | None = None,
     ):
-        """One endpoint question, asked up to twice: the first attempt's
+        """The endpoint question, asked up to twice: the first attempt's
         answer is retried only when it was empty or cut off; a refusal, a
-        content filter, or an invalid document is final. `validate` turns
-        the decoded (null-stripped) document into the value returned."""
+        content filter, or an invalid document is final. The decoded
+        (null-stripped) document is validated like a local one."""
         for attempt in (1, 2):
             result = self._generate_endpoint(
                 instruction, prompt, schema,
                 trace_id=trace_id, attempt=attempt,
             )
-            if name is not None:
-                result.audit["call"] = name
             classification = None
             retryable = True
             if result.refusal:
@@ -644,7 +584,7 @@ class ModelInterpreter:
                     classification = "invalid_json"
                 else:
                     try:
-                        validated = validate(document)
+                        validated = _validate(document)
                     except InterpreterError:
                         classification = "schema_invalid"
                     else:

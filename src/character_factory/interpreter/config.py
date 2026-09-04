@@ -12,42 +12,31 @@ With nothing configured, the default is the registry's ``interpreter``
 component: the default local model, fetched and hash-verified like any
 other component. The model behind that id is registry data.
 
-``mode`` chooses how the model is asked: ``single`` (one instruction, one
-JSON document) or ``multi`` (one narrow question per component — see
-``interpreter/multi.py``). The default ``auto`` is ``multi`` for local
-models and ``single`` for endpoints, which is where each does its best
-work.
-
-``quantization`` chooses the weight format a local model is loaded in:
-``nf4`` (4-bit, the default), ``int8`` or ``bf16``. The download is the
-same either way — the model is quantized as it loads — so this is purely
-a VRAM-versus-speed choice; the default keeps the whole generation path
-inside about 10 GB so a card also driving a desktop and other programs
-still fits. A CPU device ignores it and runs at full precision.
+A local model loads 4-bit quantized (nf4, bf16 compute) on CUDA: the
+download is the full-precision weights, quantized as they stream in, and
+the generation path stays inside about 10 GB so a card also driving a
+desktop and other programs still fits. A CPU device runs full precision.
 
 The ``interpreter`` object in the cache root's ``config.json``:
 
     {
       "interpreter": {
         "default": "local-a",
-        "mode": "auto",
-        "quantization": "nf4",
-        "instruction": "…optional system-prompt override (single mode)…",
+        "instruction": "…optional system-prompt override…",
         "backends": {
           "local-a": {"model": "<registry id or weights path>"},
-          "local-b": {"model": "<weights path>", "quantization": "bf16"},
           "cloud":   {"endpoint": "https://…/v1", "model": "…",
-                      "api_key": "…", "mode": "single"},
+                      "api_key": "…"},
           }
       }
     }
 
 Environment overrides
-(``CHARACTER_FACTORY_INTERPRETER_MODEL`` / ``_ENDPOINT`` / ``_API_KEY`` /
-``_MODE`` / ``_QUANTIZATION``) take precedence over the file and describe
-the default backend. There is no non-model mode: when the default
-component cannot be fetched and nothing else is configured,
-interpretation is a hard, named error.
+(``CHARACTER_FACTORY_INTERPRETER_MODEL`` / ``_ENDPOINT`` / ``_API_KEY``)
+take precedence over the file and describe the default
+backend. There is no non-model mode: when the default component cannot
+be fetched and nothing else is configured, interpretation is a hard,
+named error.
 
 Endpoint operators may set ``CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG`` to a
 protected JSONL path. That diagnostic log contains raw prompts and endpoint
@@ -74,9 +63,6 @@ from character_factory.registry.store import cache_dir
 __all__ = [
     "BACKEND_FIELDS",
     "DEFAULT_MODEL_COMPONENT",
-    "DEFAULT_QUANTIZATION",
-    "MODES",
-    "QUANTIZATIONS",
     "InterpreterConfig",
     "available_backends",
     "delete_backend",
@@ -89,18 +75,11 @@ __all__ = [
 ENV_MODEL = "CHARACTER_FACTORY_INTERPRETER_MODEL"
 ENV_ENDPOINT = "CHARACTER_FACTORY_INTERPRETER_ENDPOINT"
 ENV_API_KEY = "CHARACTER_FACTORY_INTERPRETER_API_KEY"
-ENV_MODE = "CHARACTER_FACTORY_INTERPRETER_MODE"
-ENV_QUANTIZATION = "CHARACTER_FACTORY_INTERPRETER_QUANTIZATION"
 ENV_AUDIT_LOG = "CHARACTER_FACTORY_INTERPRETER_AUDIT_LOG"
 
 # The registry component that names the default local model. The id is
 # code; the model behind it is data.
 DEFAULT_MODEL_COMPONENT = "interpreter"
-MODES = ("auto", "single", "multi")
-# Weight formats a local model can be loaded in. The default is the
-# smallest: the generation path is sized to fit beside other GPU users.
-QUANTIZATIONS = ("nf4", "int8", "bf16")
-DEFAULT_QUANTIZATION = "nf4"
 
 
 @dataclass(frozen=True)
@@ -111,31 +90,10 @@ class InterpreterConfig:
     instruction: str | None = None   # system-prompt override (data, not code)
     repetition_penalty: float = 1.0  # >1 damps greedy repetition loops
     audit_log: str | None = None     # protected JSONL; never served over HTTP
-    mode: str = "auto"               # auto | single | multi
-    quantization: str = DEFAULT_QUANTIZATION   # nf4 | int8 | bf16 (local model)
-
-    def __post_init__(self):
-        if self.mode not in MODES:
-            raise ValueError(
-                f"interpreter mode must be one of {', '.join(MODES)}; got {self.mode!r}"
-            )
-        if self.quantization not in QUANTIZATIONS:
-            raise ValueError(
-                "interpreter quantization must be one of "
-                f"{', '.join(QUANTIZATIONS)}; got {self.quantization!r}"
-            )
 
     @property
     def configured(self) -> bool:
         return self.model is not None or self.endpoint is not None
-
-    @property
-    def effective_mode(self) -> str:
-        """`auto` resolved for this backend: multi-call for a local model,
-        the single instruction for an endpoint."""
-        if self.mode != "auto":
-            return self.mode
-        return "single" if self.endpoint is not None else "multi"
 
 
 def _file_section() -> dict:
@@ -157,7 +115,7 @@ def _file_section() -> dict:
 def _section_defaults(section: dict) -> dict:
     """The section-level settings every backend entry inherits unless it
     sets its own."""
-    return {key: section.get(key) for key in ("instruction", "mode", "quantization")}
+    return {key: section.get(key) for key in ("instruction",)}
 
 
 def _config_from(values: dict, defaults: dict) -> InterpreterConfig:
@@ -168,10 +126,6 @@ def _config_from(values: dict, defaults: dict) -> InterpreterConfig:
         instruction=values.get("instruction") or defaults.get("instruction"),
         repetition_penalty=float(values.get("repetition_penalty", 1.0)),
         audit_log=os.environ.get(ENV_AUDIT_LOG) or values.get("audit_log"),
-        mode=os.environ.get(ENV_MODE) or values.get("mode")
-        or defaults.get("mode") or "auto",
-        quantization=os.environ.get(ENV_QUANTIZATION) or values.get("quantization")
-        or defaults.get("quantization") or DEFAULT_QUANTIZATION,
     )
 
 
@@ -227,21 +181,6 @@ def _gb(size: int) -> str:
     return f"{size / 1e9:.1f} GB"
 
 
-def peak_vram_bytes(inference: dict, quantization: str) -> int | None:
-    """A component's declared peak VRAM for one weight format.
-
-    ``inference.peak_vram_bytes`` is either one number (the same whatever
-    the format) or a table keyed by quantization; a format the table does
-    not state is unknown, not zero.
-    """
-    declared = inference.get("peak_vram_bytes")
-    if isinstance(declared, dict):
-        declared = declared.get(quantization)
-    if isinstance(declared, int) and not isinstance(declared, bool) and declared > 0:
-        return declared
-    return None
-
-
 def _local_readiness(config: InterpreterConfig, registry, device: str) -> dict:
     """Readiness of a local model: are its weights on disk, and does it fit
     the device — cheap checks only (existence and sizes; no hashing, no
@@ -251,9 +190,8 @@ def _local_readiness(config: InterpreterConfig, registry, device: str) -> dict:
     from character_factory.preflight import device_memory
     from character_factory.registry.store import component_dir, missing_bytes
 
-    row: dict = {"quantization": config.quantization, "download_bytes": None,
-                 "vram_bytes": None, "fits": None, "device_bytes": None,
-                 "description": None}
+    row: dict = {"download_bytes": None, "vram_bytes": None, "fits": None,
+                 "device_bytes": None, "description": None}
     reasons: list[str] = []
     source = config.model or ""
     path = Path(source).expanduser()
@@ -280,8 +218,8 @@ def _local_readiness(config: InterpreterConfig, registry, device: str) -> dict:
                 reasons.append("component not published yet")
             else:
                 row["download_bytes"] = 0
-            needed = peak_vram_bytes(entry.inference, config.quantization)
-            if needed is not None:
+            needed = entry.inference.get("peak_vram_bytes")
+            if isinstance(needed, int) and needed > 0:
                 row["vram_bytes"] = needed
             # A published component is public knowledge (its index entry
             # says what it is); a private weights path stays a path.
@@ -312,7 +250,6 @@ def _describe(alias: str, entry: dict, config: InterpreterConfig, *,
         "kind": _entry_kind(entry),
         "default": default,
         "label": entry.get("label") if isinstance(entry.get("label"), str) else None,
-        "mode": config.effective_mode,
     }
     if row["kind"] == "endpoint":
         from urllib.parse import urlsplit
@@ -369,7 +306,7 @@ def available_backends(*, registry=None, device: str = "cuda") -> list[dict]:
 
 _ALIAS_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
 BACKEND_FIELDS = frozenset({
-    "endpoint", "model", "api_key", "mode", "quantization",
+    "endpoint", "model", "api_key",
     "repetition_penalty", "instruction", "label",
 })
 
@@ -443,16 +380,6 @@ def validate_backend(alias: str, values: dict) -> dict:
             "a backend needs an endpoint URL or a model (registry component "
             "id or local weights path)"
         )
-    if "mode" in values and values["mode"] is not None:
-        if values["mode"] not in MODES:
-            raise ValueError(f"mode must be one of {', '.join(MODES)}")
-        clean["mode"] = values["mode"]
-    if "quantization" in values and values["quantization"] is not None:
-        if values["quantization"] not in QUANTIZATIONS:
-            raise ValueError(
-                f"quantization must be one of {', '.join(QUANTIZATIONS)}"
-            )
-        clean["quantization"] = values["quantization"]
     if "repetition_penalty" in values and values["repetition_penalty"] is not None:
         penalty = values["repetition_penalty"]
         if isinstance(penalty, bool) or not isinstance(penalty, (int, float)) \

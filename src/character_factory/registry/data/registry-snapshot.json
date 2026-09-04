@@ -79,16 +79,11 @@
     "gated": false
    },
    "inference": {
-    "mode": "multi",
     "quantization": "nf4",
     "compute_dtype": "bfloat16",
-    "peak_vram_bytes": {
-     "nf4": 8300000000,
-     "int8": 11700000000,
-     "bf16": 18100000000
-    }
+    "peak_vram_bytes": 8300000000
    },
-   "description": "The default local interpreter model: Qwen3.5-9B (Qwen, Apache-2.0), fetched from its upstream repository pinned to an exact revision and run in-process, quantized to 4-bit as it loads (about 19 GB of weights on disk, about 8 GB of peak VRAM; int8 and bf16 loading are configurable). Asked one narrow question per component (multi-call mode); about a minute per description. No account or token is needed to fetch it; another local model or an OpenAI-compatible endpoint can be configured instead."
+   "description": "The default local interpreter model: Qwen3.5-9B (Qwen, Apache-2.0), fetched from its upstream repository pinned to an exact revision and run in-process, quantized to 4-bit as it loads (about 19 GB of weights on disk, about 8 GB of peak VRAM). Asked once per description; about a minute each. No account or token is needed to fetch it; another local model or an OpenAI-compatible endpoint can be configured instead."
   },
   {
    "name": "make-figure",

@@ -1,8 +1,8 @@
 """The interpreter's output schema, derived from the format vocabulary.
 
 The model backend decodes against this schema (ARCHITECTURE §2.2): a prompt
-per texture slot — singular keys, closed set, `shoe` optional — plus the
-hair block. Deriving it from the same vocabulary module the validator uses
+per texture slot — singular keys, closed set, `garment` and `shoe`
+optional — plus the hair block, nullable. Deriving it from the same vocabulary module the validator uses
 means a plural slot key or an out-of-vocabulary hair value is structurally
 unreachable during decoding, not merely caught later.
 
@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import json
 
-__all__ = ["endpoint_interpretation_schema", "endpoint_schema", "interpretation_schema"]
+__all__ = [
+    "endpoint_interpretation_schema",
+    "endpoint_schema",
+    "hair_block_schema",
+    "interpretation_schema",
+]
 
 
 def interpretation_schema() -> dict:
@@ -30,8 +35,7 @@ def interpretation_schema() -> dict:
     }
     hair = json.loads(json.dumps(character_json_schema()["properties"]["hair"]))
     hair.pop("allOf", None)          # co-constraint lives in the repair loop
-    hair["type"] = "object"          # the grammar itself never emits null;
-    #                                  baldness is decided after decoding
+    hair["type"] = "object"
     # Enforcer limitation: non-string `const` values crash its enum path;
     # an equivalent closed integer range expresses the same constraint.
     hair["properties"]["schema_version"] = {
@@ -67,10 +71,20 @@ def interpretation_schema() -> dict:
                 "required": list(vocab.REQUIRED_SLOTS),
                 "properties": {slot: slot_prompt for slot in vocab.ALL_SLOTS},
             },
-            "hair": hair,
+            # The interpreter decides hairlessness like every other layer:
+            # null here is the hair equivalent of an omitted garment or
+            # shoe slot. (The character schema's own nullable hair passes
+            # through unchanged.)
+            "hair": {"anyOf": [hair, {"type": "null"}]},
             "proportions": proportions,
         },
     }
+
+
+def hair_block_schema() -> dict:
+    """The hair block alone, without the nullable wrapper — for callers
+    that read its vocabularies."""
+    return interpretation_schema()["properties"]["hair"]["anyOf"][0]
 
 
 def endpoint_interpretation_schema() -> dict:

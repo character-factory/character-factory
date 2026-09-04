@@ -36,8 +36,11 @@ PROPORTION_NAMES = (
 )
 PROPORTION_LIMIT = 0.40
 
-REQUIRED_SLOTS = ("skin", "eye", "garment")
-OPTIONAL_SLOTS = ("shoe",)
+# A character always has skin and eyes. Garments and footwear are layers
+# the description can leave off — an unclothed or barefoot character omits
+# the slot, the same way a hairless one carries `hair: null`.
+REQUIRED_SLOTS = ("skin", "eye")
+OPTIONAL_SLOTS = ("garment", "shoe")
 ALL_SLOTS = REQUIRED_SLOTS + OPTIONAL_SLOTS
 
 # Texture slot keys are singular, always. These are the plural (or otherwise

@@ -103,8 +103,7 @@
       "additionalProperties": false,
       "required": [
         "skin",
-        "eye",
-        "garment"
+        "eye"
       ],
       "properties": {
         "skin": {

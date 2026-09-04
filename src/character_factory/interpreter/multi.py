@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from character_factory.interpreter.schema import interpretation_schema
+from character_factory.interpreter.schema import hair_block_schema, interpretation_schema
 
 __all__ = ["Call", "build_calls", "hair_vocabulary_lines"]
 
@@ -76,7 +76,7 @@ class Call:
 def hair_vocabulary_lines() -> str:
     """The hair block's closed vocabulary, one line per group, so a call
     that never sees the JSON grammar still sees every legal value."""
-    hair = interpretation_schema()["properties"]["hair"]
+    hair = hair_block_schema()
     lines = [f"family: {', '.join(hair['properties']['family']['enum'])}"]
     for group in ("part", "hairline", "length", "shape", "drape", "color"):
         fields = hair["properties"][group]["properties"]
@@ -116,9 +116,8 @@ def build_calls(slot_guidance: dict[str, str] | None = None) -> list[Call]:
     ]
     garment = [
         "Given this character description, decide what the character wears on their body (clothing only — not footwear).",
-        "Pieces the description names are mandatory and stay exactly as described. "
-        "If they do not add up to a complete outfit — a top and a bottom, or one full-body garment — add the missing piece(s) this person would wear. "
-        "Rule out coverage only when the description does (swimsuit, barefoot, unclothed).",
+        "Pieces the description names are mandatory and stay exactly as described; add only what that outfit obviously includes. "
+        "If the description says no clothing is worn, reply with an empty prompt.",
         guidance["garment"],
         "Never footwear, never the body.",
         _PROMPT_TAIL,
@@ -137,7 +136,7 @@ def build_calls(slot_guidance: dict[str, str] | None = None) -> list[Call]:
         hair_vocabulary_lines(),
         "Set schema_version to 1 and seed to 0. For a dyed or unusual color use color family \"custom\" with an rgb triple (0–255); otherwise a named family.",
         "Length must fit the family: bun and ponytail need shoulder length or longer; buzz, crop and pixie are cropped or ear length.",
-        "Reply with the JSON object only.",
+        "Reply with a JSON object of the form {\"hair\": <block>} and nothing else; {\"hair\": null} when the head has no hair.",
     ]
     proportions = [
         "Given this character description, decide whether it clearly implies an unusual skeletal build (towering, petite, broad-shouldered, long-limbed, and so on).",
@@ -150,6 +149,13 @@ def build_calls(slot_guidance: dict[str, str] | None = None) -> list[Call]:
         Call("eye", "\n".join(eye), PROMPT_SCHEMA),
         Call("garment", "\n".join(garment), PROMPT_SCHEMA),
         Call("shoe", "\n".join(shoe), PROMPT_SCHEMA),
-        Call("hair", "\n".join(hair), schema["properties"]["hair"]),
+        # The hair answer is wrapped so a hairless head is a null property
+        # rather than a bare top-level null, which strict endpoints reject.
+        Call("hair", "\n".join(hair), {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["hair"],
+            "properties": {"hair": schema["properties"]["hair"]},
+        }),
         Call("proportions", "\n".join(proportions), schema["properties"]["proportions"]),
     ]

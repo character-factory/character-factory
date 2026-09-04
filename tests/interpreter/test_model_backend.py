@@ -94,12 +94,37 @@ def test_unknown_or_plural_slot_key_is_an_error():
         backend_with(json.dumps(document)).interpret("someone")
 
 
-def test_bald_description_nulls_the_hair_block():
-    result = backend_with(json.dumps(good_document())).interpret(
-        "a bald middle-aged man"
-    )
+def test_null_hair_block_from_the_model_means_no_hair():
+    document = good_document()
+    document["hair"] = None
+    result = backend_with(json.dumps(document)).interpret("a bald middle-aged man")
     assert result.hair is None
-    assert any("bald" in note for note in result.notes)
+    assert any("without hair" in note for note in result.notes)
+
+
+def test_hairlessness_is_the_models_decision_not_a_keyword_match():
+    # "balding" contains "bald"; a word match would strip the hair the
+    # model deliberately wrote for a thinning head.
+    result = backend_with(json.dumps(good_document())).interpret(
+        "a balding middle-aged man"
+    )
+    assert result.hair is not None
+    assert not any("hair" in note for note in result.notes)
+
+
+def test_empty_garment_prompt_leaves_the_garment_layer_off():
+    document = good_document()
+    document["textures"]["garment"] = {"prompt": ""}
+    result = backend_with(json.dumps(document)).interpret("a swimmer, trunks only")
+    assert "garment" not in result.slot_prompts
+    assert any("garment layer is left off" in note for note in result.notes)
+
+
+def test_skin_and_eye_prompts_stay_required():
+    document = good_document()
+    document["textures"]["skin"] = {"prompt": "  "}
+    with pytest.raises(InterpreterError, match="'skin' has no prompt"):
+        backend_with(json.dumps(document)).interpret("someone")
 
 
 def test_non_json_output_is_an_interpreter_error():
@@ -163,7 +188,7 @@ def test_instruction_carries_slot_guidance_and_slot_hygiene():
     assert "tone words plus a numbered tone code" in instruction
     assert "below_ankle" in instruction
     assert "never mention" in instruction        # cross-slot hygiene
-    assert "barefoot" in instruction             # optional-slot omission rule
+    assert "null hair block" in instruction      # layer-omission rule
 
 
 def test_config_precedence_env_over_file(monkeypatch, tmp_path):
@@ -448,6 +473,7 @@ def multi_answers(**overrides) -> dict:
         "proportions": {},
     }
     answers.update(overrides)
+    answers["hair"] = {"hair": answers["hair"]}     # the call's wrapped form
     return answers
 
 
@@ -498,18 +524,34 @@ def test_multi_call_schemas_are_per_call_and_empty_shoe_is_dropped():
     result = backend.interpret("a barefoot swimmer")
     schemas = dict((name, schema) for name, _, schema in backend.seen)
     assert schemas["figure"]["required"] == ["prompt"]
-    assert "family" in schemas["hair"]["properties"]
+    assert "family" in schemas["hair"]["properties"]["hair"]["anyOf"][0]["properties"]
     assert "leg_length" in schemas["proportions"]["properties"]
     assert "shoe" not in result.slot_prompts
     assert result.proportions is None
 
 
-def test_multi_call_skips_the_hair_call_for_a_bald_description():
-    backend = multi_backend(multi_answers())
+def test_multi_call_null_hair_answer_means_no_hair():
+    backend = multi_backend(multi_answers(hair=None))
     result = backend.interpret("a bald middle-aged man")
-    assert "hair" not in [name for name, _, _ in backend.seen]
+    assert "hair" in [name for name, _, _ in backend.seen]
     assert result.hair is None
-    assert any("bald" in note for note in result.notes)
+    assert any("without hair" in note for note in result.notes)
+
+
+def test_multi_call_hair_schema_is_nullable_but_keeps_the_vocabulary():
+    backend = multi_backend(multi_answers())
+    backend.interpret("someone")
+    schemas = dict((name, schema) for name, _, schema in backend.seen)
+    assert schemas["hair"]["required"] == ["hair"]
+    block, null = schemas["hair"]["properties"]["hair"]["anyOf"]
+    assert null == {"type": "null"}
+    assert "loose_long" in block["properties"]["family"]["enum"]
+
+
+def test_multi_call_empty_garment_answer_is_dropped():
+    backend = multi_backend(multi_answers(garment={"prompt": ""}))
+    result = backend.interpret("an unclothed figure study")
+    assert "garment" not in result.slot_prompts
 
 
 def test_multi_call_validates_the_assembled_document():
@@ -592,7 +634,7 @@ def test_endpoint_multi_mode_uses_strict_per_call_schemas_and_drops_nulls(
     monkeypatch
 ):
     answers = multi_answers()
-    answers["hair"] = {**full_hair(), "color": {"family": "black", "rgb": None}}
+    answers["hair"] = {"hair": {**full_hair(), "color": {"family": "black", "rgb": None}}}
     answers["proportions"] = {name: None for name in (
         "spine_length", "neck_length", "shoulder_width", "arm_length",
         "hip_width", "leg_length")}
@@ -636,7 +678,7 @@ def test_endpoint_multi_mode_uses_strict_per_call_schemas_and_drops_nulls(
     schemas = [r["response_format"]["json_schema"]["schema"] for r in requests]
     assert schemas[0]["required"] == ["prompt"]
     assert schemas[0]["additionalProperties"] is False
-    hair_schema = schemas[5]
+    hair_schema = schemas[5]["properties"]["hair"]["anyOf"][0]
     assert set(hair_schema["required"]) == set(hair_schema["properties"])
     assert result.hair["color"] == {"family": "black"}
     assert result.proportions is None

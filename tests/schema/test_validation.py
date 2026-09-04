@@ -172,10 +172,16 @@ def test_boundary_proportion_values_are_valid(doc):
 # --- textures ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("slot", ["skin", "eye", "garment"])
+@pytest.mark.parametrize("slot", ["skin", "eye"])
 def test_missing_required_slot(doc, slot):
     del doc["textures"][slot]
     assert errors_at(validate_document(doc), f"textures.{slot}")
+
+
+@pytest.mark.parametrize("slot", ["garment", "shoe"])
+def test_optional_layer_slots_may_be_omitted(doc, slot):
+    doc["textures"].pop(slot, None)
+    assert not validate_document(doc).errors
 
 
 def test_shoe_null_is_invalid(doc):

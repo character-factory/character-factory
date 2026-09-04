@@ -519,25 +519,20 @@ class ModelInterpreter:
         if self.config.endpoint is not None and self.generate is None:
             return self._endpoint_document(
                 instruction, prompt, schema, trace_id,
-                validate=lambda document: _validate(document, prompt),
+                validate=lambda document: _validate(document),
             )
         if self.generate is not None:
             raw = self.generate(instruction, prompt, schema)
         else:
             raw = self._generate_local(instruction, prompt, schema)
-        return _validate(_parse_json(raw), prompt)
+        return _validate(_parse_json(raw))
 
     def _interpret_multi(self, prompt, slot_guidance, trace_id):
         """Run the call plan and assemble one interpretation document from
-        the answers; the shared validator then judges it whole. A bald
-        description skips the hair call — the validator would discard the
-        answer anyway."""
-        bald = any(word in prompt.lower() for word in _BALD_WORDS)
+        the answers; the shared validator then judges it whole."""
         document: dict = {"textures": {}}
         self.metrics.calls = {}
         for call in build_calls(slot_guidance):
-            if call.name == "hair" and bald:
-                continue
             started = time.monotonic()
             if self.config.endpoint is not None and self.generate is None:
                 value = self._endpoint_document(
@@ -554,12 +549,12 @@ class ModelInterpreter:
             if call.name == "figure":
                 document["figure"] = value
             elif call.name == "hair":
-                document["hair"] = value
+                document["hair"] = value.get("hair")   # null was dropped
             elif call.name == "proportions":
                 document["proportions"] = value or None
             else:
                 document["textures"][call.name] = value
-        return _validate(document, prompt)
+        return _validate(document)
 
     def _endpoint_document(
         self, instruction: str, prompt: str, schema: dict, trace_id: str,
@@ -685,14 +680,10 @@ def build_instruction(slot_guidance: dict[str, str],
         f"Texture slots (keys are singular, exactly these): "
         f"required {', '.join(vocab.REQUIRED_SLOTS)}; "
         f"optional {', '.join(vocab.OPTIONAL_SLOTS)}. ",
-        "Characters default to a complete, appropriate outfit: when the "
-        "description does not specify clothing or footwear, invent a top "
-        "garment, a bottom garment, and shoes that suit who the "
-        "character is. When the description DOES specify the outfit, "
-        "follow it exactly — a swimsuit stays a swimsuit, a barefoot or "
-        "unclothed character gets no invented coverage (omit the shoe "
-        "slot for bare feet; the skin texture renders no graphic "
-        "nudity). Never add pieces the description rules out.",
+        "Garments, footwear and hair are layers you decide on. Each is "
+        "present unless the description says otherwise; a layer the "
+        "description rules out is left off — an empty garment or shoe "
+        "prompt, a null hair block — never invented.",
         "Each slot prompt describes only that surface — never mention "
         "another slot's content: no clothing words in the skin prompt, no "
         "footwear in the eye prompt, and footwear appears ONLY in the shoe "
@@ -704,7 +695,8 @@ def build_instruction(slot_guidance: dict[str, str],
         "",
         "The hair block uses closed vocabularies; copy enum values exactly "
         "— never paraphrase — and set seed to 0. Pick natural values for "
-        "anything the description leaves unsaid.",
+        "anything the description leaves unsaid; null when the head has "
+        "no hair.",
         "",
         "Skeletal proportions: include the optional \"proportions\" object "
         "ONLY when the description clearly implies unusual build "
@@ -761,16 +753,15 @@ def _drop_nulls(value):
     return value
 
 
-_BALD_WORDS = ("bald", "shaved head", "hairless")
-
-
-def _validate(document: dict, prompt: str):
-    """Shape-check the decoded interpretation and decide baldness.
+def _validate(document: dict):
+    """Shape-check the decoded interpretation.
 
     The grammar already constrains structure when decoding is constrained;
     this re-checks it anyway (the endpoint backend is unconstrained) and
-    applies the decisions the grammar cannot make: dropping empty optional
-    slots and mapping an explicitly bald description to hair = null."""
+    applies the decisions the grammar cannot make, such as dropping empty
+    optional slots. Which layers a character has — garments, footwear,
+    hair — is the interpreter's call, made the same way for all three: an
+    empty slot prompt or a null hair block leaves that layer off."""
     from character_factory.schema import vocab
 
     figure_entry = document.get("figure")
@@ -798,10 +789,12 @@ def _validate(document: dict, prompt: str):
     notes = []
     hair = document.get("hair")
     if hair is not None and not isinstance(hair, dict):
-        raise InterpreterError("hair must be an object")
-    if any(word in prompt.lower() for word in _BALD_WORDS):
-        hair = None
-        notes.append("description reads as bald; hair set to null")
+        raise InterpreterError("hair must be an object or null")
+    if hair is None:
+        notes.append("no hair block: the character is rendered without hair")
+    for slot in vocab.OPTIONAL_SLOTS:
+        if slot not in slots:
+            notes.append(f"no {slot} prompt: the {slot} layer is left off")
     if hair is not None:
         hair = _repair_hair(hair, notes)
         from character_factory.schema.validation import hair_block_errors

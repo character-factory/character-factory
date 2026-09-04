@@ -331,7 +331,7 @@ character-factory make "a lean marathon runner with cropped dark hair" -o runner
 ```
 
 - Python ≥ 3.11. Base install 5.6 GB (torch with CUDA); `[generation]`, `[server]`, `[mcp]` extras on top.
-- Linux + NVIDIA CUDA is first-class. Native Windows runs the full pipeline; `pip install` on Windows installs CPU torch; install torch from the PyTorch CUDA index (`https://download.pytorch.org/whl/<cuXXX>`) first. WSL2 runs the Linux path. macOS runs the CLI, schema tools, server, and assembly; generation is unsupported (no CUDA, no MPS target).
+- Linux + NVIDIA CUDA is first-class. Native Windows runs the full pipeline; `pip install` on Windows installs CPU torch; install torch from the PyTorch CUDA index (`https://download.pytorch.org/whl/<cuXXX>`) first. WSL2 runs the Linux path. macOS runs the CLI, schema tools, server, and assembly.
 - `character-factory preflight` checks the generation import set, the torch CUDA build, and the driver with a real CUDA call. `make` and every server generation job run it before loading weights.
 
 ### 6.1 Measured VRAM
@@ -341,12 +341,9 @@ Measured on one RTX 3090 (24 GiB) with the launch components and weights on disk
 | Stage | Precision | Allocated | Reserved | Time |
 | --- | --- | --- | --- | --- |
 | Four-slot bake at 1024² | bf16 (default) | 17.4 GiB | 20.3 GiB | 137 s |
-| Four-slot bake at 1024² | `nf4` | 8.9 GiB | 14.4 GiB | 267 s |
 | Local interpreter (Qwen3.5-9B, multi mode) | bf16 | 16.9 GiB | — | 78 s; 68 s with the model files in the OS page cache |
 
-`nf4` is set with `textures.quantization` in `config.json` or `CHARACTER_FACTORY_TEXTURE_QUANTIZATION`. The transformer and text encoder are quantized with bitsandbytes at load from the same bf16 artifacts — there is no separate quantized download; the VAE stays full precision.
-
-GPU stages are serialized and release before the next loads, so the bake sets the floor: a 12 GB card runs the pipeline under `nf4` with an endpoint interpreter. 8 GB is not supported.
+GPU stages are serialized and release before the next loads, so the bake sets the floor.
 
 ## 7. Tests
 
@@ -358,7 +355,7 @@ GPU stages are serialized and release before the next loads, so the bake sets th
 
 **Shells, mouth, footwear.** Extraction gates, watertightness, weight transfer, interior-UV invariants (original UVs bit-exact, no new islands, no overlap, no inversion), clearance sweeps over the supported pose set, and the same battery re-run natively on a declared render LOD (skipped when no such component is cached).
 
-**Bake.** One image per slot at the declared resolution with hashes recorded; seeds and templates honored; recipe overrides beat defaults; the base model loads once; assembly refuses non-matching assets; quantization config resolution.
+**Bake.** One image per slot at the declared resolution with hashes recorded; seeds and templates honored; recipe overrides beat defaults; the base model loads once; assembly refuses non-matching assets.
 
 **Interpreter, server, registry, CLI.** Grammar derivation, backend readiness and config writes, job lifecycle (idempotency, cancel, retry, download stage), route contracts, integrity checks, command behavior.
 
@@ -378,7 +375,7 @@ Runs that need cached components skip when they are absent.
 │   ├── registry/         index, fetch, cache, integrity; vendored snapshot
 │   ├── interpreter/      backends, multi-call templates, grammar, config
 │   ├── identity/         figure prompt → body parameters (lazy torch)
-│   ├── textures/         diffusion runner, adapters, quantization (lazy torch)
+│   ├── textures/         diffusion runner, adapters (lazy torch)
 │   ├── hair/             HairProvider + vendored make-wig engine
 │   ├── assembly/         rig, shells, eyes, mouth, rest pose, export, manifest, compress
 │   ├── server/           FastAPI app, service, jobs, static UI

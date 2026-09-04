@@ -612,6 +612,72 @@ def test_mode_resolution_auto_by_backend_and_env(monkeypatch, tmp_path):
     assert configuration.load_interpreter_config().effective_mode == "single"
 
 
+def test_quantization_resolution_default_file_env(monkeypatch, tmp_path):
+    from character_factory.interpreter import config as configuration
+
+    # nf4 is the default: the generation path is sized to fit beside the
+    # rest of what a card is doing, and the download is the same file.
+    assert InterpreterConfig(model="x").quantization == "nf4"
+    with pytest.raises(ValueError, match="quantization"):
+        InterpreterConfig(model="x", quantization="fp8")
+
+    (tmp_path / "config.json").write_text(json.dumps({"interpreter": {
+        "default": "local-a", "quantization": "int8",
+        "backends": {
+            "local-a": {"model": "some/weights"},
+            "local-b": {"model": "other/weights", "quantization": "bf16"},
+        },
+    }}))
+    monkeypatch.setattr(
+        "character_factory.interpreter.config.cache_dir", lambda: tmp_path
+    )
+    for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
+                configuration.ENV_QUANTIZATION):
+        monkeypatch.delenv(env, raising=False)
+    # Section-level setting, per-backend override, environment over both.
+    assert configuration.load_interpreter_config().quantization == "int8"
+    assert configuration.load_interpreter_config("local-b").quantization == "bf16"
+    monkeypatch.setenv(configuration.ENV_QUANTIZATION, "nf4")
+    assert configuration.load_interpreter_config().quantization == "nf4"
+    assert configuration.load_interpreter_config("local-b").quantization == "nf4"
+
+    # Saved through the setup flow it is validated like the others.
+    assert configuration.validate_backend(
+        "local-c", {"model": "w", "quantization": "bf16"}
+    ) == {"model": "w", "quantization": "bf16"}
+
+
+@pytest.mark.parametrize("quantization, device, expected", [
+    ("nf4", "cuda", {"quantization": {
+        "load_in_4bit": True, "bnb_4bit_quant_type": "nf4",
+        "bnb_4bit_compute_dtype": "bfloat16", "bnb_4bit_use_double_quant": True,
+    }, "device_map": {"": "cuda"}}),
+    ("int8", "cuda:1", {"quantization": {"load_in_8bit": True},
+                        "device_map": {"": "cuda:1"}}),
+    ("bf16", "cuda", {"dtype": "bfloat16"}),
+    ("nf4", "cpu", {"dtype": "float32"}),   # quantization needs CUDA
+])
+def test_local_model_load_settings_follow_the_quantization(
+    quantization, device, expected
+):
+    backend = ModelInterpreter(
+        InterpreterConfig(model="x", quantization=quantization), device=device
+    )
+    assert backend._load_settings() == expected
+
+
+def test_peak_vram_is_declared_per_weight_format():
+    from character_factory.interpreter.config import peak_vram_bytes
+
+    table = {"peak_vram_bytes": {"nf4": 8, "bf16": 18}}
+    assert peak_vram_bytes(table, "nf4") == 8
+    assert peak_vram_bytes(table, "bf16") == 18
+    assert peak_vram_bytes(table, "int8") is None       # unstated, not zero
+    assert peak_vram_bytes({"peak_vram_bytes": 18}, "nf4") == 18   # one number
+    assert peak_vram_bytes({}, "nf4") is None
+    assert peak_vram_bytes({"peak_vram_bytes": True}, "nf4") is None
+
+
 def test_unconfigured_installation_resolves_to_the_registry_component(
     monkeypatch, tmp_path
 ):
@@ -753,7 +819,8 @@ def _isolate_config(monkeypatch, tmp_path, document=None):
         "character_factory.interpreter.config.cache_dir", lambda: tmp_path
     )
     for env in (configuration.ENV_MODEL, configuration.ENV_ENDPOINT,
-                configuration.ENV_API_KEY, configuration.ENV_MODE):
+                configuration.ENV_API_KEY, configuration.ENV_MODE,
+                configuration.ENV_QUANTIZATION):
         monkeypatch.delenv(env, raising=False)
     return configuration
 
@@ -799,17 +866,33 @@ def test_readiness_of_the_registry_component(monkeypatch, tmp_path):
     assert row["alias"] == "default" and row["default"] is True
     assert row["ready"] is False and row["download_bytes"] == size
     assert row["reason"].startswith("weights not downloaded (")
-    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]
+    # The declared peak is per weight format; the default format is the
+    # smallest and is what the row reports.
+    assert row["quantization"] == "nf4"
+    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]["nf4"]
+    assert row["vram_bytes"] < entry.inference["peak_vram_bytes"]["bf16"]
     assert row["fits"] is True and row["device_bytes"] == 24 * 10**9
     assert row["description"] == entry.document["description"]
 
     # A card too small for the model is the more important reason, and one
-    # a download would not fix.
+    # a download would not fix. The default format fits a 12 GB card; the
+    # full-precision one does not.
     monkeypatch.setattr(
         "character_factory.preflight.device_memory", lambda device: 12 * 10**9
     )
     (row,) = configuration.available_backends(registry=registry)
+    assert row["fits"] is True
+    monkeypatch.setenv(configuration.ENV_QUANTIZATION, "bf16")
+    (row,) = configuration.available_backends(registry=registry)
+    assert row["quantization"] == "bf16"
+    assert row["vram_bytes"] == entry.inference["peak_vram_bytes"]["bf16"]
     assert row["fits"] is False and "of VRAM; 12.0 GB detected" in row["reason"]
+    monkeypatch.delenv(configuration.ENV_QUANTIZATION)
+    monkeypatch.setattr(
+        "character_factory.preflight.device_memory", lambda device: 6 * 10**9
+    )
+    (row,) = configuration.available_backends(registry=registry)
+    assert row["fits"] is False and "of VRAM; 6.0 GB detected" in row["reason"]
 
     # No CUDA at all; and a CPU device asks no VRAM question.
     monkeypatch.setattr("character_factory.preflight.device_memory", lambda device: None)
@@ -889,6 +972,7 @@ def test_save_backend_writes_a_private_file_and_keeps_the_key(monkeypatch, tmp_p
     ("c", {"endpoint": "not a url"}, "http\\(s\\) URL"),
     ("c", {"api_key": "k"}, "needs an endpoint URL or a model"),
     ("c", {"model": "x", "mode": "fast"}, "mode must be"),
+    ("c", {"model": "x", "quantization": "fp8"}, "quantization must be"),
     ("c", {"model": "x", "colour": "red"}, "unknown backend field"),
 ])
 def test_backend_validation_names_the_problem(alias, values, message):

@@ -209,6 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
              "per component (multi); auto picks multi for local models "
              "(also CHARACTER_FACTORY_INTERPRETER_MODE)",
     )
+    interpret.add_argument(
+        "--quantization", choices=("nf4", "int8", "bf16"),
+        help="weight format a local model is loaded in; nf4 (the default) "
+             "is the smallest, bf16 the full-precision weights (also "
+             "CHARACTER_FACTORY_INTERPRETER_QUANTIZATION)",
+    )
     interpret.set_defaults(func=_cmd_interpret)
 
     preflight = commands.add_parser(
@@ -248,6 +254,8 @@ def _cmd_interpret(args: argparse.Namespace) -> int:
         config = dataclasses.replace(config, model=args.model, endpoint=None)
     if args.mode:
         config = dataclasses.replace(config, mode=args.mode)
+    if args.quantization:
+        config = dataclasses.replace(config, quantization=args.quantization)
     interpretation, metrics = interpret(
         args.text, device=args.device, config=config
     )

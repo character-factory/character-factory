@@ -164,6 +164,10 @@ def create_app(service: CharacterService):
                 "label": {"type": ["string", "null"],
                           "description": "Operator-given display name."},
                 "mode": {"type": "string", "enum": ["single", "multi"]},
+                "quantization": {"type": "string",
+                                 "enum": ["nf4", "int8", "bf16"],
+                                 "description": "local-model: the weight "
+                                                "format it loads in."},
                 "ready": {"type": "boolean",
                           "description": "False when a create against this "
                                          "backend would fail today; see "
@@ -176,8 +180,9 @@ def create_app(service: CharacterService):
                 },
                 "vram_bytes": {"type": ["integer", "null"],
                                "description": "local-model: declared peak "
-                                              "VRAM, when the registry "
-                                              "states it."},
+                                              "VRAM at that quantization, "
+                                              "when the registry states "
+                                              "it."},
                 "fits": {"type": ["boolean", "null"],
                          "description": "local-model: whether the device "
                                         "has that much (null = unknown)."},
@@ -211,6 +216,10 @@ def create_app(service: CharacterService):
                 "model": {"type": "string"},
                 "api_key": {"type": "string", "writeOnly": True},
                 "mode": {"type": "string", "enum": ["auto", "single", "multi"]},
+                "quantization": {"type": "string",
+                                 "enum": ["nf4", "int8", "bf16"],
+                                 "description": "Weight format for a local "
+                                                "model (default nf4)."},
                 "repetition_penalty": {"type": "number", "exclusiveMinimum": 0},
                 "instruction": {"type": "string"},
                 "label": {"type": "string"},

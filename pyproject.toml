@@ -50,6 +50,10 @@ generation = [
   # are required, not optional, for every bake.
   "peft>=0.15",
   "accelerate>=1.0",
+  # The interpreter's default weight format (nf4) is applied at load time by
+  # bitsandbytes, which is CUDA-only: Linux and WSL2 get it; a CPU-only
+  # install loads full precision and never imports it.
+  "bitsandbytes>=0.45; sys_platform == 'linux'",
 ]
 server = ["fastapi>=0.111", "uvicorn>=0.30", "anyio>=4"]
 mcp = ["mcp>=1.2"]

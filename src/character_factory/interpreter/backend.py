@@ -87,6 +87,7 @@ class EndpointResult:
 class InterpreterMetrics:
     backend: str
     mode: str = "single"
+    quantization: str | None = None   # local model: the weight format loaded
     load_seconds: float = 0.0
     generate_seconds: float = 0.0
     calls: dict[str, float] | None = None   # multi mode: seconds per call
@@ -156,6 +157,36 @@ class ModelInterpreter:
                 retryable=False,
             ) from error
 
+    def _load_settings(self) -> dict:
+        """How the weights are loaded for this device and quantization.
+
+        Quantized formats are bitsandbytes settings applied as the weights
+        stream in (the download is always the full-precision model); they
+        need CUDA, so a CPU device loads full precision whatever is
+        configured. The returned dict is exactly what `from_pretrained`
+        receives, minus torch objects, so it can be asserted without a
+        model.
+        """
+        if self.device.partition(":")[0] == "cpu":
+            return {"dtype": "float32"}
+        quantization = self.config.quantization
+        if quantization == "bf16":
+            return {"dtype": "bfloat16"}
+        if quantization == "nf4":
+            settings = {
+                "load_in_4bit": True,
+                "bnb_4bit_quant_type": "nf4",
+                "bnb_4bit_compute_dtype": "bfloat16",
+                "bnb_4bit_use_double_quant": True,
+            }
+        elif quantization == "int8":
+            settings = {"load_in_8bit": True}
+        else:  # unreachable past InterpreterConfig validation
+            raise InterpreterError(f"unknown interpreter quantization {quantization!r}")
+        # bitsandbytes places the model itself; `.to(device)` afterwards is
+        # refused, so the target device goes in here.
+        return {"quantization": settings, "device_map": {"": self.device}}
+
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
@@ -171,11 +202,34 @@ class ModelInterpreter:
             torch.cuda.empty_cache()
 
         self._tokenizer = AutoTokenizer.from_pretrained(weights)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            weights,
-            torch_dtype=torch.bfloat16 if self.device != "cpu" else torch.float32,
-        ).to(self.device)
-        self._model.eval()
+        settings = self._load_settings()
+        if "quantization" in settings:
+            from transformers import BitsAndBytesConfig
+
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    weights,
+                    quantization_config=BitsAndBytesConfig(**settings["quantization"]),
+                    device_map=settings["device_map"],
+                )
+            except ImportError as error:
+                raise InterpreterError(
+                    f"interpreter quantization {self.config.quantization!r} "
+                    f"needs the bitsandbytes package ({error}); install it, "
+                    "or set quantization to bf16 to load the full-precision "
+                    "weights",
+                    retryable=False,
+                ) from error
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                weights, dtype=getattr(torch, settings["dtype"])
+            ).to(self.device)
+        self._model = model.eval()
+        # What actually loaded: the configured format, or full precision on
+        # a CPU device.
+        self.metrics.quantization = (
+            "float32" if settings.get("dtype") == "float32" else self.config.quantization
+        )
         self.metrics.load_seconds = time.monotonic() - start
 
     def close(self) -> None:

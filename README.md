@@ -159,7 +159,6 @@ Measured on one RTX 3090; details in [ARCHITECTURE.md §6](https://github.com/ch
 | Windows | `pip install` installs CPU torch; install torch from `https://download.pytorch.org/whl/<cuXXX>` first |
 | Weights, first use | 36.4 GB: 19.3 GB interpreter + 16.0 GB base image model + 1.1 GB components. 17.1 GB with an endpoint interpreter |
 | Generation, 24 GB card | bf16: bake 17.4 GiB, 137 s. Whole character 3 min 38 s with the local interpreter |
-| Generation, 8 GB card | not supported |
 | Assembly and consumption | no GPU — character file → GLB runs on CPU, including macOS |
 
 `character-factory preflight` checks the install, CUDA build, and driver. `make` runs it first.
